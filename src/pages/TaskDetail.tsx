@@ -6,6 +6,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
 import { TaskSummary } from "../types";
 import { StatusBadge } from "../components/StatusBadge";
+import { RichText } from "../components/RichText";
 
 export function TaskDetail() {
   const { id } = useParams<{ id: string }>();
@@ -87,26 +88,7 @@ export function TaskDetail() {
       </Box>
 
       <Section title="Description">
-        {task.description && task.description.trim() ? (
-          <Box
-            sx={{
-              fontSize: 1,
-              lineHeight: 1.5,
-              "& *": { maxWidth: "100%" },
-              "& img": { height: "auto" },
-              "& pre": {
-                bg: "canvas.subtle",
-                p: 2,
-                borderRadius: 1,
-                overflowX: "auto",
-              },
-              "& a": { color: "accent.fg" },
-            }}
-            dangerouslySetInnerHTML={{ __html: task.description }}
-          />
-        ) : (
-          <Text sx={{ color: "fg.muted" }}>No description.</Text>
-        )}
+        <RichText content={task.description} />
       </Section>
 
       <Section title="Run">

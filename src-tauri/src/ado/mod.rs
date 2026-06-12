@@ -53,6 +53,7 @@ pub struct WorkItem {
     pub id: i64,
     pub title: String,
     pub state: String,
+    pub work_item_type: String,
     pub description: Option<String>,
     pub parent_id: Option<i64>,
     pub fields: Value,
@@ -115,6 +116,12 @@ fn raw_to_work_item(raw: RawWorkItem) -> WorkItem {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    let work_item_type = raw
+        .fields
+        .get("System.WorkItemType")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     let description = raw
         .fields
         .get("System.Description")
@@ -125,10 +132,19 @@ fn raw_to_work_item(raw: RawWorkItem) -> WorkItem {
         id: raw.id,
         title,
         state,
+        work_item_type,
         description,
         parent_id,
         fields: raw.fields,
     }
+}
+
+/// Types we treat as story-roots in Conveyer's hierarchy.
+/// Anything above (Feature, Epic, …) is intentionally hidden.
+pub const STORY_TYPES: &[&str] = &["User Story", "Bug", "Issue", "Product Backlog Item"];
+
+pub fn is_story_type(t: &str) -> bool {
+    STORY_TYPES.iter().any(|s| s.eq_ignore_ascii_case(t))
 }
 
 /// Run a WIQL query to find work items currently assigned to the caller.

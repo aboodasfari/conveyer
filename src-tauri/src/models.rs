@@ -34,6 +34,7 @@ pub struct Task {
     pub parent_ref: Option<String>,
     pub is_self_assigned: i64,
     pub description: Option<String>,
+    pub bucket: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

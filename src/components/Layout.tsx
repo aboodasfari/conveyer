@@ -1,40 +1,39 @@
-import { Box, Header } from "@primer/react";
-import { GearIcon, HomeIcon, MoonIcon, SunIcon } from "@primer/octicons-react";
+import { Box } from "@primer/react";
+import { GearIcon, HomeIcon } from "@primer/octicons-react";
 import { Link, Outlet, useLocation } from "react-router-dom";
-import { useColorMode } from "../theme";
 
 export function Layout() {
   const { pathname } = useLocation();
-  const { mode, toggle } = useColorMode();
 
   return (
     <Box sx={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
       <Box
-        // The whole strip is draggable so users can move the window from
-        // any empty area. Interactive children opt out below.
         data-tauri-drag-region
         sx={{
           display: "flex",
           alignItems: "center",
           gap: 2,
-          // Reserve room for macOS traffic-light buttons on the left.
-          pl: "84px",
+          pl: "84px",        // reserve space for macOS traffic lights
           pr: 3,
-          py: 2,
+          minHeight: 52,
           borderBottomWidth: 1,
           borderBottomStyle: "solid",
           borderBottomColor: "border.default",
           bg: "canvas.subtle",
         }}
       >
-        <Header.Link
-          as={Link}
+        <Link
           to="/"
-          sx={{ fontWeight: "bold", fontSize: 2 }}
           data-tauri-drag-region={false}
+          style={{
+            fontWeight: 600,
+            fontSize: 16,
+            color: "var(--fgColor-default)",
+            textDecoration: "none",
+          }}
         >
           Conveyer
-        </Header.Link>
+        </Link>
         <Box sx={{ flex: 1 }} data-tauri-drag-region />
         <NavLink
           to="/"
@@ -43,15 +42,9 @@ export function Layout() {
         >
           <HomeIcon size={16} />
         </NavLink>
-        <NavLink to="/settings" label="Settings" active={pathname === "/settings"}>
+        <NavLink to="/settings" label="Settings" active={pathname.startsWith("/settings")}>
           <GearIcon size={16} />
         </NavLink>
-        <IconLink
-          onClick={toggle}
-          label={mode === "night" ? "Switch to light mode" : "Switch to dark mode"}
-        >
-          {mode === "night" ? <SunIcon size={16} /> : <MoonIcon size={16} />}
-        </IconLink>
       </Box>
       <Box
         as="main"
@@ -71,9 +64,6 @@ const iconBoxStyle: React.CSSProperties = {
   height: 32,
   borderRadius: 6,
   textDecoration: "none",
-  border: "none",
-  cursor: "pointer",
-  background: "transparent",
 };
 
 function NavLink({
@@ -101,31 +91,5 @@ function NavLink({
     >
       {children}
     </Link>
-  );
-}
-
-function IconLink({
-  onClick,
-  label,
-  children,
-}: {
-  onClick: () => void;
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={label}
-      title={label}
-      data-tauri-drag-region={false}
-      style={{
-        ...iconBoxStyle,
-        color: "var(--fgColor-muted)",
-      }}
-    >
-      {children}
-    </button>
   );
 }

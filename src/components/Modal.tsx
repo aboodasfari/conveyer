@@ -1,5 +1,6 @@
 import { ReactNode } from "react";
-import { Box, Button } from "@primer/react";
+import { Box, IconButton } from "@primer/react";
+import { XIcon } from "@primer/octicons-react";
 
 export interface ModalProps {
   open: boolean;
@@ -9,10 +10,6 @@ export interface ModalProps {
   footer?: ReactNode;
 }
 
-/**
- * Lightweight modal. We deliberately avoid Primer's Dialog because v36 ships
- * two flavours with conflicting types, and this one is plenty.
- */
 export function Modal({ open, title, onClose, children, footer }: ModalProps) {
   if (!open) return null;
   return (
@@ -53,12 +50,16 @@ export function Modal({ open, title, onClose, children, footer }: ModalProps) {
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
+            gap: 3,
           }}
         >
           <strong>{title}</strong>
-          <Button size="small" variant="invisible" onClick={onClose}>
-            Close
-          </Button>
+          <IconButton
+            aria-label="Close"
+            icon={XIcon}
+            variant="invisible"
+            onClick={onClose}
+          />
         </Box>
         <Box sx={{ p: 3, overflowY: "auto" }}>{children}</Box>
         {footer && (

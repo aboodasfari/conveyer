@@ -44,6 +44,7 @@ pub fn run() {
             commands::tasks::tasks_list,
             commands::tasks::tasks_refresh,
             commands::tasks::tasks_add_by_url,
+            commands::tasks::tasks_set_bucket,
             commands::gates::gates_list,
             commands::gates::gates_set,
         ])

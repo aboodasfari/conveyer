@@ -18,6 +18,9 @@ export interface AdoSourceConfig {
   team?: string;
 }
 
+export type Bucket = "active" | "backlog" | "archive";
+export const BUCKETS: Bucket[] = ["active", "backlog", "archive"];
+
 export interface Task {
   id: string;
   source_id: string;
@@ -31,6 +34,7 @@ export interface Task {
   parent_ref: string | null;
   is_self_assigned: number;
   description: string | null;
+  bucket: Bucket;
 }
 
 export interface TaskSummary extends Task {

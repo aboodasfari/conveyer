@@ -35,6 +35,8 @@ export const api = {
     invoke<number>("tasks_refresh", { sourceId }),
   tasksAddByUrl: (sourceId: string, url: string) =>
     invoke<TaskSummary>("tasks_add_by_url", { sourceId, url }),
+  tasksSetBucket: (taskId: string, bucket: string) =>
+    invoke<void>("tasks_set_bucket", { taskId, bucket }),
 
   // gates
   gatesList: () => invoke<Gate[]>("gates_list"),

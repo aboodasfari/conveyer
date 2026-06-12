@@ -1,8 +1,22 @@
 import { useMemo, useState } from "react";
-import { Box, Button, Label, Link as PrimerLink, Text } from "@primer/react";
-import { ChevronDownIcon, ChevronRightIcon, PlayIcon } from "@primer/octicons-react";
+import {
+  ActionList,
+  ActionMenu,
+  Box,
+  Button,
+  IconButton,
+  Label,
+  Link as PrimerLink,
+  Text,
+} from "@primer/react";
+import {
+  ChevronDownIcon,
+  ChevronRightIcon,
+  KebabHorizontalIcon,
+  PlayIcon,
+} from "@primer/octicons-react";
 import { Link } from "react-router-dom";
-import { TaskSummary } from "../types";
+import { Bucket, TaskSummary } from "../types";
 import { StatusBadge } from "./StatusBadge";
 
 interface Node {
@@ -10,13 +24,19 @@ interface Node {
   children: TaskSummary[];
 }
 
-/**
- * Builds a 2-level hierarchy:
- *   - Roots are tasks whose parent_ref is null or not present in our DB
- *   - Their children are tasks pointing at them via parent_ref
- *   - Orphans (children with a parent that disappeared) get promoted to roots
- */
-export function TaskTree({ tasks }: { tasks: TaskSummary[] }) {
+const MOVE_TARGETS: { value: Bucket; label: string }[] = [
+  { value: "active", label: "Move to Active" },
+  { value: "backlog", label: "Move to Backlog" },
+  { value: "archive", label: "Move to Archive" },
+];
+
+export function TaskTree({
+  tasks,
+  onMove,
+}: {
+  tasks: TaskSummary[];
+  onMove?: (taskId: string, to: Bucket) => void;
+}) {
   const nodes = useMemo<Node[]>(() => {
     const bySourceRef = new Map<string, TaskSummary>();
     for (const t of tasks) bySourceRef.set(t.source_ref, t);
@@ -36,22 +56,25 @@ export function TaskTree({ tasks }: { tasks: TaskSummary[] }) {
 
     return tasks
       .filter((t) => rootIds.has(t.source_ref))
-      .map((t) => ({
-        task: t,
-        children: childrenByParent.get(t.source_ref) ?? [],
-      }));
+      .map((t) => ({ task: t, children: childrenByParent.get(t.source_ref) ?? [] }));
   }, [tasks]);
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
       {nodes.map((n) => (
-        <TreeRow key={n.task.id} node={n} />
+        <TreeRow key={n.task.id} node={n} onMove={onMove} />
       ))}
     </Box>
   );
 }
 
-function TreeRow({ node }: { node: Node }) {
+function TreeRow({
+  node,
+  onMove,
+}: {
+  node: Node;
+  onMove?: (taskId: string, to: Bucket) => void;
+}) {
   const [open, setOpen] = useState(true);
   const hasChildren = node.children.length > 0;
 
@@ -63,31 +86,43 @@ function TreeRow({ node }: { node: Node }) {
         borderColor: "border.default",
         borderRadius: 2,
         overflow: "hidden",
+        bg: "canvas.default",
       }}
     >
       <TaskRowInner
         task={node.task}
         toggleIcon={
           hasChildren ? (
-            <button
-              type="button"
-              onClick={() => setOpen((o) => !o)}
+            <IconButton
               aria-label={open ? "Collapse" : "Expand"}
-              style={{
-                background: "transparent",
-                border: "none",
-                cursor: "pointer",
-                color: "inherit",
-                padding: 0,
-                display: "inline-flex",
-              }}
-            >
-              {open ? <ChevronDownIcon /> : <ChevronRightIcon />}
-            </button>
+              icon={open ? ChevronDownIcon : ChevronRightIcon}
+              variant="invisible"
+              size="small"
+              onClick={() => setOpen((o) => !o)}
+            />
           ) : (
-            <Box sx={{ width: 16 }} />
+            <Box sx={{ width: 28 }} />
           )
         }
+        moveMenu={onMove ? (
+          <ActionMenu>
+            <ActionMenu.Anchor>
+              <IconButton aria-label="Move" icon={KebabHorizontalIcon} variant="invisible" />
+            </ActionMenu.Anchor>
+            <ActionMenu.Overlay align="end">
+              <ActionList>
+                {MOVE_TARGETS.filter((m) => m.value !== node.task.bucket).map((m) => (
+                  <ActionList.Item
+                    key={m.value}
+                    onSelect={() => onMove(node.task.id, m.value)}
+                  >
+                    {m.label}
+                  </ActionList.Item>
+                ))}
+              </ActionList>
+            </ActionMenu.Overlay>
+          </ActionMenu>
+        ) : null}
       />
       {hasChildren && open && (
         <Box
@@ -122,10 +157,12 @@ function TreeRow({ node }: { node: Node }) {
 function TaskRowInner({
   task,
   toggleIcon,
+  moveMenu,
   indented,
 }: {
   task: TaskSummary;
   toggleIcon?: React.ReactNode;
+  moveMenu?: React.ReactNode;
   indented?: boolean;
 }) {
   return (
@@ -134,7 +171,7 @@ function TaskRowInner({
         p: indented ? 0 : 3,
         display: "flex",
         alignItems: "center",
-        gap: 3,
+        gap: 2,
       }}
     >
       {toggleIcon}
@@ -162,12 +199,11 @@ function TaskRowInner({
         variant="primary"
         size="small"
         disabled
-        title={task.is_self_assigned === 0
-          ? "Tackle whole story — coming in M3"
-          : "Tackle — coming in M3"}
+        title="Tackle — wires up in M3"
       >
         Tackle
       </Button>
+      {moveMenu}
     </Box>
   );
 }

@@ -1,11 +1,11 @@
 use crate::ado;
 use crate::ado::auth::{header_value, AuthInputs, AuthKind};
-use crate::ado::WorkItem;
+use crate::ado::{is_story_type, WorkItem};
 use crate::error::{AppError, AppResult};
 use crate::models::{AdoSourceConfig, Source, Task};
 use crate::state::AppState;
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use tauri::State;
 use uuid::Uuid;
 
@@ -13,7 +13,7 @@ const SOURCE_COLS: &str =
     "id, kind, name, config_json, pat_env, enabled, created_at, auth_kind, az_account";
 const TASK_COLS: &str =
     "id, source_id, source_ref, title, state, url, source_meta_json,
-     discovered_at, updated_at, parent_ref, is_self_assigned, description";
+     discovered_at, updated_at, parent_ref, is_self_assigned, description, bucket";
 
 #[derive(Debug, Serialize)]
 pub struct TaskSummary {
@@ -81,15 +81,17 @@ pub async fn tasks_list(state: State<'_, AppState>) -> AppResult<Vec<TaskSummary
 
 /// Refresh known + assigned work items for a source.
 ///
+/// Pipeline:
 /// 1. WIQL discovers items currently @me.
 /// 2. We also re-fetch every task already in the DB for this source so
 ///    state changes (incl. items that have since been closed / re-assigned)
 ///    surface in the UI.
-/// 3. We fetch any parent work items referenced by the above set, so the
-///    dashboard can render a story → task hierarchy even when the parent
-///    isn't assigned to the user.
+/// 3. For each fetched item, walk one parent-hop. Only `User Story` / `Bug` /
+///    `Issue` / `Product Backlog Item` parents are kept — Features and Epics
+///    are intentionally hidden so the dashboard groups by story, not by
+///    feature.
 ///
-/// Returns count of rows touched (inserted or updated).
+/// Returns count of rows touched.
 #[tauri::command]
 pub async fn tasks_refresh(state: State<'_, AppState>, source_id: String) -> AppResult<usize> {
     let (src, cfg, auth) = load_ado_source(&state, &source_id).await?;
@@ -112,7 +114,7 @@ pub async fn tasks_refresh(state: State<'_, AppState>, source_id: String) -> App
         }
     }
 
-    // 3. Fetch the union with expanded relations so we get parent links.
+    // 3. First-pass fetch (with relations so we can see parent ids).
     let mut items: Vec<WorkItem> = if all_ids.is_empty() {
         vec![]
     } else {
@@ -120,8 +122,8 @@ pub async fn tasks_refresh(state: State<'_, AppState>, source_id: String) -> App
         ado::fetch_work_items_batch(&cfg, &auth, &ids).await?
     };
 
-    // 4. Find parents referenced by anything we just pulled, fetch the ones
-    //    we don't already have.
+    // 4. Fetch missing parents (one hop). After this we'll decide which
+    //    of them to keep based on type.
     let have: HashSet<i64> = items.iter().map(|w| w.id).collect();
     let missing_parents: Vec<i64> = items
         .iter()
@@ -133,15 +135,27 @@ pub async fn tasks_refresh(state: State<'_, AppState>, source_id: String) -> App
     if !missing_parents.is_empty() {
         let ids: Vec<String> = missing_parents.iter().map(|n| n.to_string()).collect();
         let parents = ado::fetch_work_items_batch(&cfg, &auth, &ids).await?;
-        items.extend(parents);
+        // Only keep story-type parents. Features/Epics are dropped on the floor.
+        items.extend(parents.into_iter().filter(|p| is_story_type(&p.work_item_type)));
     }
 
-    // 5. Upsert everything. Parents pulled only for context are marked
-    //    is_self_assigned = 0 (unless they happen to also be in assigned_ids).
+    // 5. Index everything by id so we can resolve parent types.
+    let by_id: HashMap<i64, WorkItem> =
+        items.iter().cloned().map(|w| (w.id, w)).collect();
+
+    // 6. Upsert. parent_ref only points at a parent we kept AND that is a story.
     let mut changed = 0usize;
     for it in &items {
         let url = work_item_url(&cfg, it.id);
-        let parent_ref = it.parent_id.map(|p| p.to_string());
+        // Stories have no parent_ref shown (they ARE the root in our view).
+        let parent_ref = if is_story_type(&it.work_item_type) {
+            None
+        } else {
+            it.parent_id
+                .and_then(|pid| by_id.get(&pid))
+                .filter(|p| is_story_type(&p.work_item_type))
+                .map(|p| p.id.to_string())
+        };
         let self_assigned = if assigned_ids.remove(&it.id) || assigned_ids.contains(&it.id) {
             1
         } else {
@@ -233,4 +247,44 @@ pub async fn tasks_add_by_url(
     .fetch_one(&state.db)
     .await?;
     Ok(task)
+}
+
+/// Move a task (and, if it is a story-root, all its children) to a bucket.
+/// Valid bucket names: 'active', 'backlog', 'archive'.
+#[tauri::command]
+pub async fn tasks_set_bucket(
+    state: State<'_, AppState>,
+    task_id: String,
+    bucket: String,
+) -> AppResult<()> {
+    if !["active", "backlog", "archive"].contains(&bucket.as_str()) {
+        return Err(AppError::Config(format!("invalid bucket '{bucket}'")));
+    }
+    let row: Option<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT source_id, source_ref, parent_ref FROM tasks WHERE id = ?",
+    )
+    .bind(&task_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let (source_id, source_ref, _parent_ref) =
+        row.ok_or_else(|| AppError::NotFound(format!("task {task_id}")))?;
+
+    let mut tx = state.db.begin().await?;
+    // Update the task itself.
+    sqlx::query("UPDATE tasks SET bucket = ? WHERE id = ?")
+        .bind(&bucket)
+        .bind(&task_id)
+        .execute(&mut *tx)
+        .await?;
+    // And cascade to children pointing at this task as their parent.
+    sqlx::query(
+        "UPDATE tasks SET bucket = ? WHERE source_id = ? AND parent_ref = ?",
+    )
+    .bind(&bucket)
+    .bind(&source_id)
+    .bind(&source_ref)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
 }
