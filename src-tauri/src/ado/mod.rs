@@ -1,18 +1,14 @@
 //! Minimal Azure DevOps REST client.
 //! Only what Conveyer needs: list assigned-to-me work items and fetch one by id.
 
+pub mod auth;
+
 use crate::error::{AppError, AppResult};
 use crate::models::AdoSourceConfig;
-use base64::Engine;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 const API_VERSION: &str = "7.1";
-
-fn auth_header(pat: &str) -> String {
-    let encoded = base64::engine::general_purpose::STANDARD.encode(format!(":{pat}"));
-    format!("Basic {encoded}")
-}
 
 fn client() -> reqwest::Client {
     reqwest::Client::builder()
@@ -51,10 +47,10 @@ struct RawWorkItem {
     fields: Value,
 }
 
-/// Run a WIQL query to find work items currently assigned to the PAT owner.
+/// Run a WIQL query to find work items currently assigned to the caller.
 pub async fn fetch_assigned_work_items(
     cfg: &AdoSourceConfig,
-    pat: &str,
+    auth_header: &str,
 ) -> AppResult<Vec<WorkItem>> {
     let wiql = "SELECT [System.Id] FROM WorkItems \
                 WHERE [System.AssignedTo] = @me \
@@ -66,7 +62,7 @@ pub async fn fetch_assigned_work_items(
     );
     let resp = client()
         .post(&url)
-        .header("Authorization", auth_header(pat))
+        .header("Authorization", auth_header)
         .json(&json!({ "query": wiql }))
         .send()
         .await?
@@ -76,15 +72,14 @@ pub async fn fetch_assigned_work_items(
         return Ok(vec![]);
     }
     let ids: Vec<String> = q.work_items.iter().map(|w| w.id.to_string()).collect();
-    fetch_work_items_batch(cfg, pat, &ids).await
+    fetch_work_items_batch(cfg, auth_header, &ids).await
 }
 
 async fn fetch_work_items_batch(
     cfg: &AdoSourceConfig,
-    pat: &str,
+    auth_header: &str,
     ids: &[String],
 ) -> AppResult<Vec<WorkItem>> {
-    // ADO caps at 200 ids per batch; we expect far fewer here.
     let url = format!(
         "https://dev.azure.com/{}/{}/_apis/wit/workitems?ids={}&fields=System.Id,System.Title,System.State,System.WorkItemType,System.AssignedTo,System.Tags&api-version={}",
         cfg.org,
@@ -94,7 +89,7 @@ async fn fetch_work_items_batch(
     );
     let resp = client()
         .get(&url)
-        .header("Authorization", auth_header(pat))
+        .header("Authorization", auth_header)
         .send()
         .await?
         .error_for_status()?;
@@ -115,24 +110,23 @@ async fn fetch_work_items_batch(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            WorkItem {
-                id: raw.id,
-                title,
-                state,
-                fields: raw.fields,
-            }
+            WorkItem { id: raw.id, title, state, fields: raw.fields }
         })
         .collect())
 }
 
-pub async fn fetch_work_item(cfg: &AdoSourceConfig, pat: &str, id: i64) -> AppResult<WorkItem> {
+pub async fn fetch_work_item(
+    cfg: &AdoSourceConfig,
+    auth_header: &str,
+    id: i64,
+) -> AppResult<WorkItem> {
     let url = format!(
         "https://dev.azure.com/{}/{}/_apis/wit/workitems/{}?api-version={}",
         cfg.org, cfg.project, id, API_VERSION
     );
     let resp = client()
         .get(&url)
-        .header("Authorization", auth_header(pat))
+        .header("Authorization", auth_header)
         .send()
         .await?;
     if !resp.status().is_success() {
@@ -154,17 +148,11 @@ pub async fn fetch_work_item(cfg: &AdoSourceConfig, pat: &str, id: i64) -> AppRe
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    Ok(WorkItem {
-        id: raw.id,
-        title,
-        state,
-        fields: raw.fields,
-    })
+    Ok(WorkItem { id: raw.id, title, state, fields: raw.fields })
 }
 
 /// Best-effort extraction of a work item id from common ADO URL shapes.
 pub fn extract_work_item_id(url: &str) -> Option<i64> {
-    // Matches `/edit/12345`, `/_workitems/edit/12345`, query `?workitem=12345`.
     for sep in ["/edit/", "workitem=", "workItemId="] {
         if let Some(idx) = url.find(sep) {
             let tail = &url[idx + sep.len()..];

@@ -6,7 +6,11 @@ export interface Source {
   pat_env: string;
   enabled: number;
   created_at: string;
+  auth_kind: string;   // 'pat' | 'entra'
+  az_account: string;
 }
+
+export type AuthKind = "pat" | "entra";
 
 export interface AdoSourceConfig {
   org: string;

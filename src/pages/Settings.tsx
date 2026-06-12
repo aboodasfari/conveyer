@@ -5,6 +5,8 @@ import {
   Flash,
   FormControl,
   Heading,
+  Radio,
+  RadioGroup,
   Spinner,
   Text,
   TextInput,
@@ -12,7 +14,7 @@ import {
 } from "@primer/react";
 import { TrashIcon } from "@primer/octicons-react";
 import { api } from "../api";
-import { AdoSourceConfig, Gate, PHASE_KINDS, Source } from "../types";
+import { AdoSourceConfig, AuthKind, Gate, PHASE_KINDS, Source } from "../types";
 
 export function Settings() {
   const [sources, setSources] = useState<Source[]>([]);
@@ -24,7 +26,9 @@ export function Settings() {
   const [org, setOrg] = useState("");
   const [project, setProject] = useState("");
   const [team, setTeam] = useState("");
+  const [authKind, setAuthKind] = useState<AuthKind>("entra");
   const [patEnv, setPatEnv] = useState("ADO_PAT");
+  const [azAccount, setAzAccount] = useState("");
   const [name, setName] = useState("");
 
   const load = async () => {
@@ -54,8 +58,10 @@ export function Settings() {
         config_json: JSON.stringify(cfg),
         pat_env: patEnv,
         enabled: true,
+        auth_kind: authKind,
+        az_account: azAccount,
       });
-      setOrg(""); setProject(""); setTeam(""); setName("");
+      setOrg(""); setProject(""); setTeam(""); setName(""); setAzAccount("");
       setSaved("Source added");
       await load();
     } catch (e) {
@@ -102,8 +108,17 @@ export function Settings() {
             <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="msazure-aks" />
           </FormControl>
           <FormControl>
-            <FormControl.Label>PAT env var</FormControl.Label>
-            <TextInput value={patEnv} onChange={(e) => setPatEnv(e.target.value)} />
+            <FormControl.Label>Auth</FormControl.Label>
+            <RadioGroup name="auth-kind" onChange={(v) => setAuthKind(v as AuthKind)}>
+              <FormControl>
+                <Radio value="entra" checked={authKind === "entra"} />
+                <FormControl.Label>Entra SSO (via `az` CLI)</FormControl.Label>
+              </FormControl>
+              <FormControl>
+                <Radio value="pat" checked={authKind === "pat"} />
+                <FormControl.Label>Personal access token (env var)</FormControl.Label>
+              </FormControl>
+            </RadioGroup>
           </FormControl>
           <FormControl required>
             <FormControl.Label>Organisation</FormControl.Label>
@@ -117,6 +132,27 @@ export function Settings() {
             <FormControl.Label>Team (optional)</FormControl.Label>
             <TextInput value={team} onChange={(e) => setTeam(e.target.value)} />
           </FormControl>
+          {authKind === "pat" ? (
+            <FormControl>
+              <FormControl.Label>PAT env var</FormControl.Label>
+              <TextInput value={patEnv} onChange={(e) => setPatEnv(e.target.value)} />
+              <FormControl.Caption>
+                Conveyer reads this env var at refresh time. Set it in your shell before launching the app.
+              </FormControl.Caption>
+            </FormControl>
+          ) : (
+            <FormControl>
+              <FormControl.Label>az subscription (optional)</FormControl.Label>
+              <TextInput
+                value={azAccount}
+                onChange={(e) => setAzAccount(e.target.value)}
+                placeholder="leave blank for default"
+              />
+              <FormControl.Caption>
+                Uses your local Azure CLI. Make sure `az login` has been done.
+              </FormControl.Caption>
+            </FormControl>
+          )}
         </Box>
         <Box sx={{ mt: 3 }}>
           <Button variant="primary" onClick={addSource} disabled={!org || !project}>
@@ -187,6 +223,10 @@ function Section({ title, subtitle, children }: { title: string; subtitle?: stri
 function SourceRow({ source, onDelete }: { source: Source; onDelete: () => void }) {
   let cfg: AdoSourceConfig | null = null;
   try { cfg = JSON.parse(source.config_json); } catch { /* noop */ }
+  const authLabel =
+    source.auth_kind === "entra"
+      ? `SSO${source.az_account ? ` (${source.az_account})` : ""}`
+      : `PAT env: ${source.pat_env}`;
   return (
     <Box
       sx={{
@@ -204,7 +244,7 @@ function SourceRow({ source, onDelete }: { source: Source; onDelete: () => void 
         <Text sx={{ fontWeight: "bold" }}>{source.name}</Text>
         {cfg && (
           <Text sx={{ display: "block", color: "fg.muted", fontSize: 0 }}>
-            {cfg.org} / {cfg.project}{cfg.team ? ` / ${cfg.team}` : ""} · PAT env: {source.pat_env}
+            {cfg.org} / {cfg.project}{cfg.team ? ` / ${cfg.team}` : ""} · {authLabel}
           </Text>
         )}
       </Box>

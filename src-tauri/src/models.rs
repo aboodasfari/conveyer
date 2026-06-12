@@ -9,6 +9,8 @@ pub struct Source {
     pub pat_env: String,
     pub enabled: i64,
     pub created_at: String,
+    pub auth_kind: String,   // 'pat' | 'entra'
+    pub az_account: String,  // optional subscription/account hint
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

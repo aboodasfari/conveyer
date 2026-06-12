@@ -1,4 +1,5 @@
 use crate::ado;
+use crate::ado::auth::{header_value, AuthInputs, AuthKind};
 use crate::error::{AppError, AppResult};
 use crate::models::{AdoSourceConfig, Source, Task};
 use crate::state::AppState;
@@ -6,11 +7,40 @@ use serde::Serialize;
 use tauri::State;
 use uuid::Uuid;
 
+const SOURCE_COLS: &str =
+    "id, kind, name, config_json, pat_env, enabled, created_at, auth_kind, az_account";
+
 #[derive(Debug, Serialize)]
 pub struct TaskSummary {
     #[serde(flatten)]
     pub task: Task,
     pub run_status: Option<String>,
+}
+
+async fn source_auth_header(src: &Source) -> AppResult<String> {
+    header_value(AuthInputs {
+        kind: AuthKind::parse(&src.auth_kind),
+        pat_env: &src.pat_env,
+        az_account: &src.az_account,
+    })
+    .await
+}
+
+async fn load_ado_source(state: &AppState, source_id: &str) -> AppResult<(Source, AdoSourceConfig, String)> {
+    let src = sqlx::query_as::<_, Source>(&format!(
+        "SELECT {SOURCE_COLS} FROM sources WHERE id=?"
+    ))
+    .bind(source_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("source {source_id}")))?;
+
+    if src.kind != "ado" {
+        return Err(AppError::Config(format!("unsupported source kind {}", src.kind)));
+    }
+    let cfg: AdoSourceConfig = serde_json::from_str(&src.config_json)?;
+    let auth = source_auth_header(&src).await?;
+    Ok((src, cfg, auth))
 }
 
 #[tauri::command]
@@ -31,10 +61,7 @@ pub async fn tasks_list(state: State<'_, AppState>) -> AppResult<Vec<TaskSummary
         .bind(&t.id)
         .fetch_optional(&state.db)
         .await?;
-        out.push(TaskSummary {
-            task: t,
-            run_status: status.map(|r| r.0),
-        });
+        out.push(TaskSummary { task: t, run_status: status.map(|r| r.0) });
     }
     Ok(out)
 }
@@ -42,22 +69,8 @@ pub async fn tasks_list(state: State<'_, AppState>) -> AppResult<Vec<TaskSummary
 /// Trigger an immediate refresh for a single source. Returns count of new/updated tasks.
 #[tauri::command]
 pub async fn tasks_refresh(state: State<'_, AppState>, source_id: String) -> AppResult<usize> {
-    let src = sqlx::query_as::<_, Source>(
-        "SELECT id, kind, name, config_json, pat_env, enabled, created_at FROM sources WHERE id=?",
-    )
-    .bind(&source_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("source {source_id}")))?;
-
-    if src.kind != "ado" {
-        return Err(AppError::Config(format!("unsupported source kind {}", src.kind)));
-    }
-    let cfg: AdoSourceConfig = serde_json::from_str(&src.config_json)?;
-    let pat = std::env::var(&src.pat_env)
-        .map_err(|_| AppError::Config(format!("env var {} not set", src.pat_env)))?;
-
-    let items = ado::fetch_assigned_work_items(&cfg, &pat).await?;
+    let (src, cfg, auth) = load_ado_source(&state, &source_id).await?;
+    let items = ado::fetch_assigned_work_items(&cfg, &auth).await?;
     let mut changed = 0usize;
     for it in items {
         let url = format!(
@@ -98,24 +111,10 @@ pub async fn tasks_add_by_url(
     source_id: String,
     url: String,
 ) -> AppResult<Task> {
-    let src = sqlx::query_as::<_, Source>(
-        "SELECT id, kind, name, config_json, pat_env, enabled, created_at FROM sources WHERE id=?",
-    )
-    .bind(&source_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("source {source_id}")))?;
-
-    if src.kind != "ado" {
-        return Err(AppError::Config("only ADO supported in v1".into()));
-    }
-    let cfg: AdoSourceConfig = serde_json::from_str(&src.config_json)?;
-    let pat = std::env::var(&src.pat_env)
-        .map_err(|_| AppError::Config(format!("env var {} not set", src.pat_env)))?;
-
+    let (src, cfg, auth) = load_ado_source(&state, &source_id).await?;
     let id_num = ado::extract_work_item_id(&url)
         .ok_or_else(|| AppError::Config("could not parse work item id from URL".into()))?;
-    let item = ado::fetch_work_item(&cfg, &pat, id_num).await?;
+    let item = ado::fetch_work_item(&cfg, &auth, id_num).await?;
     let row_id = Uuid::new_v4().to_string();
     sqlx::query(
         "INSERT INTO tasks(id, source_id, source_ref, title, state, url, source_meta_json, updated_at)

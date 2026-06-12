@@ -7,6 +7,8 @@ export interface SourceInput {
   config_json: string;
   pat_env: string;
   enabled: boolean;
+  auth_kind: string;   // 'pat' | 'entra'
+  az_account: string;
 }
 
 export const api = {

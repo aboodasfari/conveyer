@@ -12,14 +12,18 @@ pub struct SourceInput {
     pub config_json: String,
     pub pat_env: String,
     pub enabled: bool,
+    pub auth_kind: String,   // 'pat' | 'entra'
+    pub az_account: String,  // optional, empty = default
 }
+
+const SOURCE_COLS: &str =
+    "id, kind, name, config_json, pat_env, enabled, created_at, auth_kind, az_account";
 
 #[tauri::command]
 pub async fn sources_list(state: State<'_, AppState>) -> AppResult<Vec<Source>> {
-    let rows = sqlx::query_as::<_, Source>(
-        "SELECT id, kind, name, config_json, pat_env, enabled, created_at
-         FROM sources ORDER BY created_at",
-    )
+    let rows = sqlx::query_as::<_, Source>(&format!(
+        "SELECT {SOURCE_COLS} FROM sources ORDER BY created_at"
+    ))
     .fetch_all(&state.db)
     .await?;
     Ok(rows)
@@ -29,8 +33,8 @@ pub async fn sources_list(state: State<'_, AppState>) -> AppResult<Vec<Source>> 
 pub async fn sources_upsert(state: State<'_, AppState>, input: SourceInput) -> AppResult<Source> {
     let id = Uuid::new_v4().to_string();
     sqlx::query(
-        "INSERT INTO sources(id, kind, name, config_json, pat_env, enabled)
-         VALUES(?, ?, ?, ?, ?, ?)",
+        "INSERT INTO sources(id, kind, name, config_json, pat_env, enabled, auth_kind, az_account)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&input.kind)
@@ -38,13 +42,14 @@ pub async fn sources_upsert(state: State<'_, AppState>, input: SourceInput) -> A
     .bind(&input.config_json)
     .bind(&input.pat_env)
     .bind(input.enabled as i64)
+    .bind(&input.auth_kind)
+    .bind(&input.az_account)
     .execute(&state.db)
     .await?;
 
-    let row = sqlx::query_as::<_, Source>(
-        "SELECT id, kind, name, config_json, pat_env, enabled, created_at
-         FROM sources WHERE id = ?",
-    )
+    let row = sqlx::query_as::<_, Source>(&format!(
+        "SELECT {SOURCE_COLS} FROM sources WHERE id = ?"
+    ))
     .bind(&id)
     .fetch_one(&state.db)
     .await?;
@@ -58,19 +63,22 @@ pub async fn sources_update(
     input: SourceInput,
 ) -> AppResult<Source> {
     sqlx::query(
-        "UPDATE sources SET kind=?, name=?, config_json=?, pat_env=?, enabled=? WHERE id=?",
+        "UPDATE sources SET kind=?, name=?, config_json=?, pat_env=?, enabled=?,
+                              auth_kind=?, az_account=? WHERE id=?",
     )
     .bind(&input.kind)
     .bind(&input.name)
     .bind(&input.config_json)
     .bind(&input.pat_env)
     .bind(input.enabled as i64)
+    .bind(&input.auth_kind)
+    .bind(&input.az_account)
     .bind(&id)
     .execute(&state.db)
     .await?;
-    let row = sqlx::query_as::<_, Source>(
-        "SELECT id, kind, name, config_json, pat_env, enabled, created_at FROM sources WHERE id=?",
-    )
+    let row = sqlx::query_as::<_, Source>(&format!(
+        "SELECT {SOURCE_COLS} FROM sources WHERE id=?"
+    ))
     .bind(&id)
     .fetch_one(&state.db)
     .await?;
