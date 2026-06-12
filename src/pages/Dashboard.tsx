@@ -4,25 +4,30 @@ import {
   Button,
   Flash,
   Heading,
-  SegmentedControl,
   Spinner,
   TextInput,
 } from "@primer/react";
 import { PlusIcon, SyncIcon } from "@primer/octicons-react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import { Bucket, BUCKETS, Source, TaskSummary } from "../types";
+import { Bucket, Source, TaskSummary } from "../types";
 import { EmptyState } from "../components/EmptyState";
 import { Modal } from "../components/Modal";
 import { TaskTree } from "../components/TaskTree";
 
-const BUCKET_LABELS: Record<Bucket, string> = {
+const TITLES: Record<Bucket, string> = {
   active: "Active",
   backlog: "Backlog",
   archive: "Archive",
 };
 
-export function Dashboard() {
+const EMPTY_BODY: Record<Bucket, string> = {
+  active: "Refresh to pull from your source, or add by URL.",
+  backlog: "Move stories here from Active when they're not your focus today.",
+  archive: "Move stories here when you're done.",
+};
+
+export function Dashboard({ bucket }: { bucket: Bucket }) {
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,7 +36,6 @@ export function Dashboard() {
   const [addOpen, setAddOpen] = useState(false);
   const [addUrl, setAddUrl] = useState("");
   const [adding, setAdding] = useState(false);
-  const [bucket, setBucket] = useState<Bucket>("active");
 
   const load = useCallback(async () => {
     setError(null);
@@ -87,25 +91,9 @@ export function Dashboard() {
     }
   };
 
-  const counts = useMemo(() => {
-    // Count visible roots per bucket so the user knows where stuff is.
-    const c: Record<Bucket, number> = { active: 0, backlog: 0, archive: 0 };
-    const refsBySource = new Map<string, Set<string>>();
-    for (const t of tasks) {
-      let set = refsBySource.get(t.source_id);
-      if (!set) { set = new Set(); refsBySource.set(t.source_id, set); }
-      set.add(t.source_ref);
-    }
-    for (const t of tasks) {
-      const isRoot = !t.parent_ref || !refsBySource.get(t.source_id)?.has(t.parent_ref);
-      if (isRoot) c[t.bucket as Bucket]++;
-    }
-    return c;
-  }, [tasks]);
-
+  // Filter to this bucket — children inherit their root's bucket if their
+  // root is in the visible set, otherwise show by their own bucket.
   const visible = useMemo(() => {
-    // A child shows iff its root is in the active bucket; for orphaned
-    // children, just use the child's own bucket.
     const bySrcRef = new Map<string, TaskSummary>();
     for (const t of tasks) bySrcRef.set(`${t.source_id}::${t.source_ref}`, t);
     return tasks.filter((t) => {
@@ -123,17 +111,19 @@ export function Dashboard() {
   }
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <Heading as="h1" sx={{ fontSize: 4 }}>Tasks</Heading>
+        <Heading as="h1" sx={{ fontSize: 4 }}>{TITLES[bucket]}</Heading>
         <Box sx={{ display: "flex", gap: 2 }}>
-          <Button
-            leadingVisual={PlusIcon}
-            onClick={() => setAddOpen(true)}
-            disabled={sources.length === 0}
-          >
-            Add by URL
-          </Button>
+          {bucket === "active" && (
+            <Button
+              leadingVisual={PlusIcon}
+              onClick={() => setAddOpen(true)}
+              disabled={sources.length === 0}
+            >
+              Add by URL
+            </Button>
+          )}
           <Button
             leadingVisual={SyncIcon}
             variant="primary"
@@ -147,18 +137,6 @@ export function Dashboard() {
 
       {error && <Flash variant="danger">{error}</Flash>}
 
-      <SegmentedControl aria-label="Bucket" size="small">
-        {BUCKETS.map((b) => (
-          <SegmentedControl.Button
-            key={b}
-            selected={bucket === b}
-            onClick={() => setBucket(b)}
-          >
-            {`${BUCKET_LABELS[b]} (${counts[b]})`}
-          </SegmentedControl.Button>
-        ))}
-      </SegmentedControl>
-
       {sources.length === 0 ? (
         <EmptyState
           title="No source configured"
@@ -171,12 +149,8 @@ export function Dashboard() {
         />
       ) : visible.length === 0 ? (
         <EmptyState
-          title={`Nothing in ${BUCKET_LABELS[bucket]}`}
-          body={
-            bucket === "active"
-              ? "Click Refresh to poll your source, or move something here from Backlog/Archive."
-              : `Move stories here from Active via the move menu.`
-          }
+          title={`Nothing in ${TITLES[bucket]}`}
+          body={EMPTY_BODY[bucket]}
         />
       ) : (
         <TaskTree tasks={visible} onMove={move} />
@@ -184,7 +158,7 @@ export function Dashboard() {
 
       <Modal
         open={addOpen}
-        title="Add task by URL"
+        title="Add Task by URL"
         onClose={() => { setAddOpen(false); setAddUrl(""); }}
         footer={
           <>

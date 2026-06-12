@@ -24,13 +24,17 @@ import {
 import { Modal } from "../components/Modal";
 import { useColorMode } from "../theme";
 
-type Section = "sources" | "gates" | "appearance";
+type Section = "sources" | "execution" | "appearance";
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: "sources", label: "Sources" },
-  { id: "gates", label: "Phase gates" },
+  { id: "execution", label: "Execution" },
   { id: "appearance", label: "Appearance" },
 ];
+
+function titleCase(s: string): string {
+  return s.replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 export function Settings() {
   const [section, setSection] = useState<Section>("sources");
@@ -41,32 +45,57 @@ export function Settings() {
         <Heading as="h1" sx={{ fontSize: 4, mb: 3 }}>Settings</Heading>
         <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
           {SECTIONS.map((s) => (
-            <button
+            <SidebarLink
               key={s.id}
-              type="button"
+              label={s.label}
+              active={section === s.id}
               onClick={() => setSection(s.id)}
-              style={{
-                textAlign: "left",
-                padding: "6px 10px",
-                borderRadius: 6,
-                border: "none",
-                cursor: "pointer",
-                fontSize: 14,
-                background:
-                  section === s.id ? "var(--bgColor-neutral-muted)" : "transparent",
-                color: "var(--fgColor-default)",
-              }}
-            >
-              {s.label}
-            </button>
+            />
           ))}
         </Box>
       </Box>
       <Box>
         {section === "sources" && <SourcesSection />}
-        {section === "gates" && <GatesSection />}
+        {section === "execution" && <ExecutionSection />}
         {section === "appearance" && <AppearanceSection />}
       </Box>
+    </Box>
+  );
+}
+
+function SidebarLink({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Box
+      as="button"
+      onClick={onClick}
+      type="button"
+      sx={{
+        textAlign: "left",
+        px: 2,
+        py: "6px",
+        fontSize: 1,
+        borderRadius: 2,
+        border: "none",
+        cursor: "pointer",
+        color: active ? "fg.default" : "fg.muted",
+        bg: active ? "neutral.muted" : "transparent",
+        fontWeight: active ? 600 : 400,
+        transition: "background-color 80ms",
+        "&:hover": {
+          bg: active ? "neutral.muted" : "neutral.subtle",
+          color: "fg.default",
+        },
+      }}
+    >
+      {label}
     </Box>
   );
 }
@@ -107,7 +136,7 @@ function SourcesSection() {
       <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <Heading as="h2" sx={{ fontSize: 2 }}>Sources</Heading>
         <Button leadingVisual={PlusIcon} variant="primary" onClick={() => setAddOpen(true)}>
-          Add source
+          Add Source
         </Button>
       </Box>
       {error && <Flash variant="danger">{error}</Flash>}
@@ -173,7 +202,6 @@ function AddSourceModal({
   const [step, setStep] = useState<"kind" | "form">("kind");
   const [kind, setKind] = useState<"ado">("ado");
 
-  // form state
   const [org, setOrg] = useState("");
   const [project, setProject] = useState("");
   const [team, setTeam] = useState("");
@@ -217,7 +245,7 @@ function AddSourceModal({
     <Modal
       open={open}
       onClose={close}
-      title={step === "kind" ? "Add source" : "Configure Azure DevOps source"}
+      title={step === "kind" ? "Add Source" : "Configure Azure DevOps Source"}
       footer={
         step === "kind" ? (
           <>
@@ -232,32 +260,43 @@ function AddSourceModal({
               onClick={submit}
               disabled={!org || !project || busy}
             >
-              {busy ? "Testing & saving…" : "Add"}
+              {busy ? "Testing & Saving…" : "Add"}
             </Button>
           </>
         )
       }
     >
       {step === "kind" ? (
-        <FormControl>
-          <FormControl.Label>Source kind</FormControl.Label>
-          <RadioGroup name="src-kind" onChange={(v) => setKind(v as "ado")}>
-            <FormControl>
-              <Radio value="ado" checked={kind === "ado"} />
-              <FormControl.Label>Azure DevOps</FormControl.Label>
-              <FormControl.Caption>
-                Pulls work items assigned to you via WIQL.
-              </FormControl.Caption>
-            </FormControl>
-          </RadioGroup>
-        </FormControl>
+        <RadioGroup name="src-kind" onChange={(v) => setKind(v as "ado")}>
+          <FormControl>
+            <Radio value="ado" checked={kind === "ado"} />
+            <FormControl.Label>Azure DevOps</FormControl.Label>
+          </FormControl>
+        </RadioGroup>
       ) : (
         <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
           {error && <Flash variant="danger">{error}</Flash>}
+          <FormControl>
+            <FormControl.Label>Name</FormControl.Label>
+            <TextInput
+              block
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="msazure-aks"
+            />
+          </FormControl>
           <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3 }}>
+            <FormControl required>
+              <FormControl.Label>Organisation</FormControl.Label>
+              <TextInput value={org} onChange={(e) => setOrg(e.target.value)} placeholder="msazure" />
+            </FormControl>
+            <FormControl required>
+              <FormControl.Label>Project</FormControl.Label>
+              <TextInput value={project} onChange={(e) => setProject(e.target.value)} placeholder="CloudNativeCompute" />
+            </FormControl>
             <FormControl>
-              <FormControl.Label>Name</FormControl.Label>
-              <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="msazure-aks" />
+              <FormControl.Label>Team (optional)</FormControl.Label>
+              <TextInput value={team} onChange={(e) => setTeam(e.target.value)} />
             </FormControl>
             <FormControl>
               <FormControl.Label>Auth</FormControl.Label>
@@ -271,18 +310,6 @@ function AddSourceModal({
                   <FormControl.Label>Personal access token</FormControl.Label>
                 </FormControl>
               </RadioGroup>
-            </FormControl>
-            <FormControl required>
-              <FormControl.Label>Organisation</FormControl.Label>
-              <TextInput value={org} onChange={(e) => setOrg(e.target.value)} placeholder="msazure" />
-            </FormControl>
-            <FormControl required>
-              <FormControl.Label>Project</FormControl.Label>
-              <TextInput value={project} onChange={(e) => setProject(e.target.value)} placeholder="CloudNativeCompute" />
-            </FormControl>
-            <FormControl>
-              <FormControl.Label>Team (optional)</FormControl.Label>
-              <TextInput value={team} onChange={(e) => setTeam(e.target.value)} />
             </FormControl>
             {authKind === "pat" && (
               <FormControl>
@@ -301,10 +328,10 @@ function AddSourceModal({
 }
 
 /* -------------------------------------------------------------------------- */
-/*                                Phase gates                                 */
+/*                                 Execution                                  */
 /* -------------------------------------------------------------------------- */
 
-function GatesSection() {
+function ExecutionSection() {
   const [gates, setGates] = useState<Gate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -333,48 +360,50 @@ function GatesSection() {
   if (loading) return <Spinner />;
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <Heading as="h2" sx={{ fontSize: 2 }}>Execution</Heading>
+      {error && <Flash variant="danger">{error}</Flash>}
+
       <Box>
-        <Heading as="h2" sx={{ fontSize: 2 }}>Phase gates</Heading>
+        <Heading as="h3" sx={{ fontSize: 1, mb: 1 }}>Phase Gates</Heading>
         <Text sx={{ color: "fg.muted", fontSize: 1 }}>
           Phases set to auto-advance proceed without waiting for your approval.
           Submit is terminal so it has no gate.
         </Text>
-      </Box>
-      {error && <Flash variant="danger">{error}</Flash>}
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        {visibleKinds.map((k) => {
-          const g = gates.find((x) => x.phase_kind === k) ?? { phase_kind: k, auto_advance: 0 };
-          const on = g.auto_advance === 1;
-          const labelId = `gate-${k}`;
-          return (
-            <Box
-              key={k}
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                py: 2,
-                borderBottomWidth: 1,
-                borderBottomStyle: "solid",
-                borderBottomColor: "border.muted",
-              }}
-            >
-              <Text id={labelId} sx={{ textTransform: "capitalize" }}>
-                {k}{" "}
-                <Text sx={{ color: "fg.muted", fontSize: 0 }}>
-                  · {on ? "auto-advance" : "wait for me"}
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 3 }}>
+          {visibleKinds.map((k) => {
+            const g = gates.find((x) => x.phase_kind === k) ?? { phase_kind: k, auto_advance: 0 };
+            const on = g.auto_advance === 1;
+            const labelId = `gate-${k}`;
+            return (
+              <Box
+                key={k}
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  py: 2,
+                  borderBottomWidth: 1,
+                  borderBottomStyle: "solid",
+                  borderBottomColor: "border.muted",
+                }}
+              >
+                <Text id={labelId}>
+                  {titleCase(k)}{" "}
+                  <Text sx={{ color: "fg.muted", fontSize: 0 }}>
+                    · {on ? "auto-advance" : "wait for me"}
+                  </Text>
                 </Text>
-              </Text>
-              <ToggleSwitch
-                checked={on}
-                onClick={() => toggleGate(k, g.auto_advance)}
-                aria-labelledby={labelId}
-                size="small"
-              />
-            </Box>
-          );
-        })}
+                <ToggleSwitch
+                  checked={on}
+                  onClick={() => toggleGate(k, g.auto_advance)}
+                  aria-labelledby={labelId}
+                  size="small"
+                />
+              </Box>
+            );
+          })}
+        </Box>
       </Box>
     </Box>
   );

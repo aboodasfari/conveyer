@@ -67,7 +67,7 @@ export function TaskDetail() {
           <Text sx={{ color: "fg.muted", fontSize: 0 }}>·</Text>
           <Text sx={{ color: "fg.muted", fontSize: 0 }}>{task.state}</Text>
           {task.is_self_assigned === 0 && (
-            <Label variant="default" size="small">context</Label>
+            <Label variant="default" size="small">grouping</Label>
           )}
         </Box>
         <Heading as="h1" sx={{ fontSize: 4, mt: 1 }}>{task.title}</Heading>

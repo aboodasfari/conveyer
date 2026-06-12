@@ -18,6 +18,7 @@ import {
 import { Link } from "react-router-dom";
 import { Bucket, TaskSummary } from "../types";
 import { StatusBadge } from "./StatusBadge";
+import { StateChip } from "./StateChip";
 
 interface Node {
   task: TaskSummary;
@@ -53,22 +54,21 @@ export function TaskTree({
         rootIds.add(t.source_ref);
       }
     }
-
     return tasks
       .filter((t) => rootIds.has(t.source_ref))
       .map((t) => ({ task: t, children: childrenByParent.get(t.source_ref) ?? [] }));
   }, [tasks]);
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
       {nodes.map((n) => (
-        <TreeRow key={n.task.id} node={n} onMove={onMove} />
+        <StoryCard key={n.task.id} node={n} onMove={onMove} />
       ))}
     </Box>
   );
 }
 
-function TreeRow({
+function StoryCard({
   node,
   onMove,
 }: {
@@ -87,24 +87,23 @@ function TreeRow({
         borderRadius: 2,
         overflow: "hidden",
         bg: "canvas.default",
+        boxShadow: "shadow.small",
       }}
     >
-      <TaskRowInner
+      <StoryHeader
         task={node.task}
-        toggleIcon={
-          hasChildren ? (
-            <IconButton
-              aria-label={open ? "Collapse" : "Expand"}
-              icon={open ? ChevronDownIcon : ChevronRightIcon}
-              variant="invisible"
-              size="small"
-              onClick={() => setOpen((o) => !o)}
-            />
-          ) : (
-            <Box sx={{ width: 28 }} />
-          )
-        }
-        moveMenu={onMove ? (
+        toggle={hasChildren ? (
+          <IconButton
+            aria-label={open ? "Collapse" : "Expand"}
+            icon={open ? ChevronDownIcon : ChevronRightIcon}
+            variant="invisible"
+            size="small"
+            onClick={() => setOpen((o) => !o)}
+          />
+        ) : (
+          <Box sx={{ width: 28 }} />
+        )}
+        menu={onMove ? (
           <ActionMenu>
             <ActionMenu.Anchor>
               <IconButton aria-label="Move" icon={KebabHorizontalIcon} variant="invisible" />
@@ -125,28 +124,13 @@ function TreeRow({
         ) : null}
       />
       {hasChildren && open && (
-        <Box
-          sx={{
-            borderTopWidth: 1,
-            borderTopStyle: "solid",
-            borderTopColor: "border.muted",
-            bg: "canvas.subtle",
-          }}
-        >
-          {node.children.map((c) => (
-            <Box
+        <Box sx={{ bg: "canvas.inset" }}>
+          {node.children.map((c, i) => (
+            <ChildRow
               key={c.id}
-              sx={{
-                px: 3,
-                py: 2,
-                borderBottomWidth: 1,
-                borderBottomStyle: "solid",
-                borderBottomColor: "border.muted",
-                "&:last-of-type": { borderBottomWidth: 0 },
-              }}
-            >
-              <TaskRowInner task={c} indented />
-            </Box>
+              task={c}
+              last={i === node.children.length - 1}
+            />
           ))}
         </Box>
       )}
@@ -154,56 +138,121 @@ function TreeRow({
   );
 }
 
-function TaskRowInner({
+function StoryHeader({
   task,
-  toggleIcon,
-  moveMenu,
-  indented,
+  toggle,
+  menu,
 }: {
   task: TaskSummary;
-  toggleIcon?: React.ReactNode;
-  moveMenu?: React.ReactNode;
-  indented?: boolean;
+  toggle: React.ReactNode;
+  menu: React.ReactNode;
 }) {
+  const mine = task.is_self_assigned === 1;
   return (
     <Box
       sx={{
-        p: indented ? 0 : 3,
+        px: 3,
+        py: 3,
         display: "flex",
         alignItems: "center",
         gap: 2,
+        transition: "background-color 80ms",
+        "&:hover": { bg: "canvas.subtle" },
       }}
     >
-      {toggleIcon}
+      {toggle}
       <Box sx={{ flex: 1, minWidth: 0 }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 2, mb: 1 }}>
           <PrimerLink
             as={Link}
             to={`/tasks/${task.id}`}
-            sx={{ fontWeight: indented ? "normal" : "bold" }}
+            sx={{
+              fontWeight: 600,
+              fontSize: 2,
+              color: "fg.default",
+              "&:hover": { color: "accent.fg" },
+            }}
           >
             {task.title || `#${task.source_ref}`}
           </PrimerLink>
-          <Text sx={{ color: "fg.muted", fontSize: 0 }}>#{task.source_ref}</Text>
-          {task.is_self_assigned === 0 && (
-            <Label variant="default" size="small">context</Label>
+          <Text sx={{ color: "fg.subtle", fontSize: 0 }}>#{task.source_ref}</Text>
+          {!mine && (
+            <Label variant="default" size="small">grouping</Label>
           )}
         </Box>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <Text sx={{ color: "fg.muted", fontSize: 0 }}>{task.state}</Text>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 3 }}>
+          <StateChip state={task.state} />
           <StatusBadge status={task.run_status} />
         </Box>
       </Box>
-      <Button
-        leadingVisual={PlayIcon}
-        variant="primary"
-        size="small"
-        disabled
-        title="Tackle — wires up in M3"
-      >
-        Tackle
-      </Button>
-      {moveMenu}
+      {mine && (
+        <Button
+          leadingVisual={PlayIcon}
+          variant="primary"
+          size="small"
+          disabled
+          title="Tackle — wires up in M3"
+        >
+          Tackle
+        </Button>
+      )}
+      {menu}
+    </Box>
+  );
+}
+
+function ChildRow({ task, last }: { task: TaskSummary; last: boolean }) {
+  const mine = task.is_self_assigned === 1;
+  return (
+    <Box
+      sx={{
+        px: 3,
+        py: 2,
+        pl: "52px",
+        display: "flex",
+        alignItems: "center",
+        gap: 2,
+        borderBottomWidth: last ? 0 : 1,
+        borderBottomStyle: "solid",
+        borderBottomColor: "border.muted",
+        transition: "background-color 80ms",
+        "&:hover": { bg: "canvas.subtle" },
+      }}
+    >
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 2, mb: 1 }}>
+          <PrimerLink
+            as={Link}
+            to={`/tasks/${task.id}`}
+            sx={{
+              fontWeight: 500,
+              color: "fg.default",
+              "&:hover": { color: "accent.fg" },
+            }}
+          >
+            {task.title || `#${task.source_ref}`}
+          </PrimerLink>
+          <Text sx={{ color: "fg.subtle", fontSize: 0 }}>#{task.source_ref}</Text>
+          {!mine && (
+            <Label variant="default" size="small">grouping</Label>
+          )}
+        </Box>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 3 }}>
+          <StateChip state={task.state} />
+          <StatusBadge status={task.run_status} />
+        </Box>
+      </Box>
+      {mine && (
+        <Button
+          leadingVisual={PlayIcon}
+          variant="primary"
+          size="small"
+          disabled
+          title="Tackle — wires up in M3"
+        >
+          Tackle
+        </Button>
+      )}
     </Box>
   );
 }

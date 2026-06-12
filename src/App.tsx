@@ -11,7 +11,9 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route element={<Layout />}>
-            <Route path="/" element={<Dashboard />} />
+            <Route path="/" element={<Dashboard bucket="active" />} />
+            <Route path="/backlog" element={<Dashboard bucket="backlog" />} />
+            <Route path="/archive" element={<Dashboard bucket="archive" />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/tasks/:id" element={<TaskDetail />} />
             <Route path="*" element={<Navigate to="/" replace />} />
