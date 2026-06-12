@@ -28,8 +28,8 @@ export function Settings() {
   const [team, setTeam] = useState("");
   const [authKind, setAuthKind] = useState<AuthKind>("entra");
   const [patEnv, setPatEnv] = useState("ADO_PAT");
-  const [azAccount, setAzAccount] = useState("");
   const [name, setName] = useState("");
+  const [adding, setAdding] = useState(false);
 
   const load = async () => {
     try {
@@ -50,22 +50,28 @@ export function Settings() {
   const addSource = async () => {
     setError(null);
     setSaved(null);
+    setAdding(true);
     try {
       const cfg: AdoSourceConfig = { org, project, team: team || undefined };
-      await api.sourceUpsert({
+      const input = {
         kind: "ado",
         name: name || `${org}/${project}`,
         config_json: JSON.stringify(cfg),
         pat_env: patEnv,
         enabled: true,
         auth_kind: authKind,
-        az_account: azAccount,
-      });
-      setOrg(""); setProject(""); setTeam(""); setName(""); setAzAccount("");
-      setSaved("Source added");
+        az_account: "",
+      };
+      // Validate before saving so users see auth errors at the form, not on first refresh.
+      await api.sourceTest(input);
+      await api.sourceUpsert(input);
+      setOrg(""); setProject(""); setTeam(""); setName("");
+      setSaved("Source added and reachable.");
       await load();
     } catch (e) {
       setError(String(e));
+    } finally {
+      setAdding(false);
     }
   };
 
@@ -78,12 +84,19 @@ export function Settings() {
     }
   };
 
+  // Optimistic toggle: flip locally first, only roll back if the call fails.
   const toggleGate = async (kind: string, current: number) => {
+    const next = current === 0 ? 1 : 0;
+    setGates((gs) =>
+      gs.map((g) => (g.phase_kind === kind ? { ...g, auto_advance: next } : g)),
+    );
     try {
-      await api.gatesSet(kind, current === 0);
-      await load();
+      await api.gatesSet(kind, next === 1);
     } catch (e) {
       setError(String(e));
+      setGates((gs) =>
+        gs.map((g) => (g.phase_kind === kind ? { ...g, auto_advance: current } : g)),
+      );
     }
   };
 
@@ -142,21 +155,22 @@ export function Settings() {
             </FormControl>
           ) : (
             <FormControl>
-              <FormControl.Label>az subscription (optional)</FormControl.Label>
-              <TextInput
-                value={azAccount}
-                onChange={(e) => setAzAccount(e.target.value)}
-                placeholder="leave blank for default"
-              />
+              <FormControl.Label>Sign-in</FormControl.Label>
+              <TextInput value="Uses your local `az` session" disabled />
               <FormControl.Caption>
-                Uses your local Azure CLI. Make sure `az login` has been done.
+                Run <code>az login</code> beforehand. If your default tenant doesn&apos;t have ADO
+                access, do <code>az account set -s &lt;subscription&gt;</code> first.
               </FormControl.Caption>
             </FormControl>
           )}
         </Box>
         <Box sx={{ mt: 3 }}>
-          <Button variant="primary" onClick={addSource} disabled={!org || !project}>
-            Add source
+          <Button
+            variant="primary"
+            onClick={addSource}
+            disabled={!org || !project || adding}
+          >
+            {adding ? "Testing & saving…" : "Add source"}
           </Button>
         </Box>
 
@@ -169,9 +183,9 @@ export function Settings() {
         )}
       </Section>
 
-      <Section title="Phase gates" subtitle="Phases set to auto-advance proceed without waiting for your approval.">
+      <Section title="Phase gates" subtitle="Phases set to auto-advance proceed without waiting for your approval. Submit is the terminal phase, so it has no gate.">
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          {PHASE_KINDS.map((k) => {
+          {PHASE_KINDS.filter((k) => k !== "submit").map((k) => {
             const g = gates.find((x) => x.phase_kind === k) ?? { phase_kind: k, auto_advance: 0 };
             return (
               <Box
@@ -224,9 +238,7 @@ function SourceRow({ source, onDelete }: { source: Source; onDelete: () => void 
   let cfg: AdoSourceConfig | null = null;
   try { cfg = JSON.parse(source.config_json); } catch { /* noop */ }
   const authLabel =
-    source.auth_kind === "entra"
-      ? `SSO${source.az_account ? ` (${source.az_account})` : ""}`
-      : `PAT env: ${source.pat_env}`;
+    source.auth_kind === "entra" ? "SSO (az)" : `PAT env: ${source.pat_env}`;
   return (
     <Box
       sx={{

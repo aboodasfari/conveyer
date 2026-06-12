@@ -40,6 +40,7 @@ pub fn run() {
             commands::sources::sources_upsert,
             commands::sources::sources_update,
             commands::sources::sources_delete,
+            commands::sources::sources_test,
             commands::tasks::tasks_list,
             commands::tasks::tasks_refresh,
             commands::tasks::tasks_add_by_url,

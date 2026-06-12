@@ -17,6 +17,37 @@ fn client() -> reqwest::Client {
         .expect("reqwest client build")
 }
 
+/// Read the response body when status is an error, and surface a useful
+/// excerpt — ADO often returns a JSON `message` or an HTML sign-in page.
+async fn check(resp: reqwest::Response, ctx: &str) -> AppResult<reqwest::Response> {
+    if resp.status().is_success() {
+        return Ok(resp);
+    }
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    let snippet = excerpt(&body);
+    Err(AppError::Other(format!("{ctx}: HTTP {status} — {snippet}")))
+}
+
+fn excerpt(body: &str) -> String {
+    // Try JSON message field first.
+    if let Ok(v) = serde_json::from_str::<Value>(body) {
+        if let Some(msg) = v.get("message").and_then(|x| x.as_str()) {
+            return msg.to_string();
+        }
+    }
+    // Common ADO sign-in-page heuristic.
+    if body.contains("Sign In") || body.contains("AADSTS") {
+        return "ADO returned a sign-in page; the token is likely for the wrong tenant. Try `az login --tenant <tenant-with-ADO>` or `az account set -s <subscription>`.".into();
+    }
+    let trimmed = body.trim();
+    if trimmed.len() > 240 {
+        format!("{}…", &trimmed[..240])
+    } else {
+        trimmed.to_string()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct WorkItem {
     pub id: i64,
@@ -65,8 +96,8 @@ pub async fn fetch_assigned_work_items(
         .header("Authorization", auth_header)
         .json(&json!({ "query": wiql }))
         .send()
-        .await?
-        .error_for_status()?;
+        .await?;
+    let resp = check(resp, "WIQL query").await?;
     let q: WiqlResult = resp.json().await?;
     if q.work_items.is_empty() {
         return Ok(vec![]);
@@ -91,8 +122,8 @@ async fn fetch_work_items_batch(
         .get(&url)
         .header("Authorization", auth_header)
         .send()
-        .await?
-        .error_for_status()?;
+        .await?;
+    let resp = check(resp, "fetch work items batch").await?;
     let batch: WorkItemsBatch = resp.json().await?;
     Ok(batch
         .value
@@ -129,12 +160,7 @@ pub async fn fetch_work_item(
         .header("Authorization", auth_header)
         .send()
         .await?;
-    if !resp.status().is_success() {
-        return Err(AppError::Other(format!(
-            "ADO returned {} for work item {id}",
-            resp.status()
-        )));
-    }
+    let resp = check(resp, &format!("fetch work item {id}")).await?;
     let raw: RawWorkItem = resp.json().await?;
     let title = raw
         .fields
@@ -149,6 +175,22 @@ pub async fn fetch_work_item(
         .unwrap_or("")
         .to_string();
     Ok(WorkItem { id: raw.id, title, state, fields: raw.fields })
+}
+
+/// Cheap probe: list one project to validate auth + org/project access.
+/// Returns Ok(()) on success, propagates a body-rich error otherwise.
+pub async fn ping(cfg: &AdoSourceConfig, auth_header: &str) -> AppResult<()> {
+    let url = format!(
+        "https://dev.azure.com/{}/_apis/projects?$top=1&api-version={}",
+        cfg.org, API_VERSION
+    );
+    let resp = client()
+        .get(&url)
+        .header("Authorization", auth_header)
+        .send()
+        .await?;
+    let _ = check(resp, "auth probe").await?;
+    Ok(())
 }
 
 /// Best-effort extraction of a work item id from common ADO URL shapes.

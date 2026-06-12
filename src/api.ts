@@ -27,6 +27,7 @@ export const api = {
   sourceUpdate: (id: string, input: SourceInput) =>
     invoke<Source>("sources_update", { id, input }),
   sourceDelete: (id: string) => invoke<void>("sources_delete", { id }),
+  sourceTest: (input: SourceInput) => invoke<void>("sources_test", { input }),
 
   // tasks
   tasksList: () => invoke<TaskSummary[]>("tasks_list"),
