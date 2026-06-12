@@ -594,9 +594,6 @@ function ExecutionSection() {
                   alignItems: "center",
                   justifyContent: "space-between",
                   py: 2,
-                  borderBottomWidth: 1,
-                  borderBottomStyle: "solid",
-                  borderBottomColor: "border.muted",
                 }}
               >
                 <Text id={labelId}>

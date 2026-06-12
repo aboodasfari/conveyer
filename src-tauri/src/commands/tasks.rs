@@ -294,7 +294,7 @@ pub async fn tasks_add_by_url(
 /// run pipeline without needing a real ADO source.
 #[tauri::command]
 pub async fn tasks_seed_demo(state: State<'_, AppState>) -> AppResult<()> {
-    // Default the codebase to the test repo if the user hasn't picked one.
+    // 1. Default the codebase to the test repo if the user hasn't picked one.
     let existing_cb: Option<(String,)> = sqlx::query_as(
         "SELECT value FROM settings WHERE key = 'codebase_path'",
     )
@@ -312,29 +312,78 @@ pub async fn tasks_seed_demo(state: State<'_, AppState>) -> AppResult<()> {
         }
     }
 
-    // Find or create the demo source.
-    let existing: Option<(String,)> = sqlx::query_as(
+    // 2. Wipe the previous demo run from the DB. FK ON DELETE CASCADE takes
+    //    care of tasks -> runs -> phases -> sessions -> messages, so
+    //    deleting the source is enough. Cancel any live runner first to
+    //    avoid orphan child processes writing into a deleted phase.
+    let existing_source: Option<(String,)> = sqlx::query_as(
         "SELECT id FROM sources WHERE kind = 'demo' LIMIT 1",
     )
     .fetch_optional(&state.db)
     .await?;
-    let source_id = match existing {
-        Some((id,)) => id,
-        None => {
-            let id = Uuid::new_v4().to_string();
-            sqlx::query(
-                "INSERT INTO sources(id, kind, name, config_json, pat_env, enabled,
-                                     auth_kind, az_account)
-                 VALUES(?, 'demo', 'Demo (test repo)', '{}', '', 1, 'pat', '')",
-            )
-            .bind(&id)
+    let demo_task_ids: Vec<String> = if let Some((src_id,)) = &existing_source {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT id FROM tasks WHERE source_id = ?",
+        )
+        .bind(src_id)
+        .fetch_all(&state.db)
+        .await?;
+        rows.into_iter().map(|(id,)| id).collect()
+    } else {
+        vec![]
+    };
+    if let Some((src_id,)) = existing_source {
+        sqlx::query("DELETE FROM sources WHERE id = ?")
+            .bind(&src_id)
             .execute(&state.db)
             .await?;
-            id
-        }
-    };
+    }
 
-    // Story + two child tasks. Use stable source_refs so re-seeding is idempotent.
+    // 3. Wipe artifact directories for those tasks. Best-effort.
+    for tid in &demo_task_ids {
+        if let Ok(root) = artifacts_root_for_task(tid) {
+            let _ = tokio::fs::remove_dir_all(root).await;
+        }
+    }
+
+    // 4. Reset the test repo's working tree to its initial state, if the
+    //    user is pointing at our seeded copy. Best-effort.
+    if let Ok(home) = std::env::var("HOME") {
+        let test_repo = format!("{home}/code/conveyer-test-repo");
+        let _ = tokio::process::Command::new("git")
+            .arg("-C")
+            .arg(&test_repo)
+            .arg("reset")
+            .arg("--hard")
+            .arg("HEAD")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await;
+        let _ = tokio::process::Command::new("git")
+            .arg("-C")
+            .arg(&test_repo)
+            .arg("clean")
+            .arg("-fd")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await;
+    }
+
+    // 5. Create a fresh demo source.
+    let source_id = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO sources(id, kind, name, config_json, pat_env, enabled,
+                             auth_kind, az_account)
+         VALUES(?, 'demo', 'Demo (test repo)', '{}', '', 1, 'pat', '')",
+    )
+    .bind(&source_id)
+    .execute(&state.db)
+    .await?;
+
+    // 6. Story + two child tasks. Stable source_refs so identifiers in
+    //    artifacts/<task_id>/ stay readable when grepping.
     let story_ref = "demo-story-1";
     let child_a_ref = "demo-task-1";
     let child_b_ref = "demo-task-2";
@@ -353,6 +402,17 @@ pub async fn tasks_seed_demo(state: State<'_, AppState>) -> AppResult<()> {
     upsert_demo_task(&state, &source_id, child_b_ref, Some(story_ref), "Add optional title to greet()", "Active", task_b_desc).await?;
 
     Ok(())
+}
+
+/// Resolve `<artifacts_root>/<task_id>` for cleanup. Returns Err if no
+/// data dir is configured.
+fn artifacts_root_for_task(task_id: &str) -> AppResult<std::path::PathBuf> {
+    if let Ok(p) = std::env::var("CONVEYER_ARTIFACTS_DIR") {
+        return Ok(std::path::PathBuf::from(p).join(task_id));
+    }
+    let base = dirs::data_dir()
+        .ok_or_else(|| AppError::Config("no data dir".into()))?;
+    Ok(base.join("conveyer").join("artifacts").join(task_id))
 }
 
 async fn upsert_demo_task(
