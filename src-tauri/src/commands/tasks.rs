@@ -217,7 +217,7 @@ pub async fn tasks_add_by_url(
 ) -> AppResult<Task> {
     let (src, cfg, auth) = load_ado_source(&state, &source_id).await?;
     let id_num = ado::extract_work_item_id(&url)
-        .ok_or_else(|| AppError::Config("could not parse work item id from URL".into()))?;
+        .ok_or_else(|| AppError::Config("Could not parse work item ID from URL.".into()))?;
     let item = ado::fetch_work_item(&cfg, &auth, id_num).await?;
     let row_id = Uuid::new_v4().to_string();
     let parent_ref = item.parent_id.map(|p| p.to_string());

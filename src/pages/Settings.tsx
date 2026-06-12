@@ -25,6 +25,7 @@ import {
 import { Modal } from "../components/Modal";
 import { useColorMode } from "../theme";
 import { loadRefreshInterval, saveRefreshInterval } from "../autoRefresh";
+import { formatError } from "../errors";
 
 type Section = "sources" | "execution" | "appearance";
 
@@ -121,7 +122,7 @@ function SourcesSection() {
       setIntervalMin(i);
       setIntervalDraft(String(i));
     } catch (e) {
-      setError(String(e));
+      setError(formatError(e));
     } finally {
       setLoading(false);
     }
@@ -134,7 +135,7 @@ function SourcesSection() {
       await api.sourceDelete(id);
       await load();
     } catch (e) {
-      setError(String(e));
+      setError(formatError(e));
     }
   };
 
@@ -151,7 +152,7 @@ function SourcesSection() {
       await saveRefreshInterval(n);
       setIntervalMin(n);
     } catch (e) {
-      setError(String(e));
+      setError(formatError(e));
       setIntervalDraft(String(intervalMin));
     }
   };
@@ -282,7 +283,7 @@ function AddSourceModal({
       reset();
       onAdded();
     } catch (e) {
-      setError(String(e));
+      setError(formatError(e));
     } finally {
       setBusy(false);
     }
@@ -293,6 +294,7 @@ function AddSourceModal({
       open={open}
       onClose={close}
       title={step === "kind" ? "Add Source" : "Configure Azure DevOps Source"}
+      error={step === "form" ? error : null}
       footer={
         step === "kind" ? (
           <>
@@ -322,7 +324,6 @@ function AddSourceModal({
         </RadioGroup>
       ) : (
         <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
-          {error && <Flash variant="danger">{error}</Flash>}
           <FormControl>
             <FormControl.Label>Name</FormControl.Label>
             <TextInput
@@ -386,7 +387,7 @@ function ExecutionSection() {
   const load = async () => {
     try {
       setGates(await api.gatesList());
-    } catch (e) { setError(String(e)); } finally { setLoading(false); }
+    } catch (e) { setError(formatError(e)); } finally { setLoading(false); }
   };
 
   useEffect(() => { void load(); }, []);
@@ -397,7 +398,7 @@ function ExecutionSection() {
     try {
       await api.gatesSet(kind, next === 1);
     } catch (e) {
-      setError(String(e));
+      setError(formatError(e));
       setGates((gs) => gs.map((g) => g.phase_kind === kind ? { ...g, auto_advance: current } : g));
     }
   };

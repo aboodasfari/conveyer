@@ -15,6 +15,7 @@ import { Bucket, Source, TaskSummary } from "../types";
 import { EmptyState } from "../components/EmptyState";
 import { Modal } from "../components/Modal";
 import { TaskTree } from "../components/TaskTree";
+import { formatError } from "../errors";
 
 const TITLES: Record<Bucket, string> = {
   active: "Active",
@@ -37,6 +38,7 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
   const [addOpen, setAddOpen] = useState(false);
   const [addUrl, setAddUrl] = useState("");
   const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -45,7 +47,7 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
       setTasks(t);
       setSources(s.filter((x) => x.enabled));
     } catch (e) {
-      setError(String(e));
+      setError(formatError(e));
     } finally {
       setLoading(false);
     }
@@ -62,7 +64,7 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
       for (const s of sources) await api.tasksRefresh(s.id);
       await load();
     } catch (e) {
-      setError(String(e));
+      setError(formatError(e));
     } finally {
       setRefreshing(false);
     }
@@ -71,14 +73,14 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
   const addByUrl = async () => {
     if (sources.length === 0 || !addUrl.trim()) return;
     setAdding(true);
-    setError(null);
+    setAddError(null);
     try {
       await api.tasksAddByUrl(sources[0].id, addUrl.trim());
       setAddUrl("");
       setAddOpen(false);
       await load();
     } catch (e) {
-      setError(String(e));
+      setAddError(formatError(e));
     } finally {
       setAdding(false);
     }
@@ -89,7 +91,7 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
       await api.tasksSetBucket(taskId, to);
       await load();
     } catch (e) {
-      setError(String(e));
+      setError(formatError(e));
     }
   };
 
@@ -161,10 +163,11 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
       <Modal
         open={addOpen}
         title="Add Task by URL"
-        onClose={() => { setAddOpen(false); setAddUrl(""); }}
+        error={addError}
+        onClose={() => { setAddOpen(false); setAddUrl(""); setAddError(null); }}
         footer={
           <>
-            <Button onClick={() => { setAddOpen(false); setAddUrl(""); }}>Cancel</Button>
+            <Button onClick={() => { setAddOpen(false); setAddUrl(""); setAddError(null); }}>Cancel</Button>
             <Button
               variant="primary"
               onClick={addByUrl}

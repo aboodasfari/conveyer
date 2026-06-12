@@ -1,5 +1,5 @@
-import { ReactNode } from "react";
-import { Box, IconButton } from "@primer/react";
+import { ReactNode, useEffect } from "react";
+import { Box, Flash, IconButton } from "@primer/react";
 import { XIcon } from "@primer/octicons-react";
 
 export interface ModalProps {
@@ -8,9 +8,23 @@ export interface ModalProps {
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
+  /** Optional error string shown inline at the top of the body. */
+  error?: string | null;
 }
 
-export function Modal({ open, title, onClose, children, footer }: ModalProps) {
+export function Modal({ open, title, onClose, children, footer, error }: ModalProps) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
   if (!open) return null;
   return (
     <Box
@@ -61,7 +75,10 @@ export function Modal({ open, title, onClose, children, footer }: ModalProps) {
             onClick={onClose}
           />
         </Box>
-        <Box sx={{ p: 3, overflowY: "auto" }}>{children}</Box>
+        <Box sx={{ p: 3, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 }}>
+          {error && <Flash variant="danger">{error}</Flash>}
+          {children}
+        </Box>
         {footer && (
           <Box
             sx={{

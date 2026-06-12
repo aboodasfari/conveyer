@@ -28,9 +28,15 @@ export function AppTheme({ children }: { children: ReactNode }) {
     localStorage.setItem(STORAGE_KEY, mode);
     document.documentElement.style.background =
       mode === "night" ? "#0d1117" : "#ffffff";
-    // Prevent horizontal scroll on the document; titles etc. truncate instead.
-    document.documentElement.style.overflowX = "hidden";
-    document.body.style.overflowX = "hidden";
+    // `clip` (not `hidden`) so we don't turn <body> into a scroll container —
+    // that would break `position: sticky` on the header AND window-level
+    // scroll restoration. `clip` just hides overflow without creating one.
+    document.documentElement.style.overflowX = "clip";
+    document.body.style.overflowX = "clip";
+    // Kill macOS rubber-band so the sticky header doesn't bounce at the
+    // top/bottom edges.
+    document.documentElement.style.overscrollBehavior = "none";
+    document.body.style.overscrollBehavior = "none";
   }, [mode]);
 
   const ctx: ThemeCtx = {
