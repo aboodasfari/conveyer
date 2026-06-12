@@ -44,3 +44,7 @@ You are working inside `{{CODEBASE_PATH}}`. Treat it as the only source of truth
 ## Outputs
 
 When you produce a document, write it to `{{ARTIFACT_PATH}}`. The contents of that file will be displayed to the user in the Conveyer UI. Markdown is preferred.
+
+## Skills
+
+You have skills available via the **superpowers** plugin. Always check whether a skill applies before starting work — if one does, invoke it via the `skill` tool by its exact name (e.g. `brainstorming`, `writing-plans`, `executing-plans`, `test-driven-development`, `systematic-debugging`, `verification-before-completion`). A skill applies even when there is a small chance it could help; err on the side of invoking. Each phase prompt lists the skills most likely to be relevant for that phase.

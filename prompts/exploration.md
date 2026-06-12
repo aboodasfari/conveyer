@@ -6,6 +6,11 @@
 
 Research the task and the relevant parts of the codebase. Produce a context document that will inform the planning phase.
 
+## Relevant skills
+
+- `systematic-debugging` — if the task is fixing a bug, follow this before forming hypotheses.
+- `dispatching-parallel-agents` — for breadth-first investigation across many independent areas.
+
 ## Goals
 
 1. Identify the files, modules, or systems that this task touches.

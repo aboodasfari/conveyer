@@ -36,6 +36,7 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
+import os from "node:os";
 
 const env = process.env;
 
@@ -174,6 +175,8 @@ async function runCopilot(phase, prompt) {
       streaming: true,
       workingDirectory: env.CONVEYER_CODEBASE_PATH || process.cwd(),
       onPermissionRequest: approveAll ?? (() => ({ decision: "approve_once" })),
+      enableSkills: true,
+      pluginDirectories: await discoverPluginDirs(),
     };
     if (env.CONVEYER_COPILOT_REASONING) {
       sessionConfig.reasoningEffort = env.CONVEYER_COPILOT_REASONING;
@@ -282,6 +285,37 @@ async function checkArtifactWritten() {
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Discover Copilot plugin directories so the SDK loads the same skills
+ * the user gets in the interactive CLI (e.g. superpowers).
+ *
+ * Plugins are installed under `~/.copilot/installed-plugins/<source>/<name>/`.
+ * We also honour CONVEYER_PLUGIN_DIRS (colon-separated) for overrides.
+ */
+async function discoverPluginDirs() {
+  const dirs = [];
+  if (env.CONVEYER_PLUGIN_DIRS) {
+    for (const p of env.CONVEYER_PLUGIN_DIRS.split(":").map((s) => s.trim()).filter(Boolean)) {
+      dirs.push(p);
+    }
+  }
+  const root = path.join(os.homedir(), ".copilot", "installed-plugins");
+  try {
+    const sources = await fs.readdir(root, { withFileTypes: true });
+    for (const s of sources) {
+      if (!s.isDirectory()) continue;
+      const sourcePath = path.join(root, s.name);
+      const plugins = await fs.readdir(sourcePath, { withFileTypes: true });
+      for (const p of plugins) {
+        if (p.isDirectory()) dirs.push(path.join(sourcePath, p.name));
+      }
+    }
+  } catch {
+    // No plugins directory — fine, just return whatever was in the env.
+  }
+  return dirs;
 }
 
 async function writeArtifact(body) {

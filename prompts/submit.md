@@ -5,6 +5,10 @@
 
 Open a draft pull request for the work in this branch.
 
+## Relevant skills
+
+- `finishing-a-development-branch` — covers the full handoff: branch hygiene, PR body, checks.
+
 ## Goals
 
 1. Push the current branch to the remote (use the same name as the local branch).

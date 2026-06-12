@@ -5,6 +5,11 @@
 
 Perform a thorough review of the implementation against the original task and plan. You may read any file in the codebase to verify behaviour; you are not limited to the diff.
 
+## Relevant skills
+
+- `requesting-code-review` — the canonical checklist of what to look for in a review.
+- `verification-before-completion` — confirm the implementation actually works before approving.
+
 ## Goals
 
 1. Confirm the implementation does what the task description asked for, no more and no less.

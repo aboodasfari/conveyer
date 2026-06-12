@@ -5,6 +5,12 @@
 
 Implement the plan from the previous phase. Make focused changes, commit nothing — Conveyer captures the diff for you.
 
+## Relevant skills
+
+- `executing-plans` — follow this to work through the plan step by step.
+- `test-driven-development` — for any new behaviour, write the test first.
+- `subagent-driven-development` — for independent tasks that can be parallelised.
+
 ## Goals
 
 1. Apply the steps from the plan.

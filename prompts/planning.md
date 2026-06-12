@@ -5,6 +5,11 @@
 
 Use the context document from exploration to produce an implementation plan.
 
+## Relevant skills
+
+- `brainstorming` — invoke before drafting the plan to explore alternative approaches.
+- `writing-plans` — the canonical guide for what a good plan looks like. Follow it.
+
 ## Goals
 
 1. Decompose the work into small, ordered, independently verifiable steps.
