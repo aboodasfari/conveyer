@@ -54,10 +54,10 @@ export function TabStrip<T extends string>({
               background: "transparent",
               border: "none",
               cursor: "pointer",
+              userSelect: "none",
               borderBottomWidth: 2,
               borderBottomStyle: "solid",
               borderBottomColor: isActive ? "accent.fg" : "transparent",
-              // Stitch onto the strip's bottom border without a double line.
               mb: "-1px",
               transition: "color 80ms, border-color 80ms",
               "&:hover": { color: "fg.default" },

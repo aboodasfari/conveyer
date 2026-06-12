@@ -176,7 +176,7 @@ function StoryHeader({
         display: "flex",
         alignItems: "center",
         gap: 2,
-        cursor: "pointer",
+        cursor: "pointer", userSelect: "none",
         transition: "background-color 80ms",
         "&:hover": { bg: "canvas.subtle" },
       }}
@@ -254,7 +254,7 @@ function ChildRow({ task, last }: { task: TaskSummary; last: boolean }) {
         display: "flex",
         alignItems: "center",
         gap: 2,
-        cursor: "pointer",
+        cursor: "pointer", userSelect: "none",
         borderBottomWidth: last ? 0 : 1,
         borderBottomStyle: "solid",
         borderBottomColor: "border.muted",

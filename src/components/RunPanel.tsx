@@ -204,22 +204,23 @@ export function RunPanel({ taskId }: { taskId: string }) {
   }
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 2, height: "100%", minHeight: 0 }}>
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 2, flex: 1, minHeight: 0 }}>
       {error && <Flash variant="danger">{error}</Flash>}
 
       <Box
         sx={{
           display: "grid",
-          gridTemplateColumns: collapsed ? "auto 1fr" : "300px 1fr",
+          gridTemplateColumns: collapsed ? "40px 1fr" : "300px 1fr",
+          gridTemplateRows: "1fr",
           gap: 3,
           alignItems: "stretch",
           flex: 1,
           minHeight: 0,
-          transition: "grid-template-columns 120ms",
+          transition: "grid-template-columns 200ms ease",
         }}
       >
         {collapsed ? (
-          <Box sx={{ display: "flex", alignItems: "flex-start", pt: 1 }}>
+          <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "center", pt: 1 }}>
             <IconButton
               aria-label="Expand phases"
               icon={ChevronRightIcon}
@@ -382,6 +383,7 @@ function PhaseRow({
         gap: 2,
         px: 2,
         cursor: "pointer",
+        userSelect: "none",
         bg: selected ? "accent.subtle" : "transparent",
         borderLeftWidth: 3,
         borderLeftStyle: "solid",
@@ -505,27 +507,9 @@ function PhaseContent({
 
   return (
     <>
-      <Box
-        sx={{
-          px: 3,
-          pt: 3,
-          display: "flex",
-          flexDirection: "column",
-          gap: 2,
-          flexShrink: 0,
-        }}
-      >
-        <Box sx={{ display: "flex", alignItems: "baseline", gap: 2 }}>
-          <Text sx={{ fontWeight: 600, fontSize: 2 }}>
-            {PHASE_LABELS[phase.kind] ?? phase.kind}
-          </Text>
-          <Text sx={{ color: "fg.muted", fontSize: 0 }}>
-            · {STATE_LABELS[phase.status] ?? phase.status}
-          </Text>
-        </Box>
+      <Box sx={{ px: 3, pt: 3, flexShrink: 0 }}>
         <TabStrip<string> tabs={tabs} active={tab} onChange={onTabChange} />
       </Box>
-
       <Box sx={{ p: 4, flex: 1, overflowY: "auto", color: "fg.muted" }}>
         <Text>{placeholder}</Text>
         <Text sx={{ display: "block", mt: 3, fontSize: 0 }}>
