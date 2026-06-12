@@ -44,7 +44,7 @@ export function StatusBadge({
   const v = variantMap[status] ?? "default";
   if (phase && (status === "running" || status === "waiting")) {
     const phaseLabel = PHASE_TITLE[phase] ?? phase;
-    const suffix = status === "waiting" ? "awaiting approval" : "in progress";
+    const suffix = status === "waiting" ? "Awaiting Approval" : "In Progress";
     return <Label variant={v}>{`${phaseLabel} · ${suffix}`}</Label>;
   }
   return <Label variant={v}>{labelMap[status] ?? status}</Label>;
