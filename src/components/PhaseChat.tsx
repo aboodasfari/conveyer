@@ -139,6 +139,18 @@ export function PhaseChat({ phaseId }: { phaseId: string }) {
 
   useEffect(() => { void load(); }, [load]);
 
+  // Re-load when the run state changes (so session.status flips
+  // running -> done and the streaming pulse stops).
+  useEffect(() => {
+    let unlisten: UnlistenFn | null = null;
+    let cancelled = false;
+    void (async () => {
+      unlisten = await listen("run_updated", () => { void load(); });
+      if (cancelled) unlisten();
+    })();
+    return () => { cancelled = true; if (unlisten) unlisten(); };
+  }, [load]);
+
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
     let cancelled = false;
@@ -211,12 +223,19 @@ export function PhaseChat({ phaseId }: { phaseId: string }) {
         fontFamily: "mono",
         fontSize: 1,
         lineHeight: 1.45,
+        pr: 3,
       }}
     >
       {bubbles.length === 0 ? (
         <Text sx={{ color: "fg.muted" }}>Session started; awaiting output.</Text>
       ) : (
-        bubbles.map((b) => <BubbleView key={b.id} bubble={b} />)
+        bubbles.map((b, i) => (
+          <BubbleView
+            key={b.id}
+            bubble={b}
+            streaming={session.status === "running" && i === bubbles.length - 1}
+          />
+        ))
       )}
     </Box>
   );
@@ -226,19 +245,108 @@ export function PhaseChat({ phaseId }: { phaseId: string }) {
 /*                                  Bubbles                                   */
 /* -------------------------------------------------------------------------- */
 
-function BubbleView({ bubble }: { bubble: Bubble }) {
-  if (bubble.kind === "tool") return <ToolBubbleView bubble={bubble} />;
-  if (bubble.kind === "thinking") return <ThinkingBubble content={bubble.content} />;
+function BubbleView({ bubble, streaming }: { bubble: Bubble; streaming: boolean }) {
+  if (bubble.kind === "tool") return <ToolBubbleView bubble={bubble} streaming={streaming} />;
+  if (bubble.kind === "thinking") return <ThinkingBubble content={bubble.content} streaming={streaming} />;
   if (bubble.kind === "user") return <UserBubble content={bubble.content} />;
-  if (bubble.kind === "assistant") return <AssistantBubble content={bubble.content} />;
+  if (bubble.kind === "assistant") return <AssistantBubble content={bubble.content} streaming={streaming} />;
   return <SystemBubble content={bubble.content} />;
 }
 
-/** Agent: normal-weight prose, rendered as markdown. */
-function AssistantBubble({ content }: { content: string }) {
+/* -------------------------------------------------------------------------- */
+/*                            Gutter markers                                  */
+/* -------------------------------------------------------------------------- */
+
+const GUTTER_WIDTH = 18;
+
+/** Pulse animation keyframes (injected once, globally). */
+const PULSE_KEYFRAMES = `
+@keyframes conveyerPulse {
+  0%   { opacity: 1;   transform: scale(1);   }
+  50%  { opacity: 0.4; transform: scale(0.7); }
+  100% { opacity: 1;   transform: scale(1);   }
+}`;
+if (typeof document !== "undefined" && !document.getElementById("conveyer-pulse-kf")) {
+  const style = document.createElement("style");
+  style.id = "conveyer-pulse-kf";
+  style.textContent = PULSE_KEYFRAMES;
+  document.head.appendChild(style);
+}
+
+function Gutter({
+  marker,
+  streaming = false,
+}: {
+  marker: React.ReactNode;
+  streaming?: boolean;
+}) {
   return (
-    <Box sx={{ pl: 3, color: "fg.default", fontSize: 1, lineHeight: 1.55 }}>
-      <RichText content={content} />
+    <Box
+      aria-hidden
+      sx={{
+        width: GUTTER_WIDTH,
+        flexShrink: 0,
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "flex-start",
+        pt: "5px",
+        animation: streaming ? "conveyerPulse 1.2s ease-in-out infinite" : "none",
+      }}
+    >
+      {marker}
+    </Box>
+  );
+}
+
+/** Solid filled circle. */
+function FilledDot({ color = "fg.default", size = 8 }: { color?: string; size?: number }) {
+  return <Box sx={{ width: size, height: size, borderRadius: "50%", bg: color }} />;
+}
+
+/** Half-filled circle (right half empty, like ◐). */
+function HalfDot({ color = "fg.muted", size = 10 }: { color?: string; size?: number }) {
+  return (
+    <Box
+      sx={{
+        width: size,
+        height: size,
+        borderRadius: "50%",
+        border: "1.5px solid",
+        borderColor: color,
+        background: `linear-gradient(90deg, currentColor 50%, transparent 50%)`,
+        color,
+      }}
+    />
+  );
+}
+
+/** Hollow ring. */
+function RingDot({ color = "fg.muted", size = 8 }: { color?: string; size?: number }) {
+  return (
+    <Box
+      sx={{
+        width: size,
+        height: size,
+        borderRadius: "50%",
+        border: "1.5px solid",
+        borderColor: color,
+      }}
+    />
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                  Bubbles                                   */
+/* -------------------------------------------------------------------------- */
+
+/** Agent: normal-weight prose, rendered as markdown. */
+function AssistantBubble({ content, streaming }: { content: string; streaming: boolean }) {
+  return (
+    <Box sx={{ display: "flex", gap: 1 }}>
+      <Gutter marker={<FilledDot color="accent.fg" size={9} />} streaming={streaming} />
+      <Box sx={{ flex: 1, color: "fg.default", fontSize: 1, lineHeight: 1.55, minWidth: 0 }}>
+        <RichText content={content} />
+      </Box>
     </Box>
   );
 }
@@ -246,9 +354,21 @@ function AssistantBubble({ content }: { content: string }) {
 /** User: prepended with a chevron, like a shell prompt. */
 function UserBubble({ content }: { content: string }) {
   return (
-    <Box sx={{ display: "flex", gap: 2, pl: 1, color: "accent.fg" }}>
-      <Text sx={{ flexShrink: 0 }}>›</Text>
-      <Box sx={{ flex: 1, color: "fg.default", whiteSpace: "pre-wrap" }}>{content}</Box>
+    <Box sx={{ display: "flex", gap: 1, color: "accent.fg" }}>
+      <Box
+        aria-hidden
+        sx={{
+          width: GUTTER_WIDTH,
+          flexShrink: 0,
+          display: "flex",
+          justifyContent: "center",
+          pt: "1px",
+          fontWeight: 700,
+        }}
+      >
+        ›
+      </Box>
+      <Box sx={{ flex: 1, color: "fg.default", whiteSpace: "pre-wrap", minWidth: 0 }}>{content}</Box>
     </Box>
   );
 }
@@ -256,32 +376,47 @@ function UserBubble({ content }: { content: string }) {
 /** System: muted italics, terse. */
 function SystemBubble({ content }: { content: string }) {
   return (
-    <Box
-      sx={{
-        pl: 3,
-        color: "fg.muted",
-        fontStyle: "italic",
-        fontSize: 0,
-        whiteSpace: "pre-wrap",
-      }}
-    >
-      {content}
+    <Box sx={{ display: "flex", gap: 1 }}>
+      <Gutter marker={<RingDot color="fg.muted" size={7} />} />
+      <Box
+        sx={{
+          flex: 1,
+          color: "fg.muted",
+          fontStyle: "italic",
+          fontSize: 0,
+          whiteSpace: "pre-wrap",
+          minWidth: 0,
+        }}
+      >
+        {content}
+      </Box>
     </Box>
   );
 }
 
-/** Thinking: same muted italics, but slightly different colour for the eye. */
-function ThinkingBubble({ content }: { content: string }) {
+/** Thinking: half-filled marker, muted italics, no inline label. */
+function ThinkingBubble({ content, streaming }: { content: string; streaming: boolean }) {
   return (
-    <Box sx={{ pl: 3, color: "fg.muted", fontStyle: "italic", fontSize: 0 }}>
-      <Text sx={{ mr: 1 }}>thinking ·</Text>
-      <Text>{content}</Text>
+    <Box sx={{ display: "flex", gap: 1 }}>
+      <Gutter marker={<HalfDot color="fg.muted" size={9} />} streaming={streaming} />
+      <Box
+        sx={{
+          flex: 1,
+          color: "fg.muted",
+          fontStyle: "italic",
+          fontSize: 0,
+          whiteSpace: "pre-wrap",
+          minWidth: 0,
+        }}
+      >
+        {content}
+      </Box>
     </Box>
   );
 }
 
 /** Tool call: collapsible block with header summary + expandable details. */
-function ToolBubbleView({ bubble }: { bubble: ToolBubble }) {
+function ToolBubbleView({ bubble, streaming }: { bubble: ToolBubble; streaming?: boolean }) {
   const [open, setOpen] = useState(false);
 
   const summary = describeTool(bubble);
@@ -295,6 +430,7 @@ function ToolBubbleView({ bubble }: { bubble: ToolBubble }) {
     bubble.result ||
     bubble.error
   );
+  const pulse = !bubble.done || streaming;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
@@ -306,7 +442,7 @@ function ToolBubbleView({ bubble }: { bubble: ToolBubble }) {
         sx={{
           display: "flex",
           alignItems: "flex-start",
-          gap: 2,
+          gap: 1,
           textAlign: "left",
           background: "transparent",
           border: "none",
@@ -321,15 +457,24 @@ function ToolBubbleView({ bubble }: { bubble: ToolBubble }) {
         <Box
           aria-hidden
           sx={{
-            width: 10,
-            height: 10,
-            borderRadius: "50%",
-            bg: dotColor,
-            mt: "6px",
+            width: GUTTER_WIDTH,
             flexShrink: 0,
-            boxShadow: !bubble.done ? "0 0 0 3px rgba(210,153,34,0.2)" : "none",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "flex-start",
+            pt: "5px",
+            animation: pulse ? "conveyerPulse 1.2s ease-in-out infinite" : "none",
           }}
-        />
+        >
+          <Box
+            sx={{
+              width: 9,
+              height: 9,
+              borderRadius: "50%",
+              bg: dotColor,
+            }}
+          />
+        </Box>
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Box sx={{ display: "flex", alignItems: "baseline", gap: 2 }}>
             <Text sx={{ fontWeight: 600 }}>{summary.title}</Text>
