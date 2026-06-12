@@ -1,27 +1,31 @@
 import { ReactNode } from "react";
 import { Box, Heading, Text } from "@primer/react";
 
-/** Bordered card used to group related settings under a labelled section. */
+/**
+ * Subsection treatment used across Settings: a labelled block separated
+ * from siblings by a top border. The first subsection in a list naturally
+ * has no separator above it (use `noBorder`).
+ */
 export function SubSection({
   title,
   description,
   actions,
+  noBorder,
   children,
 }: {
   title: string;
   description?: ReactNode;
   actions?: ReactNode;
+  noBorder?: boolean;
   children: ReactNode;
 }) {
   return (
     <Box
       sx={{
-        borderWidth: 1,
-        borderStyle: "solid",
-        borderColor: "border.default",
-        borderRadius: 2,
-        p: 4,
-        bg: "canvas.default",
+        pt: noBorder ? 0 : 4,
+        borderTopWidth: noBorder ? 0 : 1,
+        borderTopStyle: "solid",
+        borderTopColor: "border.muted",
       }}
     >
       <Box

@@ -162,7 +162,7 @@ function SourcesSection() {
   };
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 5 }}>
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <Heading as="h2" sx={{ fontSize: 2 }}>Sources</Heading>
       </Box>
@@ -172,6 +172,7 @@ function SourcesSection() {
       <SubSection
         title="Configured sources"
         description="Where Conveyer pulls tasks from."
+        noBorder
         actions={
           <Box sx={{ display: "flex", gap: 2 }}>
             <Button
@@ -486,13 +487,14 @@ function ExecutionSection() {
   }
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 5 }}>
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <Heading as="h2" sx={{ fontSize: 2 }}>Execution</Heading>
       {error && <Flash variant="danger">{error}</Flash>}
 
       <SubSection
         title="Codebase Path"
         description={<>Absolute path the Copilot agent runs in. Defaults to <code>~/code/conveyer-test-repo</code>.</>}
+        noBorder
       >
         <TextInput
           block
@@ -710,11 +712,12 @@ function ModelChooser({
 function AppearanceSection() {
   const { mode, setMode } = useColorMode();
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 5 }}>
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <Heading as="h2" sx={{ fontSize: 2 }}>Appearance</Heading>
       <SubSection
         title="Theme"
         description="Conveyer follows your selection across the app."
+        noBorder
       >
         <SegmentedControl aria-label="Theme">
           <SegmentedControl.Button
