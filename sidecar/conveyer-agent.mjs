@@ -29,6 +29,7 @@
  *   CONVEYER_PLAN_DOC         (file path to planning artifact, when relevant)
  *   CONVEYER_BACKEND          "copilot" (default) | "stub"
  *   CONVEYER_COPILOT_MODEL    optional model override (default: gpt-5.1)
+ *   CONVEYER_COPILOT_REASONING  optional reasoning effort ("minimal" | "low" | "medium" | "high")
  */
 
 import fs from "node:fs/promises";
@@ -166,12 +167,16 @@ async function runCopilot(phase, prompt) {
   let session;
   try {
     await client.start?.();
-    session = await client.createSession({
+    const sessionConfig = {
       model: env.CONVEYER_COPILOT_MODEL || "gpt-5.1",
       streaming: true,
       workingDirectory: env.CONVEYER_CODEBASE_PATH || process.cwd(),
       onPermissionRequest: approveAll ?? (() => ({ decision: "approve_once" })),
-    });
+    };
+    if (env.CONVEYER_COPILOT_REASONING) {
+      sessionConfig.reasoningEffort = env.CONVEYER_COPILOT_REASONING;
+    }
+    session = await client.createSession(sessionConfig);
   } catch (e) {
     msg("system", `Failed to start Copilot SDK: ${e?.message ?? e}`);
     try { await client.stop?.(); } catch { /* noop */ }
@@ -326,7 +331,13 @@ async function listModels() {
   try {
     await client.start?.();
     const models = await client.listModels();
-    const slim = models.map((m) => ({ id: m.id, name: m.name || m.id }));
+    const slim = models.map((m) => ({
+      id: m.id,
+      name: m.name || m.id,
+      // Pass through reasoning info so the UI can show a second picker.
+      supported_reasoning_efforts: m.supportedReasoningEfforts ?? null,
+      default_reasoning_effort: m.defaultReasoningEffort ?? null,
+    }));
     emit({ type: "models", models: slim });
   } catch (e) {
     emit({ type: "models", models: [], error: e?.message ?? String(e) });

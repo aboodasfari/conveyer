@@ -83,6 +83,10 @@ pub async fn session_cancel(app: AppHandle, phase_id: String) -> AppResult<bool>
 pub struct ModelInfo {
     pub id: String,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supported_reasoning_efforts: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_reasoning_effort: Option<String>,
 }
 
 /// Ask the Copilot SDK for the available models by spawning the sidecar in
@@ -115,9 +119,27 @@ pub async fn models_list() -> AppResult<Vec<ModelInfo>> {
                     for m in arr {
                         let id = m.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
                         let name = m.get("name").and_then(|x| x.as_str()).unwrap_or(&id).to_string();
-                        if !id.is_empty() {
-                            models.push(ModelInfo { id, name });
+                        if id.is_empty() {
+                            continue;
                         }
+                        let supported = m
+                            .get("supported_reasoning_efforts")
+                            .and_then(|x| x.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect::<Vec<_>>()
+                            });
+                        let default = m
+                            .get("default_reasoning_effort")
+                            .and_then(|x| x.as_str())
+                            .map(String::from);
+                        models.push(ModelInfo {
+                            id,
+                            name,
+                            supported_reasoning_efforts: supported,
+                            default_reasoning_effort: default,
+                        });
                     }
                 }
             }

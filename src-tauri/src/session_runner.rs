@@ -153,6 +153,7 @@ struct PhaseContext {
     parent_description: Option<String>,
     codebase_path: String,
     model: String,
+    reasoning: Option<String>,
 }
 
 async fn load_phase_context(state: &AppState, phase_id: &str) -> AppResult<(PhaseContext, String, String)> {
@@ -204,6 +205,8 @@ async fn load_phase_context(state: &AppState, phase_id: &str) -> AppResult<(Phas
 
     // Model: env override → settings KV per-phase → settings KV default → built-in default.
     let model = resolve_model(&state, &phase_kind).await?;
+    // Reasoning effort uses the same precedence as model. Empty means "leave unset".
+    let reasoning = resolve_reasoning(&state, &phase_kind).await?;
 
     let run_id_row: (String,) = sqlx::query_as("SELECT run_id FROM phases WHERE id = ?")
         .bind(phase_id)
@@ -220,6 +223,7 @@ async fn load_phase_context(state: &AppState, phase_id: &str) -> AppResult<(Phas
             parent_description,
             codebase_path,
             model,
+            reasoning,
         },
         run_id_row.0,
         phase_kind,
@@ -260,6 +264,36 @@ pub async fn resolve_model(state: &AppState, phase_kind: &str) -> AppResult<Stri
         }
     }
     Ok("gpt-5.1".to_string())
+}
+
+/// Resolve reasoning effort for this phase. Same precedence as model.
+/// Returns None when nothing is configured — the sidecar then omits the
+/// reasoningEffort field from createSession (models without reasoning
+/// support reject it).
+async fn resolve_reasoning(state: &AppState, phase_kind: &str) -> AppResult<Option<String>> {
+    if let Ok(v) = std::env::var("CONVEYER_COPILOT_REASONING") {
+        if !v.is_empty() {
+            return Ok(Some(v));
+        }
+    }
+    let key_phase = format!("reasoning_{phase_kind}");
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT value FROM settings WHERE key = ?",
+    )
+    .bind(&key_phase)
+    .fetch_optional(&state.db)
+    .await?;
+    if let Some((v,)) = row {
+        if !v.is_empty() {
+            return Ok(Some(v));
+        }
+    }
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT value FROM settings WHERE key = 'reasoning_default'",
+    )
+    .fetch_optional(&state.db)
+    .await?;
+    Ok(row.and_then(|(v,)| if v.is_empty() { None } else { Some(v) }))
 }
 
 /// Spawn the sidecar for a phase. Records a `sessions` row, streams
@@ -333,6 +367,9 @@ async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
     }
     if let Some(p) = &ctx.parent_description {
         cmd.env("CONVEYER_PARENT_DESCRIPTION", p);
+    }
+    if let Some(r) = &ctx.reasoning {
+        cmd.env("CONVEYER_COPILOT_REASONING", r);
     }
     // Hand over previous phase artifacts if they exist on disk.
     let context_doc = artifact_path_for(&ctx.task_id, 1, "exploration").ok();

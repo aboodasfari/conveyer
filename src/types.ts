@@ -77,6 +77,13 @@ export interface Session {
   finished_at: string | null;
 }
 
+export interface ModelInfo {
+  id: string;
+  name: string;
+  supported_reasoning_efforts?: string[] | null;
+  default_reasoning_effort?: string | null;
+}
+
 export interface Message {
   id: number;
   session_id: string;

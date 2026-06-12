@@ -62,7 +62,7 @@ export const api = {
     invoke<string | null>("phase_artifact_get", { phaseId }),
   sessionCancel: (phaseId: string) =>
     invoke<boolean>("session_cancel", { phaseId }),
-  modelsList: () => invoke<{ id: string; name: string }[]>("models_list"),
+  modelsList: () => invoke<import("./types").ModelInfo[]>("models_list"),
 
   // gates
   gatesList: () => invoke<Gate[]>("gates_list"),

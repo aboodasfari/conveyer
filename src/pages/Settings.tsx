@@ -23,6 +23,8 @@ import {
   Source,
 } from "../types";
 import { Modal } from "../components/Modal";
+import { ModelDropdown, ModelInfo } from "../components/ModelDropdown";
+import { ReasoningDropdown } from "../components/ReasoningDropdown";
 import { useColorMode } from "../theme";
 import { loadRefreshInterval, saveRefreshInterval } from "../autoRefresh";
 import { formatError } from "../errors";
@@ -397,29 +399,39 @@ function ExecutionSection() {
   const [error, setError] = useState<string | null>(null);
   const [codebase, setCodebase] = useState<string>("");
   const [codebaseSaved, setCodebaseSaved] = useState<string>("");
-  const [models, setModels] = useState<{ id: string; name: string }[]>([]);
+  const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelDefault, setModelDefault] = useState<string>("");
   const [modelPhase, setModelPhase] = useState<Record<string, string>>({});
+  const [reasoningDefault, setReasoningDefault] = useState<string>("");
+  const [reasoningPhase, setReasoningPhase] = useState<Record<string, string>>({});
 
   const load = async () => {
     try {
-      // Pull settings in parallel. Model list is best-effort — if the SDK
-      // isn't reachable it just returns []; we fall back to free-form text.
-      const [g, cb, mList, mDef, ...mPhaseVals] = await Promise.all([
+      const [g, cb, mList, mDef, rDef, ...rest] = await Promise.all([
         api.gatesList(),
         api.settingGet("codebase_path"),
         api.modelsList().catch(() => []),
         api.settingGet("model_default"),
+        api.settingGet("reasoning_default"),
         ...PHASE_KINDS.map((k) => api.settingGet(`model_${k}`)),
+        ...PHASE_KINDS.map((k) => api.settingGet(`reasoning_${k}`)),
       ]);
+      const mPhaseVals = rest.slice(0, PHASE_KINDS.length);
+      const rPhaseVals = rest.slice(PHASE_KINDS.length);
       setGates(g);
       setCodebase(cb ?? "");
       setCodebaseSaved(cb ?? "");
       setModels(mList);
       setModelDefault(mDef ?? "");
-      const overrides: Record<string, string> = {};
-      PHASE_KINDS.forEach((k, i) => { overrides[k] = mPhaseVals[i] ?? ""; });
-      setModelPhase(overrides);
+      setReasoningDefault(rDef ?? "");
+      const mOver: Record<string, string> = {};
+      const rOver: Record<string, string> = {};
+      PHASE_KINDS.forEach((k, i) => {
+        mOver[k] = mPhaseVals[i] ?? "";
+        rOver[k] = rPhaseVals[i] ?? "";
+      });
+      setModelPhase(mOver);
+      setReasoningPhase(rOver);
     } catch (e) { setError(formatError(e)); } finally { setLoading(false); }
   };
 
@@ -483,34 +495,54 @@ function ExecutionSection() {
         <Heading as="h3" sx={{ fontSize: 1, mb: 1 }}>Models</Heading>
         <Text sx={{ color: "fg.muted", fontSize: 1, display: "block", mb: 3 }}>
           Default model used by every phase, with optional per-phase overrides.
-          {models.length === 0 && " (Could not reach the Copilot SDK to list models — free-form ids accepted; e.g. gpt-5.1.)"}
+          {models.length === 0 && " Could not reach the Copilot SDK to list models — make sure `copilot` is signed in."}
         </Text>
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <ModelRow
+          <ModelChooser
             label="Default"
-            value={modelDefault}
             models={models}
-            onChange={(v) => {
+            model={modelDefault}
+            effectiveModelId={modelDefault}
+            reasoning={reasoningDefault}
+            inheritLabel="Pick a model…"
+            allowInheritModel={false}
+            onModelChange={(v) => {
               setModelDefault(v);
               void setModel("model_default", v);
             }}
-            allowEmpty={false}
-            placeholder="gpt-5.1"
+            onReasoningChange={(v) => {
+              setReasoningDefault(v);
+              void setModel("reasoning_default", v);
+            }}
           />
-          {PHASE_KINDS.map((k) => (
-            <ModelRow
-              key={k}
-              label={k.charAt(0).toUpperCase() + k.slice(1)}
-              value={modelPhase[k] ?? ""}
-              models={models}
-              onChange={(v) => {
-                setModelPhase((cur) => ({ ...cur, [k]: v }));
-                void setModel(`model_${k}`, v);
-              }}
-              allowEmpty
-              placeholder={modelDefault || "(use default)"}
-            />
-          ))}
+          {PHASE_KINDS.map((k) => {
+            const phaseModelId = modelPhase[k] ?? "";
+            const effectiveId = phaseModelId || modelDefault;
+            const inherited = models.find((m) => m.id === effectiveId);
+            const inheritLabel = !phaseModelId
+              ? `Inherit · ${inherited?.name ?? modelDefault ?? "gpt-5.1"}`
+              : "Inherit default";
+            return (
+              <ModelChooser
+                key={k}
+                label={k.charAt(0).toUpperCase() + k.slice(1)}
+                models={models}
+                model={phaseModelId}
+                effectiveModelId={effectiveId}
+                reasoning={reasoningPhase[k] ?? ""}
+                inheritLabel={inheritLabel}
+                allowInheritModel
+                onModelChange={(v) => {
+                  setModelPhase((cur) => ({ ...cur, [k]: v }));
+                  void setModel(`model_${k}`, v);
+                }}
+                onReasoningChange={(v) => {
+                  setReasoningPhase((cur) => ({ ...cur, [k]: v }));
+                  void setModel(`reasoning_${k}`, v);
+                }}
+              />
+            );
+          })}
         </Box>
       </Box>
 
@@ -560,76 +592,75 @@ function ExecutionSection() {
 }
 
 /* -------------------------------------------------------------------------- */
-/*                                Appearance                                  */
-/* -------------------------------------------------------------------------- */
-
-/* -------------------------------------------------------------------------- */
-/*                                Appearance                                  */
+/*                                 Helpers                                    */
 /* -------------------------------------------------------------------------- */
 
 /**
- * One row in the model picker. Renders a native <select> populated from the
- * SDK's listModels() result. When the SDK isn't reachable (empty list), we
- * fall back to a free-form text input so the user can still type an id.
+ * One row in the model picker: a label, the model dropdown, and a
+ * reasoning-effort dropdown when the resolved model supports it.
  */
-function ModelRow({
+function ModelChooser({
   label,
-  value,
   models,
-  onChange,
-  allowEmpty,
-  placeholder,
+  model,
+  effectiveModelId,
+  reasoning,
+  inheritLabel,
+  allowInheritModel,
+  onModelChange,
+  onReasoningChange,
 }: {
   label: string;
-  value: string;
-  models: { id: string; name: string }[];
-  onChange: (v: string) => void;
-  allowEmpty: boolean;
-  placeholder?: string;
+  models: ModelInfo[];
+  model: string;
+  /** Model id this row will actually run with — own value if set, else parent's. */
+  effectiveModelId: string;
+  reasoning: string;
+  inheritLabel: string;
+  allowInheritModel: boolean;
+  onModelChange: (v: string) => void;
+  onReasoningChange: (v: string) => void;
 }) {
+  const effective = models.find((m) => m.id === effectiveModelId);
+  const supported = effective?.supported_reasoning_efforts ?? [];
+
   return (
     <Box
       sx={{
         display: "grid",
-        gridTemplateColumns: "180px 1fr",
+        gridTemplateColumns: "140px minmax(0, 360px) auto",
         gap: 3,
         alignItems: "center",
       }}
     >
       <Text>{label}</Text>
       {models.length > 0 ? (
-        <Box
-          as="select"
-          value={value}
-          onChange={(e) => onChange((e.target as HTMLSelectElement).value)}
-          sx={{
-            px: 2,
-            py: "5px",
-            fontSize: 1,
-            borderRadius: 2,
-            borderWidth: 1,
-            borderStyle: "solid",
-            borderColor: "border.default",
-            bg: "canvas.default",
-            color: "fg.default",
-            maxWidth: 320,
-          }}
-        >
-          {allowEmpty && <option value="">{placeholder ?? "(use default)"}</option>}
-          {models.map((m) => (
-            <option key={m.id} value={m.id}>{m.name === m.id ? m.id : `${m.name} (${m.id})`}</option>
-          ))}
-          {value && !models.some((m) => m.id === value) && (
-            <option value={value}>{value} (custom)</option>
-          )}
-        </Box>
+        <ModelDropdown
+          value={model}
+          models={models}
+          onChange={onModelChange}
+          allowInherit={allowInheritModel}
+          inheritLabel={inheritLabel}
+        />
       ) : (
         <TextInput
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={placeholder}
-          sx={{ maxWidth: 320 }}
+          value={model}
+          onChange={(e) => onModelChange(e.target.value)}
+          placeholder={allowInheritModel ? "(inherit default)" : "gpt-5.1"}
+          sx={{ maxWidth: 360 }}
         />
+      )}
+      {supported.length > 0 ? (
+        <ReasoningDropdown
+          value={reasoning}
+          supported={supported}
+          defaultEffort={effective?.default_reasoning_effort}
+          onChange={onReasoningChange}
+          allowInherit={allowInheritModel}
+          inheritLabel={allowInheritModel ? "Inherit" : "Model default"}
+        />
+      ) : (
+        <Box sx={{ width: 180 }} aria-hidden />
       )}
     </Box>
   );
