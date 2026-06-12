@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Box,
   Button,
@@ -403,8 +403,6 @@ function ExecutionSection() {
     }
   };
 
-  const visibleKinds = useMemo(() => PHASE_KINDS.filter((k) => k !== "submit"), []);
-
   if (loading) return <Spinner />;
 
   return (
@@ -415,10 +413,11 @@ function ExecutionSection() {
       <Box>
         <Heading as="h3" sx={{ fontSize: 1, mb: 1 }}>Phase Gates</Heading>
         <Text sx={{ color: "fg.muted", fontSize: 1 }}>
-          Phases set to auto-advance proceed without waiting for your approval.
+          After a phase finishes, auto-advance to the next phase. Turn off to
+          pause for your approval before continuing.
         </Text>
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 3 }}>
-          {visibleKinds.map((k) => {
+          {PHASE_KINDS.map((k) => {
             const g = gates.find((x) => x.phase_kind === k) ?? { phase_kind: k, auto_advance: 0 };
             const on = g.auto_advance === 1;
             const labelId = `gate-${k}`;
@@ -438,7 +437,7 @@ function ExecutionSection() {
                 <Text id={labelId}>
                   {titleCase(k)}{" "}
                   <Text sx={{ color: "fg.muted", fontSize: 0 }}>
-                    · {on ? "auto-advance" : "wait for me"}
+                    · {on ? "auto-advance after" : "wait for me after"}
                   </Text>
                 </Text>
                 <ToggleSwitch

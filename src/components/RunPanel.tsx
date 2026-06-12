@@ -214,7 +214,9 @@ function PhaseRow({
           <Text sx={{ fontWeight: 600 }}>
             {PHASE_LABELS[phase.kind] ?? phase.kind}
           </Text>
-          <Text sx={{ color: "fg.muted", fontSize: 0 }}>· {phase.status}</Text>
+          <Text sx={{ color: "fg.muted", fontSize: 0 }}>
+            · {phase.status === "waiting" ? "done, awaiting approval" : phase.status}
+          </Text>
         </Box>
         {phase.status === "running" && (
           <Button
@@ -228,13 +230,13 @@ function PhaseRow({
         )}
         {phase.status === "waiting" && (
           <Button
-            leadingVisual={PlayIcon}
+            leadingVisual={CheckIcon}
             variant="primary"
             size="small"
             onClick={onApprove}
             disabled={busy}
           >
-            Approve &amp; Continue
+            Approve
           </Button>
         )}
       </Box>

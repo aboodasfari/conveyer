@@ -4,13 +4,17 @@
 //! (exploration → planning → implementation → review → submit). Until the
 //! Copilot session runner ships in M4, phases transition via user action
 //! only — there's a stub Complete button per running phase and an Approve
-//! button on phases that are waiting on a gate.
+//! button on phases that have finished but are awaiting human sign-off.
+//!
+//! Gate semantics: the gate for a phase decides what happens **after** that
+//! phase finishes — auto-advance the run, or pause for user approval first.
 //!
 //! State machine:
-//!   pending → running (via runs_start, or when previous phase auto-advances)
-//!   running → done    (via phase_complete; M4: when the session exits)
-//!   done    → next phase enters either running OR waiting, based on the gate
-//!   waiting → running (via phase_approve)
+//!   pending  → running       (runs_start, or after auto-advance from prev)
+//!   running  → done          (phase_complete, if this phase's gate auto-advances)
+//!   running  → waiting       (phase_complete, if this phase's gate is manual)
+//!   waiting  → done          (phase_approve)
+//!   done     → (next phase running, OR run done if there is no next)
 
 use crate::error::{AppError, AppResult};
 use crate::models::{Phase, Run, PHASE_KINDS};
@@ -129,12 +133,30 @@ pub async fn phase_complete(
         )));
     }
 
-    sqlx::query("UPDATE phases SET status='done', finished_at=datetime('now') WHERE id = ?")
+    let auto = gate_auto_advance(&state, &phase.kind).await?;
+
+    if auto {
+        sqlx::query(
+            "UPDATE phases SET status='done', finished_at=datetime('now') WHERE id=?",
+        )
         .bind(&phase_id)
         .execute(&state.db)
         .await?;
+        start_next_phase(&state, &phase.run_id, phase.ord).await?;
+    } else {
+        // Awaiting user approval before we advance.
+        sqlx::query(
+            "UPDATE phases SET status='waiting', finished_at=datetime('now') WHERE id=?",
+        )
+        .bind(&phase_id)
+        .execute(&state.db)
+        .await?;
+        sqlx::query("UPDATE runs SET status='waiting' WHERE id=?")
+            .bind(&phase.run_id)
+            .execute(&state.db)
+            .await?;
+    }
 
-    advance_after(&state, &phase.run_id, phase.ord).await?;
     let detail = run_get_inner(&state, &phase.run_id).await?;
     emit_run_updated_for_run(&app, &state, &phase.run_id).await;
     Ok(detail)
@@ -155,17 +177,12 @@ pub async fn phase_approve(
         )));
     }
 
-    sqlx::query(
-        "UPDATE phases SET status='running', started_at=datetime('now') WHERE id=?",
-    )
-    .bind(&phase_id)
-    .execute(&state.db)
-    .await?;
-    // Bring the run back to 'running' too.
-    sqlx::query("UPDATE runs SET status='running' WHERE id=?")
-        .bind(&phase.run_id)
+    // Mark the just-completed phase as done, then advance to the next.
+    sqlx::query("UPDATE phases SET status='done' WHERE id=?")
+        .bind(&phase_id)
         .execute(&state.db)
         .await?;
+    start_next_phase(&state, &phase.run_id, phase.ord).await?;
 
     let detail = run_get_inner(&state, &phase.run_id).await?;
     emit_run_updated_for_run(&app, &state, &phase.run_id).await;
@@ -182,10 +199,18 @@ async fn load_phase(state: &AppState, phase_id: &str) -> AppResult<Phase> {
     .ok_or_else(|| AppError::NotFound(format!("phase {phase_id}")))
 }
 
-/// After finishing the phase at `prev_ord`, either start the next phase
-/// (if its gate auto-advances) or set it to 'waiting'. If there's no next
-/// phase, mark the run done.
-async fn advance_after(state: &AppState, run_id: &str, prev_ord: i64) -> AppResult<()> {
+async fn gate_auto_advance(state: &AppState, kind: &str) -> AppResult<bool> {
+    let row: Option<(i64,)> =
+        sqlx::query_as("SELECT auto_advance FROM gates WHERE phase_kind = ?")
+            .bind(kind)
+            .fetch_optional(&state.db)
+            .await?;
+    Ok(row.map(|(v,)| v == 1).unwrap_or(false))
+}
+
+/// Start the phase after `prev_ord`. If there is no next phase, the run is
+/// complete and gets marked `done`. Otherwise the run goes back to `running`.
+async fn start_next_phase(state: &AppState, run_id: &str, prev_ord: i64) -> AppResult<()> {
     let next: Option<Phase> = sqlx::query_as::<_, Phase>(&format!(
         "SELECT {PHASE_COLS} FROM phases WHERE run_id=? AND ord=?"
     ))
@@ -194,39 +219,24 @@ async fn advance_after(state: &AppState, run_id: &str, prev_ord: i64) -> AppResu
     .fetch_optional(&state.db)
     .await?;
 
-    let Some(next) = next else {
-        sqlx::query(
-            "UPDATE runs SET status='done', finished_at=datetime('now') WHERE id=?",
-        )
-        .bind(run_id)
-        .execute(&state.db)
-        .await?;
-        return Ok(());
-    };
-
-    let auto: Option<(i64,)> =
-        sqlx::query_as("SELECT auto_advance FROM gates WHERE phase_kind = ?")
-            .bind(&next.kind)
-            .fetch_optional(&state.db)
-            .await?;
-    let auto = auto.map(|(v,)| v == 1).unwrap_or(false);
-
-    if auto {
+    if let Some(next) = next {
         sqlx::query(
             "UPDATE phases SET status='running', started_at=datetime('now') WHERE id=?",
         )
         .bind(&next.id)
         .execute(&state.db)
         .await?;
-    } else {
-        sqlx::query("UPDATE phases SET status='waiting' WHERE id=?")
-            .bind(&next.id)
-            .execute(&state.db)
-            .await?;
-        sqlx::query("UPDATE runs SET status='waiting' WHERE id=?")
+        sqlx::query("UPDATE runs SET status='running' WHERE id=?")
             .bind(run_id)
             .execute(&state.db)
             .await?;
+    } else {
+        sqlx::query(
+            "UPDATE runs SET status='done', finished_at=datetime('now') WHERE id=?",
+        )
+        .bind(run_id)
+        .execute(&state.db)
+        .await?;
     }
     Ok(())
 }

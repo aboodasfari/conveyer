@@ -1,7 +1,16 @@
 import { useEffect, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { Box, Button, Heading, IconButton, Link as PrimerLink, Spinner, Text } from "@primer/react";
-import { ArrowLeftIcon, LinkExternalIcon } from "@primer/octicons-react";
+import {
+  Box,
+  Button,
+  Heading,
+  IconButton,
+  Link as PrimerLink,
+  Spinner,
+  Text,
+  UnderlineNav,
+} from "@primer/react";
+import { ArrowLeftIcon, LinkExternalIcon, PlayIcon, FileIcon } from "@primer/octicons-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
 import { TaskSummary } from "../types";
@@ -9,12 +18,15 @@ import { StatusBadge } from "../components/StatusBadge";
 import { RichText } from "../components/RichText";
 import { RunPanel } from "../components/RunPanel";
 
+type Tab = "description" | "run";
+
 export function TaskDetail() {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
   const [task, setTask] = useState<TaskSummary | null>(null);
   const [parent, setParent] = useState<TaskSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<Tab>("description");
 
   useEffect(() => {
     void (async () => {
@@ -89,30 +101,30 @@ export function TaskDetail() {
         )}
       </Box>
 
-      <Section title="Description">
-        <RichText content={task.description} />
-      </Section>
+      <UnderlineNav aria-label="Task sections">
+        <UnderlineNav.Item
+          aria-current={tab === "description" ? "page" : undefined}
+          icon={FileIcon}
+          onSelect={(e) => { e.preventDefault(); setTab("description"); }}
+        >
+          Description
+        </UnderlineNav.Item>
+        <UnderlineNav.Item
+          aria-current={tab === "run" ? "page" : undefined}
+          icon={PlayIcon}
+          onSelect={(e) => { e.preventDefault(); setTab("run"); }}
+        >
+          Run
+        </UnderlineNav.Item>
+      </UnderlineNav>
 
-      <Section title="Run">
-        <RunPanel taskId={task.id} />
-      </Section>
-    </Box>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <Box
-      sx={{
-        borderWidth: 1,
-        borderStyle: "solid",
-        borderColor: "border.default",
-        borderRadius: 2,
-        p: 4,
-      }}
-    >
-      <Heading as="h2" sx={{ fontSize: 2, mb: 2 }}>{title}</Heading>
-      {children}
+      <Box sx={{ pt: 1 }}>
+        {tab === "description" ? (
+          <RichText content={task.description} />
+        ) : (
+          <RunPanel taskId={task.id} />
+        )}
+      </Box>
     </Box>
   );
 }
