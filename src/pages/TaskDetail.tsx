@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams, Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Box,
@@ -36,23 +36,40 @@ export function TaskDetail() {
     if (t === "run" || t === "description") setTab(t);
   }, [params]);
 
-  useEffect(() => {
-    void (async () => {
-      const all = await api.tasksList();
-      const t = all.find((x) => x.id === id) ?? null;
-      setTask(t);
-      if (t?.parent_ref) {
-        setParent(
-          all.find(
-            (x) => x.source_id === t.source_id && x.source_ref === t.parent_ref,
-          ) ?? null,
-        );
-      } else {
-        setParent(null);
-      }
-      setLoading(false);
-    })();
+  const reload = useCallback(async () => {
+    const all = await api.tasksList();
+    const t = all.find((x) => x.id === id) ?? null;
+    setTask(t);
+    if (t?.parent_ref) {
+      setParent(
+        all.find(
+          (x) => x.source_id === t.source_id && x.source_ref === t.parent_ref,
+        ) ?? null,
+      );
+    } else {
+      setParent(null);
+    }
   }, [id]);
+
+  useEffect(() => {
+    setLoading(true);
+    void reload().finally(() => setLoading(false));
+  }, [reload]);
+
+  // Refresh the header chip (and parent link) when the run state changes
+  // so the status badge actually reflects the current phase.
+  useEffect(() => {
+    let unlisten: import("@tauri-apps/api/event").UnlistenFn | null = null;
+    let cancelled = false;
+    void (async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      unlisten = await listen("run_updated", (e: { payload: { task_id?: string } }) => {
+        if (!e.payload?.task_id || e.payload.task_id === id) void reload();
+      });
+      if (cancelled) unlisten();
+    })();
+    return () => { cancelled = true; if (unlisten) unlisten(); };
+  }, [id, reload]);
 
   if (loading) {
     return (
