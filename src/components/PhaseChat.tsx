@@ -357,7 +357,7 @@ function ToolBubbleView({ bubble }: { bubble: ToolBubble }) {
             <Box sx={{ display: "flex", alignItems: "center", gap: 1, color: "fg.muted", fontSize: 0, mt: "2px" }}>
               <CheckCircleIcon size={12} />
               <Text sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {firstLine(bubble.result)}
+                {resultSummary(bubble.result)}
               </Text>
             </Box>
           )}
@@ -381,7 +381,7 @@ function ToolBubbleView({ bubble }: { bubble: ToolBubble }) {
             <CodeBlock label="arguments" content={formatArguments(bubble.arguments)!} />
           )}
           {bubble.result && (
-            <CodeBlock label="result" content={bubble.result} />
+            <ResultBlock content={bubble.result} />
           )}
           {bubble.error && (
             <CodeBlock label="error" content={bubble.error} tone="danger" />
@@ -415,6 +415,105 @@ function CodeBlock({ label, content, tone }: { label: string; content: string; t
       </Box>
     </Box>
   );
+}
+
+/* -------------------------------------------------------------------------- */
+/*                            Smart result rendering                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The Copilot SDK returns tool results as unified diffs even for plain reads
+ * (every line is a context line). We strip that for reads and colour the
+ * +/- lines for real edits.
+ */
+function parseDiff(s: string): { isDiff: boolean; isNoop: boolean; body: string[] } {
+  if (!s || (!s.startsWith("diff --git ") && !/\n@@ /.test(s) && !s.startsWith("@@ "))) {
+    return { isDiff: false, isNoop: false, body: [] };
+  }
+  const lines = s.split("\n");
+  const body: string[] = [];
+  let inHunk = false;
+  let hasChange = false;
+  for (const line of lines) {
+    if (line.startsWith("@@ ")) { inHunk = true; continue; }
+    if (!inHunk) continue;                              // skip headers
+    if (line.startsWith("diff --git ")) { inHunk = false; continue; }
+    if (line.startsWith("+") || line.startsWith("-")) hasChange = true;
+    body.push(line);
+  }
+  return { isDiff: true, isNoop: !hasChange, body };
+}
+
+function ResultBlock({ content }: { content: string }) {
+  const parsed = parseDiff(content);
+
+  // Reads (no-op diffs): strip the leading space and render as plain code.
+  if (parsed.isDiff && parsed.isNoop) {
+    const plain = parsed.body.map((l) => (l.startsWith(" ") ? l.slice(1) : l)).join("\n");
+    return <CodeBlock label="content" content={plain} />;
+  }
+
+  // Real diffs: colour +/- lines.
+  if (parsed.isDiff) {
+    return (
+      <Box>
+        <Text sx={{ color: "fg.muted", display: "block", mb: 1 }}>diff</Text>
+        <Box
+          as="pre"
+          sx={{
+            m: 0, p: 2,
+            bg: "canvas.subtle",
+            borderRadius: 1,
+            overflowX: "auto",
+            whiteSpace: "pre",
+            maxHeight: 320,
+            fontFamily: "mono",
+            fontSize: 0,
+            lineHeight: 1.5,
+          }}
+        >
+          {parsed.body.map((line, i) => {
+            const isAdd = line.startsWith("+");
+            const isDel = line.startsWith("-");
+            return (
+              <Box
+                key={i}
+                sx={{
+                  display: "block",
+                  bg: isAdd ? "success.subtle" : isDel ? "danger.subtle" : "transparent",
+                  color: isAdd ? "success.fg" : isDel ? "danger.fg" : "fg.default",
+                  px: 1,
+                  mx: -2,
+                }}
+              >
+                {line || " "}
+              </Box>
+            );
+          })}
+        </Box>
+      </Box>
+    );
+  }
+
+  return <CodeBlock label="result" content={content} />;
+}
+
+/** One-line summary of a tool result for the collapsed bubble row. */
+function resultSummary(s: string): string {
+  const parsed = parseDiff(s);
+  if (parsed.isDiff && parsed.isNoop) {
+    const nonEmpty = parsed.body.filter((l) => l.trim().length > 0).length;
+    return `${nonEmpty} line${nonEmpty === 1 ? "" : "s"}`;
+  }
+  if (parsed.isDiff) {
+    let add = 0, del = 0;
+    for (const l of parsed.body) {
+      if (l.startsWith("+")) add++;
+      else if (l.startsWith("-")) del++;
+    }
+    return `+${add} -${del}`;
+  }
+  return firstLine(s);
 }
 
 /* -------------------------------------------------------------------------- */
