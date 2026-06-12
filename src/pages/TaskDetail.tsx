@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
-import { Box, Button, Heading, Link as PrimerLink, Spinner, Text } from "@primer/react";
-import { LinkExternalIcon } from "@primer/octicons-react";
+import { useParams, Link, useNavigate } from "react-router-dom";
+import { Box, Button, Heading, Label, Link as PrimerLink, Spinner, Text } from "@primer/react";
+import { ArrowLeftIcon, LinkExternalIcon } from "@primer/octicons-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
 import { TaskSummary } from "../types";
@@ -9,20 +9,37 @@ import { StatusBadge } from "../components/StatusBadge";
 
 export function TaskDetail() {
   const { id } = useParams<{ id: string }>();
+  const nav = useNavigate();
   const [task, setTask] = useState<TaskSummary | null>(null);
+  const [parent, setParent] = useState<TaskSummary | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     void (async () => {
       const all = await api.tasksList();
-      setTask(all.find((t) => t.id === id) ?? null);
+      const t = all.find((x) => x.id === id) ?? null;
+      setTask(t);
+      if (t?.parent_ref) {
+        setParent(
+          all.find(
+            (x) => x.source_id === t.source_id && x.source_ref === t.parent_ref,
+          ) ?? null,
+        );
+      } else {
+        setParent(null);
+      }
       setLoading(false);
     })();
   }, [id]);
 
   if (loading) {
-    return <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}><Spinner /></Box>;
+    return (
+      <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
+        <Spinner />
+      </Box>
+    );
   }
+
   if (!task) {
     return (
       <Box>
@@ -34,9 +51,33 @@ export function TaskDetail() {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
+      <Button
+        leadingVisual={ArrowLeftIcon}
+        variant="invisible"
+        onClick={() => (window.history.length > 1 ? nav(-1) : nav("/"))}
+        sx={{ alignSelf: "flex-start", px: 1, mt: -2 }}
+      >
+        Back
+      </Button>
+
       <Box>
-        <Text sx={{ color: "fg.muted", fontSize: 0 }}>#{task.source_ref} · {task.state}</Text>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+          <Text sx={{ color: "fg.muted", fontSize: 0 }}>#{task.source_ref}</Text>
+          <Text sx={{ color: "fg.muted", fontSize: 0 }}>·</Text>
+          <Text sx={{ color: "fg.muted", fontSize: 0 }}>{task.state}</Text>
+          {task.is_self_assigned === 0 && (
+            <Label variant="default" size="small">context</Label>
+          )}
+        </Box>
         <Heading as="h1" sx={{ fontSize: 4, mt: 1 }}>{task.title}</Heading>
+        {parent && (
+          <Text sx={{ display: "block", color: "fg.muted", fontSize: 0, mt: 1 }}>
+            Under{" "}
+            <PrimerLink as={Link} to={`/tasks/${parent.id}`}>
+              {parent.title} (#{parent.source_ref})
+            </PrimerLink>
+          </Text>
+        )}
         <Box sx={{ mt: 2, display: "flex", gap: 2, alignItems: "center" }}>
           <StatusBadge status={task.run_status} />
           <Button leadingVisual={LinkExternalIcon} onClick={() => openUrl(task.url)}>
@@ -45,20 +86,51 @@ export function TaskDetail() {
         </Box>
       </Box>
 
-      <Box
-        sx={{
-          borderWidth: 1,
-          borderStyle: "solid",
-          borderColor: "border.default",
-          borderRadius: 2,
-          p: 4,
-        }}
-      >
-        <Heading as="h2" sx={{ fontSize: 2, mb: 2 }}>Run</Heading>
+      <Section title="Description">
+        {task.description && task.description.trim() ? (
+          <Box
+            sx={{
+              fontSize: 1,
+              lineHeight: 1.5,
+              "& *": { maxWidth: "100%" },
+              "& img": { height: "auto" },
+              "& pre": {
+                bg: "canvas.subtle",
+                p: 2,
+                borderRadius: 1,
+                overflowX: "auto",
+              },
+              "& a": { color: "accent.fg" },
+            }}
+            dangerouslySetInnerHTML={{ __html: task.description }}
+          />
+        ) : (
+          <Text sx={{ color: "fg.muted" }}>No description.</Text>
+        )}
+      </Section>
+
+      <Section title="Run">
         <Text sx={{ color: "fg.muted" }}>
-          No run yet. The Tackle button will start a run once the session runner ships in M4.
+          No run yet. Tackle wires up in M3.
         </Text>
-      </Box>
+      </Section>
+    </Box>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <Box
+      sx={{
+        borderWidth: 1,
+        borderStyle: "solid",
+        borderColor: "border.default",
+        borderRadius: 2,
+        p: 4,
+      }}
+    >
+      <Heading as="h2" sx={{ fontSize: 2, mb: 2 }}>{title}</Heading>
+      {children}
     </Box>
   );
 }

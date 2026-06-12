@@ -53,6 +53,8 @@ pub struct WorkItem {
     pub id: i64,
     pub title: String,
     pub state: String,
+    pub description: Option<String>,
+    pub parent_id: Option<i64>,
     pub fields: Value,
 }
 
@@ -76,6 +78,57 @@ struct WorkItemsBatch {
 struct RawWorkItem {
     id: i64,
     fields: Value,
+    #[serde(default)]
+    relations: Vec<RawRelation>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawRelation {
+    rel: String,
+    url: String,
+}
+
+fn parent_id_from_relations(relations: &[RawRelation]) -> Option<i64> {
+    for r in relations {
+        if r.rel == "System.LinkTypes.Hierarchy-Reverse" {
+            // url ends with /_apis/wit/workItems/<id>
+            if let Some(idx) = r.url.rfind('/') {
+                if let Ok(n) = r.url[idx + 1..].parse::<i64>() {
+                    return Some(n);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn raw_to_work_item(raw: RawWorkItem) -> WorkItem {
+    let title = raw
+        .fields
+        .get("System.Title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let state = raw
+        .fields
+        .get("System.State")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let description = raw
+        .fields
+        .get("System.Description")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let parent_id = parent_id_from_relations(&raw.relations);
+    WorkItem {
+        id: raw.id,
+        title,
+        state,
+        description,
+        parent_id,
+        fields: raw.fields,
+    }
 }
 
 /// Run a WIQL query to find work items currently assigned to the caller.
@@ -106,44 +159,36 @@ pub async fn fetch_assigned_work_items(
     fetch_work_items_batch(cfg, auth_header, &ids).await
 }
 
-async fn fetch_work_items_batch(
+/// Fetch full work items by id (in chunks of 200 to respect ADO limits).
+/// Uses `$expand=relations` so we can extract Hierarchy-Reverse parents,
+/// and explicitly requests System.Description for the detail view.
+pub async fn fetch_work_items_batch(
     cfg: &AdoSourceConfig,
     auth_header: &str,
     ids: &[String],
 ) -> AppResult<Vec<WorkItem>> {
-    let url = format!(
-        "https://dev.azure.com/{}/{}/_apis/wit/workitems?ids={}&fields=System.Id,System.Title,System.State,System.WorkItemType,System.AssignedTo,System.Tags&api-version={}",
-        cfg.org,
-        cfg.project,
-        ids.join(","),
-        API_VERSION
-    );
-    let resp = client()
-        .get(&url)
-        .header("Authorization", auth_header)
-        .send()
-        .await?;
-    let resp = check(resp, "fetch work items batch").await?;
-    let batch: WorkItemsBatch = resp.json().await?;
-    Ok(batch
-        .value
-        .into_iter()
-        .map(|raw| {
-            let title = raw
-                .fields
-                .get("System.Title")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let state = raw
-                .fields
-                .get("System.State")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            WorkItem { id: raw.id, title, state, fields: raw.fields }
-        })
-        .collect())
+    if ids.is_empty() {
+        return Ok(vec![]);
+    }
+    let mut out = Vec::with_capacity(ids.len());
+    for chunk in ids.chunks(200) {
+        let url = format!(
+            "https://dev.azure.com/{}/{}/_apis/wit/workitems?ids={}&$expand=relations&api-version={}",
+            cfg.org,
+            cfg.project,
+            chunk.join(","),
+            API_VERSION
+        );
+        let resp = client()
+            .get(&url)
+            .header("Authorization", auth_header)
+            .send()
+            .await?;
+        let resp = check(resp, "fetch work items batch").await?;
+        let batch: WorkItemsBatch = resp.json().await?;
+        out.extend(batch.value.into_iter().map(raw_to_work_item));
+    }
+    Ok(out)
 }
 
 pub async fn fetch_work_item(
@@ -152,7 +197,7 @@ pub async fn fetch_work_item(
     id: i64,
 ) -> AppResult<WorkItem> {
     let url = format!(
-        "https://dev.azure.com/{}/{}/_apis/wit/workitems/{}?api-version={}",
+        "https://dev.azure.com/{}/{}/_apis/wit/workitems/{}?$expand=relations&api-version={}",
         cfg.org, cfg.project, id, API_VERSION
     );
     let resp = client()
@@ -162,19 +207,7 @@ pub async fn fetch_work_item(
         .await?;
     let resp = check(resp, &format!("fetch work item {id}")).await?;
     let raw: RawWorkItem = resp.json().await?;
-    let title = raw
-        .fields
-        .get("System.Title")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let state = raw
-        .fields
-        .get("System.State")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    Ok(WorkItem { id: raw.id, title, state, fields: raw.fields })
+    Ok(raw_to_work_item(raw))
 }
 
 /// Cheap probe: list one project to validate auth + org/project access.

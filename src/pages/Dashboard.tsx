@@ -4,17 +4,16 @@ import {
   Button,
   Flash,
   Heading,
-  Link as PrimerLink,
   Spinner,
-  Text,
   TextInput,
 } from "@primer/react";
-import { PlusIcon, SyncIcon, PlayIcon } from "@primer/octicons-react";
+import { PlusIcon, SyncIcon } from "@primer/octicons-react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import { Source, TaskSummary } from "../types";
-import { StatusBadge } from "../components/StatusBadge";
 import { EmptyState } from "../components/EmptyState";
+import { Modal } from "../components/Modal";
+import { TaskTree } from "../components/TaskTree";
 
 export function Dashboard() {
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
@@ -22,7 +21,9 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
   const [addUrl, setAddUrl] = useState("");
+  const [adding, setAdding] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
@@ -59,13 +60,17 @@ export function Dashboard() {
 
   const addByUrl = async () => {
     if (sources.length === 0 || !addUrl.trim()) return;
+    setAdding(true);
     setError(null);
     try {
       await api.tasksAddByUrl(sources[0].id, addUrl.trim());
       setAddUrl("");
+      setAddOpen(false);
       await load();
     } catch (e) {
       setError(String(e));
+    } finally {
+      setAdding(false);
     }
   };
 
@@ -83,7 +88,15 @@ export function Dashboard() {
         <Heading as="h1" sx={{ fontSize: 4 }}>Tasks</Heading>
         <Box sx={{ display: "flex", gap: 2 }}>
           <Button
+            leadingVisual={PlusIcon}
+            onClick={() => setAddOpen(true)}
+            disabled={sources.length === 0}
+          >
+            Add by URL
+          </Button>
+          <Button
             leadingVisual={SyncIcon}
+            variant="primary"
             onClick={refresh}
             disabled={sources.length === 0 || refreshing}
           >
@@ -104,66 +117,55 @@ export function Dashboard() {
             </Button>
           }
         />
-      ) : (
-        <Box sx={{ display: "flex", gap: 2, alignItems: "center" }}>
-          <TextInput
-            block
-            placeholder="Add a task by URL"
-            value={addUrl}
-            onChange={(e) => setAddUrl(e.target.value)}
-            sx={{ flex: 1 }}
-          />
-          <Button leadingVisual={PlusIcon} onClick={addByUrl} disabled={!addUrl.trim()}>
-            Add
-          </Button>
-        </Box>
-      )}
-
-      {tasks.length === 0 && sources.length > 0 ? (
+      ) : tasks.length === 0 ? (
         <EmptyState
           title="No tasks yet"
-          body="Click Refresh to poll your source, or add a task by URL above."
+          body="Click Refresh to poll your source, or Add by URL."
         />
       ) : (
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          {tasks.map((t) => (
-            <TaskRow key={t.id} task={t} />
-          ))}
-        </Box>
+        <TaskTree tasks={tasks} />
       )}
-    </Box>
-  );
-}
 
-function TaskRow({ task }: { task: TaskSummary }) {
-  return (
-    <Box
-      sx={{
-        borderWidth: 1,
-        borderStyle: "solid",
-        borderColor: "border.default",
-        borderRadius: 2,
-        p: 3,
-        display: "flex",
-        alignItems: "center",
-        gap: 3,
-      }}
-    >
-      <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 2, mb: 1 }}>
-          <PrimerLink as={Link} to={`/tasks/${task.id}`} sx={{ fontWeight: "bold" }}>
-            {task.title || `#${task.source_ref}`}
-          </PrimerLink>
-          <Text sx={{ color: "fg.muted", fontSize: 0 }}>#{task.source_ref}</Text>
+      <Modal
+        open={addOpen}
+        title="Add task by URL"
+        onClose={() => {
+          setAddOpen(false);
+          setAddUrl("");
+        }}
+        footer={
+          <>
+            <Button
+              onClick={() => {
+                setAddOpen(false);
+                setAddUrl("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={addByUrl}
+              disabled={!addUrl.trim() || adding}
+            >
+              {adding ? "Adding…" : "Add"}
+            </Button>
+          </>
+        }
+      >
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <TextInput
+            block
+            autoFocus
+            placeholder="https://dev.azure.com/.../_workitems/edit/12345"
+            value={addUrl}
+            onChange={(e) => setAddUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void addByUrl();
+            }}
+          />
         </Box>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <Text sx={{ color: "fg.muted", fontSize: 0 }}>{task.state}</Text>
-          <StatusBadge status={task.run_status} />
-        </Box>
-      </Box>
-      <Button leadingVisual={PlayIcon} variant="primary" disabled>
-        Tackle
-      </Button>
+      </Modal>
     </Box>
   );
 }

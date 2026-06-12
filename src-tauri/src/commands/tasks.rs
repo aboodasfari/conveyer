@@ -1,14 +1,19 @@
 use crate::ado;
 use crate::ado::auth::{header_value, AuthInputs, AuthKind};
+use crate::ado::WorkItem;
 use crate::error::{AppError, AppResult};
 use crate::models::{AdoSourceConfig, Source, Task};
 use crate::state::AppState;
 use serde::Serialize;
+use std::collections::HashSet;
 use tauri::State;
 use uuid::Uuid;
 
 const SOURCE_COLS: &str =
     "id, kind, name, config_json, pat_env, enabled, created_at, auth_kind, az_account";
+const TASK_COLS: &str =
+    "id, source_id, source_ref, title, state, url, source_meta_json,
+     discovered_at, updated_at, parent_ref, is_self_assigned, description";
 
 #[derive(Debug, Serialize)]
 pub struct TaskSummary {
@@ -26,7 +31,10 @@ async fn source_auth_header(src: &Source) -> AppResult<String> {
     .await
 }
 
-async fn load_ado_source(state: &AppState, source_id: &str) -> AppResult<(Source, AdoSourceConfig, String)> {
+async fn load_ado_source(
+    state: &AppState,
+    source_id: &str,
+) -> AppResult<(Source, AdoSourceConfig, String)> {
     let src = sqlx::query_as::<_, Source>(&format!(
         "SELECT {SOURCE_COLS} FROM sources WHERE id=?"
     ))
@@ -43,13 +51,18 @@ async fn load_ado_source(state: &AppState, source_id: &str) -> AppResult<(Source
     Ok((src, cfg, auth))
 }
 
+fn work_item_url(cfg: &AdoSourceConfig, id: i64) -> String {
+    format!(
+        "https://dev.azure.com/{}/{}/_workitems/edit/{}",
+        cfg.org, cfg.project, id
+    )
+}
+
 #[tauri::command]
 pub async fn tasks_list(state: State<'_, AppState>) -> AppResult<Vec<TaskSummary>> {
-    let tasks = sqlx::query_as::<_, Task>(
-        "SELECT id, source_id, source_ref, title, state, url, source_meta_json,
-                discovered_at, updated_at
-         FROM tasks ORDER BY updated_at DESC",
-    )
+    let tasks = sqlx::query_as::<_, Task>(&format!(
+        "SELECT {TASK_COLS} FROM tasks ORDER BY updated_at DESC"
+    ))
     .fetch_all(&state.db)
     .await?;
 
@@ -66,27 +79,92 @@ pub async fn tasks_list(state: State<'_, AppState>) -> AppResult<Vec<TaskSummary
     Ok(out)
 }
 
-/// Trigger an immediate refresh for a single source. Returns count of new/updated tasks.
+/// Refresh known + assigned work items for a source.
+///
+/// 1. WIQL discovers items currently @me.
+/// 2. We also re-fetch every task already in the DB for this source so
+///    state changes (incl. items that have since been closed / re-assigned)
+///    surface in the UI.
+/// 3. We fetch any parent work items referenced by the above set, so the
+///    dashboard can render a story → task hierarchy even when the parent
+///    isn't assigned to the user.
+///
+/// Returns count of rows touched (inserted or updated).
 #[tauri::command]
 pub async fn tasks_refresh(state: State<'_, AppState>, source_id: String) -> AppResult<usize> {
     let (src, cfg, auth) = load_ado_source(&state, &source_id).await?;
-    let items = ado::fetch_assigned_work_items(&cfg, &auth).await?;
+
+    // 1. WIQL → currently-assigned ids
+    let assigned = ado::fetch_assigned_work_items(&cfg, &auth).await?;
+    let mut assigned_ids: HashSet<i64> = assigned.iter().map(|w| w.id).collect();
+
+    // 2. Existing tasks in DB for this source — keep them fresh too.
+    let known_refs: Vec<(String,)> = sqlx::query_as(
+        "SELECT source_ref FROM tasks WHERE source_id = ?",
+    )
+    .bind(&src.id)
+    .fetch_all(&state.db)
+    .await?;
+    let mut all_ids: HashSet<i64> = assigned_ids.iter().copied().collect();
+    for (r,) in &known_refs {
+        if let Ok(n) = r.parse::<i64>() {
+            all_ids.insert(n);
+        }
+    }
+
+    // 3. Fetch the union with expanded relations so we get parent links.
+    let mut items: Vec<WorkItem> = if all_ids.is_empty() {
+        vec![]
+    } else {
+        let ids: Vec<String> = all_ids.iter().map(|n| n.to_string()).collect();
+        ado::fetch_work_items_batch(&cfg, &auth, &ids).await?
+    };
+
+    // 4. Find parents referenced by anything we just pulled, fetch the ones
+    //    we don't already have.
+    let have: HashSet<i64> = items.iter().map(|w| w.id).collect();
+    let missing_parents: Vec<i64> = items
+        .iter()
+        .filter_map(|w| w.parent_id)
+        .filter(|p| !have.contains(p))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    if !missing_parents.is_empty() {
+        let ids: Vec<String> = missing_parents.iter().map(|n| n.to_string()).collect();
+        let parents = ado::fetch_work_items_batch(&cfg, &auth, &ids).await?;
+        items.extend(parents);
+    }
+
+    // 5. Upsert everything. Parents pulled only for context are marked
+    //    is_self_assigned = 0 (unless they happen to also be in assigned_ids).
     let mut changed = 0usize;
-    for it in items {
-        let url = format!(
-            "https://dev.azure.com/{}/{}/_workitems/edit/{}",
-            cfg.org, cfg.project, it.id
-        );
+    for it in &items {
+        let url = work_item_url(&cfg, it.id);
+        let parent_ref = it.parent_id.map(|p| p.to_string());
+        let self_assigned = if assigned_ids.remove(&it.id) || assigned_ids.contains(&it.id) {
+            1
+        } else {
+            0
+        };
         let id = Uuid::new_v4().to_string();
         let res = sqlx::query(
-            "INSERT INTO tasks(id, source_id, source_ref, title, state, url, source_meta_json, updated_at)
-             VALUES(?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            "INSERT INTO tasks(id, source_id, source_ref, title, state, url,
+                               source_meta_json, parent_ref, is_self_assigned,
+                               description, updated_at)
+             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
              ON CONFLICT(source_id, source_ref) DO UPDATE SET
-                title = excluded.title,
-                state = excluded.state,
-                url   = excluded.url,
+                title            = excluded.title,
+                state            = excluded.state,
+                url              = excluded.url,
                 source_meta_json = excluded.source_meta_json,
-                updated_at = datetime('now')",
+                parent_ref       = excluded.parent_ref,
+                is_self_assigned = CASE
+                    WHEN excluded.is_self_assigned = 1 THEN 1
+                    ELSE tasks.is_self_assigned
+                END,
+                description      = excluded.description,
+                updated_at       = datetime('now')",
         )
         .bind(&id)
         .bind(&src.id)
@@ -95,6 +173,9 @@ pub async fn tasks_refresh(state: State<'_, AppState>, source_id: String) -> App
         .bind(&it.state)
         .bind(&url)
         .bind(serde_json::to_string(&it.fields)?)
+        .bind(parent_ref)
+        .bind(self_assigned)
+        .bind(&it.description)
         .execute(&state.db)
         .await?;
         if res.rows_affected() > 0 {
@@ -116,31 +197,37 @@ pub async fn tasks_add_by_url(
         .ok_or_else(|| AppError::Config("could not parse work item id from URL".into()))?;
     let item = ado::fetch_work_item(&cfg, &auth, id_num).await?;
     let row_id = Uuid::new_v4().to_string();
+    let parent_ref = item.parent_id.map(|p| p.to_string());
+    let work_url = work_item_url(&cfg, item.id);
     sqlx::query(
-        "INSERT INTO tasks(id, source_id, source_ref, title, state, url, source_meta_json, updated_at)
-         VALUES(?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        "INSERT INTO tasks(id, source_id, source_ref, title, state, url,
+                           source_meta_json, parent_ref, is_self_assigned,
+                           description, updated_at)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, 1, ?, datetime('now'))
          ON CONFLICT(source_id, source_ref) DO UPDATE SET
-            title = excluded.title,
-            state = excluded.state,
-            url   = excluded.url,
+            title            = excluded.title,
+            state            = excluded.state,
+            url              = excluded.url,
             source_meta_json = excluded.source_meta_json,
-            updated_at = datetime('now')",
+            parent_ref       = excluded.parent_ref,
+            description      = excluded.description,
+            updated_at       = datetime('now')",
     )
     .bind(&row_id)
     .bind(&src.id)
     .bind(item.id.to_string())
     .bind(&item.title)
     .bind(&item.state)
-    .bind(&url)
+    .bind(&work_url)
     .bind(serde_json::to_string(&item.fields)?)
+    .bind(parent_ref)
+    .bind(&item.description)
     .execute(&state.db)
     .await?;
 
-    let task = sqlx::query_as::<_, Task>(
-        "SELECT id, source_id, source_ref, title, state, url, source_meta_json,
-                discovered_at, updated_at
-         FROM tasks WHERE source_id=? AND source_ref=?",
-    )
+    let task = sqlx::query_as::<_, Task>(&format!(
+        "SELECT {TASK_COLS} FROM tasks WHERE source_id=? AND source_ref=?"
+    ))
     .bind(&src.id)
     .bind(item.id.to_string())
     .fetch_one(&state.db)

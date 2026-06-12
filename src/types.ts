@@ -28,6 +28,9 @@ export interface Task {
   source_meta_json: string;
   discovered_at: string;
   updated_at: string;
+  parent_ref: string | null;
+  is_self_assigned: number;
+  description: string | null;
 }
 
 export interface TaskSummary extends Task {

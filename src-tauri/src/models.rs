@@ -31,6 +31,9 @@ pub struct Task {
     pub source_meta_json: String,
     pub discovered_at: String,
     pub updated_at: String,
+    pub parent_ref: Option<String>,
+    pub is_self_assigned: i64,
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
