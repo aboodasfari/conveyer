@@ -30,7 +30,22 @@ pub async fn init() -> AppResult<Db> {
         .connect_with(opts)
         .await?;
     run_migrations(&pool).await?;
+    seed_defaults(&pool).await?;
     Ok(pool)
+}
+
+/// One-off defaults for fresh databases. Keys are only written when they
+/// don't already exist, so users won't have settings clobbered after edits.
+async fn seed_defaults(pool: &Db) -> AppResult<()> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    if !home.is_empty() {
+        let cb = format!("{home}/code/conveyer-test-repo");
+        sqlx::query("INSERT OR IGNORE INTO settings(key, value) VALUES('codebase_path', ?)")
+            .bind(&cb)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
 }
 
 async fn run_migrations(pool: &Db) -> AppResult<()> {

@@ -444,7 +444,8 @@ function ExecutionSection() {
       <Box>
         <Heading as="h3" sx={{ fontSize: 1, mb: 1 }}>Codebase Path</Heading>
         <Text sx={{ color: "fg.muted", fontSize: 1, display: "block", mb: 2 }}>
-          Absolute path the Copilot agent runs in. Defaults to <code>~/code/rp</code>.
+          Absolute path the Copilot agent runs in. Defaults to{" "}
+          <code>~/code/conveyer-test-repo</code>.
         </Text>
         <TextInput
           block

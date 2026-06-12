@@ -27,7 +27,8 @@
  *   CONVEYER_ARTIFACT_PATH    (absolute file path the agent should write to)
  *   CONVEYER_CONTEXT_DOC      (file path to previous phase's artifact, when relevant)
  *   CONVEYER_PLAN_DOC         (file path to planning artifact, when relevant)
- *   CONVEYER_BACKEND          "stub" (default) | "copilot"
+ *   CONVEYER_BACKEND          "copilot" (default) | "stub"
+ *   CONVEYER_COPILOT_MODEL    optional model override (default: gpt-5.1)
  */
 
 import fs from "node:fs/promises";
@@ -138,17 +139,122 @@ function stubArtifact(phase, prompt) {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Real Copilot SDK call. Swap the body of `runCopilot` for the actual
- * SDK invocation when you've decided which npm package you're using.
- * The Rust core picks this backend when env CONVEYER_BACKEND=copilot.
+ * Real Copilot SDK call. Uses @github/copilot-sdk to spawn the bundled
+ * Copilot CLI in server mode, creates a streaming session anchored at
+ * CONVEYER_CODEBASE_PATH, sends the rendered prompt, and forwards the
+ * agent's deltas and tool invocations to Conveyer over our NDJSON
+ * protocol.
  *
- * Required event protocol stays the same.
+ * Auth: the SDK reuses the user's existing `copilot` CLI auth. They've
+ * already run `gh auth login` / `copilot auth` for the standalone CLI;
+ * no extra setup needed here.
+ *
+ * Approval: we auto-approve every permission for now. M5 will add a
+ * "needs_input" round-trip to surface tool-call confirmations in the UI.
  */
 async function runCopilot(phase, prompt) {
-  msg("system", "Copilot backend not configured yet — see sidecar/conveyer-agent.mjs runCopilot()");
-  // TODO(m4b): plug in @github/copilot or @anthropic-ai/sdk equivalent here.
-  // For now, fall back to the stub so the rest of the system keeps working.
-  await runStub(phase, prompt);
+  let CopilotClient, approveAll;
+  try {
+    ({ CopilotClient, approveAll } = await import("@github/copilot-sdk"));
+  } catch (e) {
+    msg("system", `@github/copilot-sdk not installed: ${e?.message ?? e}`);
+    emit({ type: "done", ok: false, error: "Install @github/copilot-sdk in the conveyer package." });
+    return;
+  }
+
+  const client = new CopilotClient();
+  let session;
+  try {
+    await client.start?.();
+    session = await client.createSession({
+      model: env.CONVEYER_COPILOT_MODEL || "gpt-5.1",
+      streaming: true,
+      workingDirectory: env.CONVEYER_CODEBASE_PATH || process.cwd(),
+      onPermissionRequest: approveAll ?? (() => ({ decision: "approve_once" })),
+    });
+  } catch (e) {
+    msg("system", `Failed to start Copilot SDK: ${e?.message ?? e}`);
+    try { await client.stop?.(); } catch { /* noop */ }
+    emit({ type: "done", ok: false, error: e?.message ?? String(e) });
+    return;
+  }
+
+  // Buffer streaming deltas; flush as a single "assistant" message on each
+  // assistant.message (so we don't spam the UI with thousands of tiny rows).
+  let buffer = "";
+  const flush = () => {
+    if (buffer.length === 0) return;
+    msg("assistant", buffer);
+    buffer = "";
+  };
+
+  const unsubscribe = session.on((event) => {
+    switch (event.type) {
+      case "assistant.message_delta":
+        if (event.data?.deltaContent) buffer += event.data.deltaContent;
+        break;
+      case "assistant.message":
+        flush();
+        break;
+      case "assistant.reasoning":
+        if (event.data?.content) msg("system", `[thinking] ${event.data.content}`);
+        break;
+      case "tool.execution_start":
+        msg("tool", `→ ${event.data?.toolName ?? "tool"}${event.data?.input ? ": " + truncate(JSON.stringify(event.data.input), 240) : ""}`);
+        break;
+      case "tool.execution_complete":
+        if (event.data?.error) {
+          msg("tool", `← ${event.data?.toolName ?? "tool"} failed: ${event.data.error}`);
+        } else if (event.data?.output !== undefined) {
+          msg("tool", `← ${event.data?.toolName ?? "tool"}: ${truncate(stringifyOutput(event.data.output), 240)}`);
+        }
+        break;
+      case "session.error":
+        msg("system", `[error] ${event.data?.message ?? JSON.stringify(event.data)}`);
+        break;
+      // Everything else we ignore for the wire log — too chatty.
+      default:
+        break;
+    }
+  });
+
+  try {
+    await session.sendAndWait({ prompt });
+    flush();
+    // Capture the artifact file the agent (hopefully) wrote.
+    await checkArtifactWritten();
+    emit({ type: "done", ok: true });
+  } catch (e) {
+    flush();
+    msg("system", `Session failed: ${e?.message ?? e}`);
+    emit({ type: "done", ok: false, error: e?.message ?? String(e) });
+  } finally {
+    try { unsubscribe?.(); } catch { /* noop */ }
+    try { await client.stop?.(); } catch { /* noop */ }
+  }
+}
+
+function truncate(s, n) {
+  if (typeof s !== "string") s = String(s);
+  return s.length > n ? s.slice(0, n) + "…" : s;
+}
+
+function stringifyOutput(v) {
+  if (typeof v === "string") return v;
+  try { return JSON.stringify(v); } catch { return String(v); }
+}
+
+/** If the prompt told the agent to write to CONVEYER_ARTIFACT_PATH and it
+ *  did, emit the artifact event so Conveyer registers it on the phase. */
+async function checkArtifactWritten() {
+  const p = env.CONVEYER_ARTIFACT_PATH;
+  if (!p) return;
+  try {
+    await fs.access(p);
+    emit({ type: "artifact", path: p });
+  } catch {
+    // No artifact — that's fine; the phase still completes.
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -179,7 +285,7 @@ async function main() {
     process.exit(1);
   }
 
-  const backend = env.CONVEYER_BACKEND || "stub";
+  const backend = env.CONVEYER_BACKEND || "copilot";
   try {
     if (backend === "copilot") {
       await runCopilot(phase, prompt);

@@ -186,7 +186,7 @@ async fn load_phase_context(state: &AppState, phase_id: &str) -> AppResult<(Phas
         (None, None)
     };
 
-    // Codebase path: env override → settings KV → default ~/code/rp.
+    // Codebase path: env override → settings KV → default ~/code/conveyer-test-repo.
     let codebase_path = if let Ok(v) = std::env::var("CONVEYER_CODEBASE_PATH") {
         v
     } else {
@@ -197,7 +197,7 @@ async fn load_phase_context(state: &AppState, phase_id: &str) -> AppResult<(Phas
         .await?;
         row.map(|(v,)| v).unwrap_or_else(|| {
             let home = std::env::var("HOME").unwrap_or_default();
-            format!("{home}/code/rp")
+            format!("{home}/code/conveyer-test-repo")
         })
     };
 
@@ -270,7 +270,7 @@ async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
     registry.register(phase_id.to_string(), session_id.clone(), cancel_tx);
 
     // Spawn the sidecar.
-    let backend = std::env::var("CONVEYER_BACKEND").unwrap_or_else(|_| "stub".into());
+    let backend = std::env::var("CONVEYER_BACKEND").unwrap_or_else(|_| "copilot".into());
     let mut cmd = Command::new("node");
     cmd.arg(&sidecar)
         .env("CONVEYER_PHASE", &phase_kind)
