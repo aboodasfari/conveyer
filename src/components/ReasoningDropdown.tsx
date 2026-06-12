@@ -1,5 +1,4 @@
 import { ActionList, ActionMenu, Box, Text } from "@primer/react";
-import { ChevronDownIcon } from "@primer/octicons-react";
 
 export const REASONING_LABEL: Record<string, string> = {
   minimal: "Minimal",
@@ -34,7 +33,6 @@ export function ReasoningDropdown({
   return (
     <ActionMenu>
       <ActionMenu.Button
-        trailingVisual={ChevronDownIcon}
         sx={{
           width,
           justifyContent: "space-between",

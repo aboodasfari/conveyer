@@ -25,6 +25,7 @@ import {
 import { Modal } from "../components/Modal";
 import { ModelDropdown, ModelInfo } from "../components/ModelDropdown";
 import { ReasoningDropdown, REASONING_LABEL } from "../components/ReasoningDropdown";
+import { SubSection } from "../components/SubSection";
 import { useColorMode } from "../theme";
 import { loadRefreshInterval, saveRefreshInterval } from "../autoRefresh";
 import { loadModels } from "../modelsCache";
@@ -161,10 +162,17 @@ function SourcesSection() {
   };
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <Box>
-        <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 3 }}>
-          <Heading as="h2" sx={{ fontSize: 2 }}>Sources</Heading>
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 5 }}>
+      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <Heading as="h2" sx={{ fontSize: 2 }}>Sources</Heading>
+      </Box>
+
+      {error && <Flash variant="danger">{error}</Flash>}
+
+      <SubSection
+        title="Configured sources"
+        description="Where Conveyer pulls tasks from."
+        actions={
           <Box sx={{ display: "flex", gap: 2 }}>
             <Button
               onClick={async () => {
@@ -180,10 +188,10 @@ function SourcesSection() {
               Add Source
             </Button>
           </Box>
-        </Box>
-        {error && <Flash variant="danger">{error}</Flash>}
+        }
+      >
         {loading ? (
-          <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
+          <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: 160 }}>
             <Spinner />
           </Box>
         ) : sources.length === 0 ? (
@@ -195,13 +203,12 @@ function SourcesSection() {
             {sources.map((s) => <SourceRow key={s.id} source={s} onDelete={() => onDelete(s.id)} />)}
           </Box>
         )}
-      </Box>
+      </SubSection>
 
-      <Box>
-        <Heading as="h3" sx={{ fontSize: 1, mb: 1 }}>Auto-refresh</Heading>
-        <Text sx={{ color: "fg.muted", fontSize: 1, display: "block", mb: 2 }}>
-          How often Conveyer polls your sources for new and updated tasks.
-        </Text>
+      <SubSection
+        title="Auto-refresh"
+        description="How often Conveyer polls your sources for new and updated tasks."
+      >
         <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
           <TextInput
             type="number"
@@ -214,7 +221,7 @@ function SourcesSection() {
           />
           <Text sx={{ color: "fg.muted" }}>minutes</Text>
         </Box>
-      </Box>
+      </SubSection>
 
       <AddSourceModal
         open={addOpen}
@@ -472,7 +479,7 @@ function ExecutionSection() {
 
   if (loading) {
     return (
-      <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
+      <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: 240 }}>
         <Spinner />
       </Box>
     );
@@ -615,38 +622,6 @@ function ExecutionSection() {
 /*                                 Helpers                                    */
 /* -------------------------------------------------------------------------- */
 
-/** Bordered card for a labelled subsection inside Execution. */
-function SubSection({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <Box
-      sx={{
-        borderWidth: 1,
-        borderStyle: "solid",
-        borderColor: "border.default",
-        borderRadius: 2,
-        p: 4,
-        bg: "canvas.default",
-      }}
-    >
-      <Heading as="h3" sx={{ fontSize: 1, mb: 1 }}>{title}</Heading>
-      {description && (
-        <Text sx={{ color: "fg.muted", fontSize: 1, display: "block", mb: 3 }}>
-          {description}
-        </Text>
-      )}
-      {children}
-    </Box>
-  );
-}
-
 /**
  * One row in the model picker: a label, the model dropdown, and a
  * reasoning-effort dropdown when the resolved model supports it.
@@ -735,10 +710,12 @@ function ModelChooser({
 function AppearanceSection() {
   const { mode, setMode } = useColorMode();
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 5 }}>
       <Heading as="h2" sx={{ fontSize: 2 }}>Appearance</Heading>
-      <Box>
-        <Text sx={{ display: "block", fontWeight: 600, mb: 2 }}>Theme</Text>
+      <SubSection
+        title="Theme"
+        description="Conveyer follows your selection across the app."
+      >
         <SegmentedControl aria-label="Theme">
           <SegmentedControl.Button
             selected={mode === "night"}
@@ -753,7 +730,7 @@ function AppearanceSection() {
             Light
           </SegmentedControl.Button>
         </SegmentedControl>
-      </Box>
+      </SubSection>
     </Box>
   );
 }

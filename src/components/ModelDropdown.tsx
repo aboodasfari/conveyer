@@ -1,5 +1,4 @@
 import { ActionList, ActionMenu, Box, Text } from "@primer/react";
-import { ChevronDownIcon } from "@primer/octicons-react";
 
 export interface ModelInfo {
   id: string;
@@ -38,7 +37,6 @@ export function ModelDropdown({
   return (
     <ActionMenu>
       <ActionMenu.Button
-        trailingVisual={ChevronDownIcon}
         sx={{
           width,
           maxWidth: "100%",
