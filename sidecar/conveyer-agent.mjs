@@ -236,7 +236,11 @@ async function runCopilot(phase, prompt) {
   });
 
   try {
-    await session.sendAndWait({ prompt });
+    // The SDK's sendAndWait defaults to a 60s timeout waiting for
+    // session.idle, which is far too short for a real phase that does
+    // multiple file reads, shells, and edits. Give it 30 minutes.
+    const PHASE_TIMEOUT_MS = 30 * 60 * 1000;
+    await session.sendAndWait({ prompt }, PHASE_TIMEOUT_MS);
     flush();
     // Capture the artifact file the agent (hopefully) wrote.
     await checkArtifactWritten();
