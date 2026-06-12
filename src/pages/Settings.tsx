@@ -162,9 +162,21 @@ function SourcesSection() {
       <Box>
         <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 3 }}>
           <Heading as="h2" sx={{ fontSize: 2 }}>Sources</Heading>
-          <Button leadingVisual={PlusIcon} variant="primary" onClick={() => setAddOpen(true)}>
-            Add Source
-          </Button>
+          <Box sx={{ display: "flex", gap: 2 }}>
+            <Button
+              onClick={async () => {
+                try {
+                  await api.tasksSeedDemo();
+                  await load();
+                } catch (e) { setError(formatError(e)); }
+              }}
+            >
+              Seed Demo Data
+            </Button>
+            <Button leadingVisual={PlusIcon} variant="primary" onClick={() => setAddOpen(true)}>
+              Add Source
+            </Button>
+          </Box>
         </Box>
         {error && <Flash variant="danger">{error}</Flash>}
         {loading ? (
@@ -383,10 +395,18 @@ function ExecutionSection() {
   const [gates, setGates] = useState<Gate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [codebase, setCodebase] = useState<string>("");
+  const [codebaseSaved, setCodebaseSaved] = useState<string>("");
 
   const load = async () => {
     try {
-      setGates(await api.gatesList());
+      const [g, cb] = await Promise.all([
+        api.gatesList(),
+        api.settingGet("codebase_path"),
+      ]);
+      setGates(g);
+      setCodebase(cb ?? "");
+      setCodebaseSaved(cb ?? "");
     } catch (e) { setError(formatError(e)); } finally { setLoading(false); }
   };
 
@@ -403,12 +423,39 @@ function ExecutionSection() {
     }
   };
 
+  const commitCodebase = async () => {
+    if (codebase === codebaseSaved) return;
+    try {
+      await api.settingSet("codebase_path", codebase);
+      setCodebaseSaved(codebase);
+    } catch (e) {
+      setError(formatError(e));
+      setCodebase(codebaseSaved);
+    }
+  };
+
   if (loading) return <Spinner />;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <Heading as="h2" sx={{ fontSize: 2 }}>Execution</Heading>
       {error && <Flash variant="danger">{error}</Flash>}
+
+      <Box>
+        <Heading as="h3" sx={{ fontSize: 1, mb: 1 }}>Codebase Path</Heading>
+        <Text sx={{ color: "fg.muted", fontSize: 1, display: "block", mb: 2 }}>
+          Absolute path the Copilot agent runs in. Defaults to <code>~/code/rp</code>.
+        </Text>
+        <TextInput
+          block
+          value={codebase}
+          onChange={(e) => setCodebase(e.target.value)}
+          onBlur={() => void commitCodebase()}
+          onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+          placeholder="/Users/you/code/rp"
+          sx={{ maxWidth: 480 }}
+        />
+      </Box>
 
       <Box>
         <Heading as="h3" sx={{ fontSize: 1, mb: 1 }}>Phase Gates</Heading>

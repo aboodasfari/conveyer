@@ -37,6 +37,7 @@ export const api = {
     invoke<TaskSummary>("tasks_add_by_url", { sourceId, url }),
   tasksSetBucket: (taskId: string, bucket: string) =>
     invoke<void>("tasks_set_bucket", { taskId, bucket }),
+  tasksSeedDemo: () => invoke<void>("tasks_seed_demo"),
 
   // runs
   runsStart: (taskId: string) =>

@@ -113,6 +113,18 @@ pub async fn tasks_list(state: State<'_, AppState>) -> AppResult<Vec<TaskSummary
 /// Returns count of rows touched.
 #[tauri::command]
 pub async fn tasks_refresh(state: State<'_, AppState>, source_id: String) -> AppResult<usize> {
+    // Short-circuit for non-ADO sources (e.g. the demo source seeded from
+    // tasks_seed_demo): they don't pull from anywhere remote.
+    let kind: Option<(String,)> = sqlx::query_as("SELECT kind FROM sources WHERE id = ?")
+        .bind(&source_id)
+        .fetch_optional(&state.db)
+        .await?;
+    if let Some((k,)) = &kind {
+        if k != "ado" {
+            return Ok(0);
+        }
+    }
+
     let (src, cfg, auth) = load_ado_source(&state, &source_id).await?;
 
     // 1. WIQL → currently-assigned ids
@@ -277,8 +289,105 @@ pub async fn tasks_add_by_url(
     Ok(task)
 }
 
-/// Move a task (and, if it is a story-root, all its children) to a bucket.
-/// Valid bucket names: 'active', 'backlog', 'archive'.
+/// Seed demo data: a local source + a story with two child tasks
+/// pointing at the conveyer-test-repo, so the user can shake out the
+/// run pipeline without needing a real ADO source.
+#[tauri::command]
+pub async fn tasks_seed_demo(state: State<'_, AppState>) -> AppResult<()> {
+    // Default the codebase to the test repo if the user hasn't picked one.
+    let existing_cb: Option<(String,)> = sqlx::query_as(
+        "SELECT value FROM settings WHERE key = 'codebase_path'",
+    )
+    .fetch_optional(&state.db)
+    .await?;
+    if existing_cb.is_none() {
+        if let Ok(home) = std::env::var("HOME") {
+            let test_repo = format!("{home}/code/conveyer-test-repo");
+            sqlx::query(
+                "INSERT OR REPLACE INTO settings(key, value) VALUES('codebase_path', ?)",
+            )
+            .bind(&test_repo)
+            .execute(&state.db)
+            .await?;
+        }
+    }
+
+    // Find or create the demo source.
+    let existing: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM sources WHERE kind = 'demo' LIMIT 1",
+    )
+    .fetch_optional(&state.db)
+    .await?;
+    let source_id = match existing {
+        Some((id,)) => id,
+        None => {
+            let id = Uuid::new_v4().to_string();
+            sqlx::query(
+                "INSERT INTO sources(id, kind, name, config_json, pat_env, enabled,
+                                     auth_kind, az_account)
+                 VALUES(?, 'demo', 'Demo (test repo)', '{}', '', 1, 'pat', '')",
+            )
+            .bind(&id)
+            .execute(&state.db)
+            .await?;
+            id
+        }
+    };
+
+    // Story + two child tasks. Use stable source_refs so re-seeding is idempotent.
+    let story_ref = "demo-story-1";
+    let child_a_ref = "demo-task-1";
+    let child_b_ref = "demo-task-2";
+
+    let story_desc = "Polish the toy code in `conveyer-test-repo`. \
+                      Two child tasks track the work.";
+    let task_a_desc = "`src/math.ts:add` rounds its inputs and so loses precision \
+                      when called with floats. Fix it to handle floats correctly \
+                      and add a test.";
+    let task_b_desc = "`src/greet.ts:greet` should optionally accept a title \
+                      (e.g. \"Dr.\") and prefix it to the name. Update the call site \
+                      in `src/index.ts` to demo the new behaviour.";
+
+    upsert_demo_task(&state, &source_id, story_ref, None, "Demo story: tidy the test repo", "Active", story_desc).await?;
+    upsert_demo_task(&state, &source_id, child_a_ref, Some(story_ref), "Fix add() float handling", "Active", task_a_desc).await?;
+    upsert_demo_task(&state, &source_id, child_b_ref, Some(story_ref), "Add optional title to greet()", "Active", task_b_desc).await?;
+
+    Ok(())
+}
+
+async fn upsert_demo_task(
+    state: &AppState,
+    source_id: &str,
+    source_ref: &str,
+    parent_ref: Option<&str>,
+    title: &str,
+    state_str: &str,
+    description: &str,
+) -> AppResult<()> {
+    let id = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO tasks(id, source_id, source_ref, title, state, url,
+                           source_meta_json, parent_ref, is_self_assigned,
+                           description, updated_at)
+         VALUES(?, ?, ?, ?, ?, '', '{}', ?, 1, ?, datetime('now'))
+         ON CONFLICT(source_id, source_ref) DO UPDATE SET
+            title       = excluded.title,
+            state       = excluded.state,
+            parent_ref  = excluded.parent_ref,
+            description = excluded.description,
+            updated_at  = datetime('now')",
+    )
+    .bind(&id)
+    .bind(source_id)
+    .bind(source_ref)
+    .bind(title)
+    .bind(state_str)
+    .bind(parent_ref)
+    .bind(description)
+    .execute(&state.db)
+    .await?;
+    Ok(())
+}
 #[tauri::command]
 pub async fn tasks_set_bucket(
     state: State<'_, AppState>,

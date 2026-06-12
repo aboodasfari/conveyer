@@ -60,6 +60,7 @@ pub fn run() {
             commands::tasks::tasks_refresh,
             commands::tasks::tasks_add_by_url,
             commands::tasks::tasks_set_bucket,
+            commands::tasks::tasks_seed_demo,
             commands::gates::gates_list,
             commands::gates::gates_set,
             commands::runs::runs_start,
