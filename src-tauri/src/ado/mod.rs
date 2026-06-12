@@ -143,8 +143,17 @@ fn raw_to_work_item(raw: RawWorkItem) -> WorkItem {
 /// Anything above (Feature, Epic, …) is intentionally hidden.
 pub const STORY_TYPES: &[&str] = &["User Story", "Bug", "Issue", "Product Backlog Item"];
 
+/// Types we never want to surface in the dashboard, even if they show up
+/// in WIQL (e.g. a Feature directly assigned to you). They're not actionable
+/// in Conveyer.
+pub const SKIP_TYPES: &[&str] = &["Feature", "Epic", "Theme", "Initiative"];
+
 pub fn is_story_type(t: &str) -> bool {
     STORY_TYPES.iter().any(|s| s.eq_ignore_ascii_case(t))
+}
+
+pub fn is_skip_type(t: &str) -> bool {
+    SKIP_TYPES.iter().any(|s| s.eq_ignore_ascii_case(t))
 }
 
 /// Run a WIQL query to find work items currently assigned to the caller.

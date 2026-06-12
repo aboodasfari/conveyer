@@ -1,12 +1,10 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, MouseEvent } from "react";
 import {
   ActionList,
   ActionMenu,
   Box,
   Button,
   IconButton,
-  Label,
-  Link as PrimerLink,
   Text,
 } from "@primer/react";
 import {
@@ -15,7 +13,7 @@ import {
   KebabHorizontalIcon,
   PlayIcon,
 } from "@primer/octicons-react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { Bucket, TaskSummary } from "../types";
 import { StatusBadge } from "./StatusBadge";
 import { StateChip } from "./StateChip";
@@ -30,6 +28,16 @@ const MOVE_TARGETS: { value: Bucket; label: string }[] = [
   { value: "backlog", label: "Move to Backlog" },
   { value: "archive", label: "Move to Archive" },
 ];
+
+/** Work-item states where there is nothing for Conveyer to do. */
+const TERMINAL_STATES = new Set(
+  ["done", "closed", "resolved", "completed", "removed"],
+);
+const isActionable = (t: TaskSummary) =>
+  t.is_self_assigned === 1 && !TERMINAL_STATES.has(t.state.toLowerCase().trim());
+
+/** Stop a click inside an interactive control from triggering the parent card link. */
+const stop = (e: MouseEvent) => e.stopPropagation();
 
 export function TaskTree({
   tasks,
@@ -98,29 +106,31 @@ function StoryCard({
             icon={open ? ChevronDownIcon : ChevronRightIcon}
             variant="invisible"
             size="small"
-            onClick={() => setOpen((o) => !o)}
+            onClick={(e) => { stop(e); setOpen((o) => !o); }}
           />
         ) : (
           <Box sx={{ width: 28 }} />
         )}
         menu={onMove ? (
-          <ActionMenu>
-            <ActionMenu.Anchor>
-              <IconButton aria-label="Move" icon={KebabHorizontalIcon} variant="invisible" />
-            </ActionMenu.Anchor>
-            <ActionMenu.Overlay align="end">
-              <ActionList>
-                {MOVE_TARGETS.filter((m) => m.value !== node.task.bucket).map((m) => (
-                  <ActionList.Item
-                    key={m.value}
-                    onSelect={() => onMove(node.task.id, m.value)}
-                  >
-                    {m.label}
-                  </ActionList.Item>
-                ))}
-              </ActionList>
-            </ActionMenu.Overlay>
-          </ActionMenu>
+          <Box onClick={stop}>
+            <ActionMenu>
+              <ActionMenu.Anchor>
+                <IconButton aria-label="Move" icon={KebabHorizontalIcon} variant="invisible" />
+              </ActionMenu.Anchor>
+              <ActionMenu.Overlay align="end">
+                <ActionList>
+                  {MOVE_TARGETS.filter((m) => m.value !== node.task.bucket).map((m) => (
+                    <ActionList.Item
+                      key={m.value}
+                      onSelect={() => onMove(node.task.id, m.value)}
+                    >
+                      {m.label}
+                    </ActionList.Item>
+                  ))}
+                </ActionList>
+              </ActionMenu.Overlay>
+            </ActionMenu>
+          </Box>
         ) : null}
       />
       {hasChildren && open && (
@@ -147,15 +157,17 @@ function StoryHeader({
   toggle: React.ReactNode;
   menu: React.ReactNode;
 }) {
-  const mine = task.is_self_assigned === 1;
+  const nav = useNavigate();
   return (
     <Box
+      onClick={() => nav(`/tasks/${task.id}`)}
       sx={{
         px: 3,
         py: 3,
         display: "flex",
         alignItems: "center",
         gap: 2,
+        cursor: "pointer",
         transition: "background-color 80ms",
         "&:hover": { bg: "canvas.subtle" },
       }}
@@ -163,34 +175,29 @@ function StoryHeader({
       {toggle}
       <Box sx={{ flex: 1, minWidth: 0 }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 2, mb: 1 }}>
-          <PrimerLink
-            as={Link}
-            to={`/tasks/${task.id}`}
+          <Text
             sx={{
               fontWeight: 600,
               fontSize: 2,
               color: "fg.default",
-              "&:hover": { color: "accent.fg" },
             }}
           >
             {task.title || `#${task.source_ref}`}
-          </PrimerLink>
+          </Text>
           <Text sx={{ color: "fg.subtle", fontSize: 0 }}>#{task.source_ref}</Text>
-          {!mine && (
-            <Label variant="default" size="small">grouping</Label>
-          )}
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 3 }}>
           <StateChip state={task.state} />
           <StatusBadge status={task.run_status} />
         </Box>
       </Box>
-      {mine && (
+      {isActionable(task) && (
         <Button
           leadingVisual={PlayIcon}
           variant="primary"
           size="small"
           disabled
+          onClick={stop}
           title="Tackle — wires up in M3"
         >
           Tackle
@@ -202,9 +209,10 @@ function StoryHeader({
 }
 
 function ChildRow({ task, last }: { task: TaskSummary; last: boolean }) {
-  const mine = task.is_self_assigned === 1;
+  const nav = useNavigate();
   return (
     <Box
+      onClick={() => nav(`/tasks/${task.id}`)}
       sx={{
         px: 3,
         py: 2,
@@ -212,6 +220,7 @@ function ChildRow({ task, last }: { task: TaskSummary; last: boolean }) {
         display: "flex",
         alignItems: "center",
         gap: 2,
+        cursor: "pointer",
         borderBottomWidth: last ? 0 : 1,
         borderBottomStyle: "solid",
         borderBottomColor: "border.muted",
@@ -221,33 +230,28 @@ function ChildRow({ task, last }: { task: TaskSummary; last: boolean }) {
     >
       <Box sx={{ flex: 1, minWidth: 0 }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 2, mb: 1 }}>
-          <PrimerLink
-            as={Link}
-            to={`/tasks/${task.id}`}
+          <Text
             sx={{
               fontWeight: 500,
               color: "fg.default",
-              "&:hover": { color: "accent.fg" },
             }}
           >
             {task.title || `#${task.source_ref}`}
-          </PrimerLink>
+          </Text>
           <Text sx={{ color: "fg.subtle", fontSize: 0 }}>#{task.source_ref}</Text>
-          {!mine && (
-            <Label variant="default" size="small">grouping</Label>
-          )}
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 3 }}>
           <StateChip state={task.state} />
           <StatusBadge status={task.run_status} />
         </Box>
       </Box>
-      {mine && (
+      {isActionable(task) && (
         <Button
           leadingVisual={PlayIcon}
           variant="primary"
           size="small"
           disabled
+          onClick={stop}
           title="Tackle — wires up in M3"
         >
           Tackle

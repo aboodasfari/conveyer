@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { Box, Button, Heading, Label, Link as PrimerLink, Spinner, Text } from "@primer/react";
+import { Box, Button, Heading, Link as PrimerLink, Spinner, Text } from "@primer/react";
 import { ArrowLeftIcon, LinkExternalIcon } from "@primer/octicons-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
@@ -66,9 +66,6 @@ export function TaskDetail() {
           <Text sx={{ color: "fg.muted", fontSize: 0 }}>#{task.source_ref}</Text>
           <Text sx={{ color: "fg.muted", fontSize: 0 }}>·</Text>
           <Text sx={{ color: "fg.muted", fontSize: 0 }}>{task.state}</Text>
-          {task.is_self_assigned === 0 && (
-            <Label variant="default" size="small">grouping</Label>
-          )}
         </Box>
         <Heading as="h1" sx={{ fontSize: 4, mt: 1 }}>{task.title}</Heading>
         {parent && (

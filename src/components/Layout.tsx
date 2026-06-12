@@ -1,18 +1,17 @@
 import { Box } from "@primer/react";
+import { GearIcon } from "@primer/octicons-react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 
 interface NavItem {
   to: string;
   label: string;
-  // If true, the route matches only on exact path. Else, prefix-match.
   exact?: boolean;
 }
 
-const NAV: NavItem[] = [
+const BUCKET_NAV: NavItem[] = [
   { to: "/", label: "Active", exact: true },
   { to: "/backlog", label: "Backlog" },
   { to: "/archive", label: "Archive" },
-  { to: "/settings", label: "Settings" },
 ];
 
 export function Layout() {
@@ -22,6 +21,8 @@ export function Layout() {
     if (item.exact) return pathname === item.to;
     return pathname === item.to || pathname.startsWith(`${item.to}/`);
   };
+
+  const settingsActive = pathname === "/settings" || pathname.startsWith("/settings/");
 
   return (
     <Box sx={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
@@ -54,10 +55,13 @@ export function Layout() {
           Conveyer
         </Link>
         <Box sx={{ display: "flex", gap: 1, flex: 1 }} data-tauri-drag-region>
-          {NAV.map((item) => (
+          {BUCKET_NAV.map((item) => (
             <NavLink key={item.to} to={item.to} label={item.label} active={isActive(item)} />
           ))}
         </Box>
+        <IconNavLink to="/settings" label="Settings" active={settingsActive}>
+          <GearIcon size={16} />
+        </IconNavLink>
       </Box>
       <Box
         as="main"
@@ -100,6 +104,46 @@ function NavLink({
       }}
     >
       {label}
+    </Box>
+  );
+}
+
+function IconNavLink({
+  to,
+  label,
+  active,
+  children,
+}: {
+  to: string;
+  label: string;
+  active: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <Box
+      as={Link}
+      to={to}
+      aria-label={label}
+      title={label}
+      data-tauri-drag-region={false}
+      sx={{
+        width: 32,
+        height: 32,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        textDecoration: "none",
+        borderRadius: 2,
+        color: active ? "fg.default" : "fg.muted",
+        bg: active ? "neutral.muted" : "transparent",
+        transition: "background-color 80ms",
+        "&:hover": {
+          bg: active ? "neutral.muted" : "neutral.subtle",
+          color: "fg.default",
+        },
+      }}
+    >
+      {children}
     </Box>
   );
 }

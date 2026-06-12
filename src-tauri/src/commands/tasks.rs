@@ -1,6 +1,6 @@
 use crate::ado;
 use crate::ado::auth::{header_value, AuthInputs, AuthKind};
-use crate::ado::{is_story_type, WorkItem};
+use crate::ado::{is_skip_type, is_story_type, WorkItem};
 use crate::error::{AppError, AppResult};
 use crate::models::{AdoSourceConfig, Source, Task};
 use crate::state::AppState;
@@ -143,9 +143,18 @@ pub async fn tasks_refresh(state: State<'_, AppState>, source_id: String) -> App
     let by_id: HashMap<i64, WorkItem> =
         items.iter().cloned().map(|w| (w.id, w)).collect();
 
-    // 6. Upsert. parent_ref only points at a parent we kept AND that is a story.
+    // 6. Upsert. Skip Feature/Epic/Theme/Initiative items entirely; if any
+    //    were stored from an earlier version, evict them now.
     let mut changed = 0usize;
     for it in &items {
+        if is_skip_type(&it.work_item_type) {
+            sqlx::query("DELETE FROM tasks WHERE source_id = ? AND source_ref = ?")
+                .bind(&src.id)
+                .bind(it.id.to_string())
+                .execute(&state.db)
+                .await?;
+            continue;
+        }
         let url = work_item_url(&cfg, it.id);
         // Stories have no parent_ref shown (they ARE the root in our view).
         let parent_ref = if is_story_type(&it.work_item_type) {

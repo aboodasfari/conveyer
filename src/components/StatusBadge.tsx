@@ -10,8 +10,18 @@ const variantMap: Record<string, "default" | "accent" | "success" | "attention" 
   skipped: "default",
 };
 
+const labelMap: Record<string, string> = {
+  pending: "Pending",
+  running: "Running",
+  waiting: "Waiting",
+  done: "Done",
+  failed: "Failed",
+  cancelled: "Cancelled",
+  skipped: "Skipped",
+};
+
 export function StatusBadge({ status }: { status: string | null | undefined }) {
-  if (!status) return <Label variant="default">no run</Label>;
+  if (!status) return <Label variant="default">Not Tackled</Label>;
   const v = variantMap[status] ?? "default";
-  return <Label variant={v}>{status}</Label>;
+  return <Label variant={v}>{labelMap[status] ?? status}</Label>;
 }

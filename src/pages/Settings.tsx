@@ -368,7 +368,6 @@ function ExecutionSection() {
         <Heading as="h3" sx={{ fontSize: 1, mb: 1 }}>Phase Gates</Heading>
         <Text sx={{ color: "fg.muted", fontSize: 1 }}>
           Phases set to auto-advance proceed without waiting for your approval.
-          Submit is terminal so it has no gate.
         </Text>
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 3 }}>
           {visibleKinds.map((k) => {
