@@ -115,7 +115,12 @@ export function RunPanel({ taskId }: { taskId: string }) {
   const start = () => wrap(async () => api.runsStart(taskId));
   const complete = (id: string) => wrap(async () => api.phaseComplete(id));
   const approve = (id: string) => wrap(async () => api.phaseApprove(id));
-  const rewind = (id: string) => wrap(async () => api.phaseRewind(id));
+  const rewindToImplementation = () => wrap(async () => {
+    if (!detail) return null;
+    const impl = detail.phases.find((p) => p.kind === "implementation");
+    if (!impl) return null;
+    return api.phaseRewind(impl.id);
+  });
 
   const selectedPhase = useMemo(() => {
     if (!detail || !selectedPhaseId) return null;
@@ -206,7 +211,7 @@ export function RunPanel({ taskId }: { taskId: string }) {
                 onSelect={() => setSelectedPhaseId(p.id)}
                 onComplete={() => complete(p.id)}
                 onApprove={() => approve(p.id)}
-                onRewind={() => rewind(p.id)}
+                onRewind={rewindToImplementation}
               />
             ))}
           </Box>
@@ -339,9 +344,9 @@ function PhaseRow({
                   variant="danger"
                   onClick={(e) => { e.stopPropagation(); onRewind(); }}
                   disabled={busy}
-                  title="Send back for more implementation work"
+                  title="Send the work back to Implementation"
                 >
-                  Send Back
+                  Send Back to Implementation
                 </Button>
               )}
             </Box>
@@ -364,9 +369,9 @@ function PhaseRow({
                   variant="danger"
                   onClick={(e) => { e.stopPropagation(); onRewind(); }}
                   disabled={busy}
-                  title="Send back for more implementation work"
+                  title="Send the work back to Implementation"
                 >
-                  Send Back
+                  Send Back to Implementation
                 </Button>
               )}
             </Box>
