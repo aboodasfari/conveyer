@@ -26,9 +26,11 @@ export function AppTheme({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, mode);
-    // Keep the Tauri window's chrome (traffic-light backdrop) in sync.
     document.documentElement.style.background =
       mode === "night" ? "#0d1117" : "#ffffff";
+    // Prevent horizontal scroll on the document; titles etc. truncate instead.
+    document.documentElement.style.overflowX = "hidden";
+    document.body.style.overflowX = "hidden";
   }, [mode]);
 
   const ctx: ThemeCtx = {

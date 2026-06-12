@@ -29,10 +29,13 @@ export function Layout() {
       <Box
         data-tauri-drag-region
         sx={{
+          position: "sticky",
+          top: 0,
+          zIndex: 10,
           display: "flex",
           alignItems: "center",
           gap: 1,
-          pl: "84px",
+          pl: "104px",
           pr: 3,
           minHeight: 48,
           borderBottomWidth: 1,

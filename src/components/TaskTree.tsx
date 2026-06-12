@@ -181,17 +181,22 @@ function StoryHeader({
     >
       {toggle}
       <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 2, mb: 1 }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 2, mb: 1, minWidth: 0 }}>
           <Text
             sx={{
               fontWeight: 600,
               fontSize: 2,
               color: "fg.default",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              minWidth: 0,
+              flexShrink: 1,
             }}
           >
             {task.title || `#${task.source_ref}`}
           </Text>
-          <Text sx={{ color: "fg.subtle", fontSize: 0 }}>#{task.source_ref}</Text>
+          <Text sx={{ color: "fg.subtle", fontSize: 0, flexShrink: 0 }}>#{task.source_ref}</Text>
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 3 }}>
           <StateChip state={task.state} />
@@ -236,16 +241,21 @@ function ChildRow({ task, last }: { task: TaskSummary; last: boolean }) {
       }}
     >
       <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 2, mb: 1 }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 2, mb: 1, minWidth: 0 }}>
           <Text
             sx={{
               fontWeight: 500,
               color: "fg.default",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              minWidth: 0,
+              flexShrink: 1,
             }}
           >
             {task.title || `#${task.source_ref}`}
           </Text>
-          <Text sx={{ color: "fg.subtle", fontSize: 0 }}>#{task.source_ref}</Text>
+          <Text sx={{ color: "fg.subtle", fontSize: 0, flexShrink: 0 }}>#{task.source_ref}</Text>
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 3 }}>
           <StateChip state={task.state} />
