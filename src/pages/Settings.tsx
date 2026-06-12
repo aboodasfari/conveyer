@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   Box,
   Button,
+  Checkbox,
   Flash,
   FormControl,
   Heading,
@@ -10,7 +11,6 @@ import {
   Spinner,
   Text,
   TextInput,
-  ToggleSwitch,
 } from "@primer/react";
 import { TrashIcon } from "@primer/octicons-react";
 import { api } from "../api";
@@ -187,9 +187,12 @@ export function Settings() {
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
           {PHASE_KINDS.filter((k) => k !== "submit").map((k) => {
             const g = gates.find((x) => x.phase_kind === k) ?? { phase_kind: k, auto_advance: 0 };
+            const on = g.auto_advance === 1;
             return (
               <Box
                 key={k}
+                as="label"
+                htmlFor={`gate-${k}`}
                 sx={{
                   display: "flex",
                   alignItems: "center",
@@ -198,14 +201,16 @@ export function Settings() {
                   borderBottomWidth: 1,
                   borderBottomStyle: "solid",
                   borderBottomColor: "border.muted",
+                  cursor: "pointer",
                 }}
               >
-                <Text sx={{ textTransform: "capitalize" }}>{k}</Text>
-                <ToggleSwitch
-                  checked={g.auto_advance === 1}
+                <Text sx={{ textTransform: "capitalize" }}>
+                  {k} <Text sx={{ color: "fg.muted", fontSize: 0 }}>· {on ? "auto-advance" : "wait for me"}</Text>
+                </Text>
+                <Checkbox
+                  id={`gate-${k}`}
+                  checked={on}
                   onChange={() => toggleGate(k, g.auto_advance)}
-                  aria-label={`Auto advance ${k}`}
-                  size="small"
                 />
               </Box>
             );
