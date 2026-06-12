@@ -2,6 +2,7 @@ mod ado;
 mod commands;
 mod db;
 mod error;
+mod macos;
 mod models;
 mod state;
 
@@ -20,6 +21,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            // Re-position the macOS traffic lights to vertically centre on our
+            // 48 px header: light cluster is ~14 px tall, so y = (48-14)/2 = 17.
+            if let Some(win) = app.get_webview_window("main") {
+                macos::position_traffic_lights(&win, 16.0, 17.0);
+            }
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 match db::init().await {

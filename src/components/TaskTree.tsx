@@ -85,6 +85,10 @@ function StoryCard({
 }) {
   const [open, setOpen] = useState(true);
   const hasChildren = node.children.length > 0;
+  // If any child is yours, hide the parent's Tackle button — the user
+  // tackles individual tasks rather than the whole story in that case.
+  const someChildMine = node.children.some((c) => c.is_self_assigned === 1);
+  const showStoryTackle = isActionable(node.task) && !someChildMine;
 
   return (
     <Box
@@ -100,6 +104,7 @@ function StoryCard({
     >
       <StoryHeader
         task={node.task}
+        showTackle={showStoryTackle}
         toggle={hasChildren ? (
           <IconButton
             aria-label={open ? "Collapse" : "Expand"}
@@ -150,10 +155,12 @@ function StoryCard({
 
 function StoryHeader({
   task,
+  showTackle,
   toggle,
   menu,
 }: {
   task: TaskSummary;
+  showTackle: boolean;
   toggle: React.ReactNode;
   menu: React.ReactNode;
 }) {
@@ -191,7 +198,7 @@ function StoryHeader({
           <StatusBadge status={task.run_status} />
         </Box>
       </Box>
-      {isActionable(task) && (
+      {showTackle && (
         <Button
           leadingVisual={PlayIcon}
           variant="primary"

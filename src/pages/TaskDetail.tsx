@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { Box, Button, Heading, Link as PrimerLink, Spinner, Text } from "@primer/react";
+import { Box, Button, Heading, IconButton, Link as PrimerLink, Spinner, Text } from "@primer/react";
 import { ArrowLeftIcon, LinkExternalIcon } from "@primer/octicons-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
@@ -67,7 +67,16 @@ export function TaskDetail() {
           <Text sx={{ color: "fg.muted", fontSize: 0 }}>·</Text>
           <Text sx={{ color: "fg.muted", fontSize: 0 }}>{task.state}</Text>
         </Box>
-        <Heading as="h1" sx={{ fontSize: 4, mt: 1 }}>{task.title}</Heading>
+        <Box sx={{ mt: 1, display: "flex", alignItems: "center", gap: 2 }}>
+          <Heading as="h1" sx={{ fontSize: 4 }}>{task.title}</Heading>
+          <IconButton
+            aria-label="Open in source"
+            title="Open in source"
+            icon={LinkExternalIcon}
+            variant="invisible"
+            onClick={() => openUrl(task.url)}
+          />
+        </Box>
         {parent && (
           <Text sx={{ display: "block", color: "fg.muted", fontSize: 0, mt: 1 }}>
             Under{" "}
@@ -78,9 +87,6 @@ export function TaskDetail() {
         )}
         <Box sx={{ mt: 2, display: "flex", gap: 2, alignItems: "center" }}>
           <StatusBadge status={task.run_status} />
-          <Button leadingVisual={LinkExternalIcon} onClick={() => openUrl(task.url)}>
-            Open in source
-          </Button>
         </Box>
       </Box>
 

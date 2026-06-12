@@ -7,6 +7,7 @@ import {
   Heading,
   Radio,
   RadioGroup,
+  SegmentedControl,
   Spinner,
   Text,
   TextInput,
@@ -23,6 +24,7 @@ import {
 } from "../types";
 import { Modal } from "../components/Modal";
 import { useColorMode } from "../theme";
+import { loadRefreshInterval, saveRefreshInterval } from "../autoRefresh";
 
 type Section = "sources" | "execution" | "appearance";
 
@@ -335,10 +337,16 @@ function ExecutionSection() {
   const [gates, setGates] = useState<Gate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [intervalMin, setIntervalMin] = useState<number>(30);
+  const [intervalDraft, setIntervalDraft] = useState<string>("30");
+  const [savingInterval, setSavingInterval] = useState(false);
 
   const load = async () => {
     try {
-      setGates(await api.gatesList());
+      const [g, i] = await Promise.all([api.gatesList(), loadRefreshInterval()]);
+      setGates(g);
+      setIntervalMin(i);
+      setIntervalDraft(String(i));
     } catch (e) { setError(String(e)); } finally { setLoading(false); }
   };
 
@@ -355,14 +363,58 @@ function ExecutionSection() {
     }
   };
 
+  const saveInterval = async () => {
+    const n = parseInt(intervalDraft, 10);
+    if (!Number.isFinite(n) || n <= 0) {
+      setError("Refresh interval must be a positive number of minutes.");
+      return;
+    }
+    setSavingInterval(true);
+    setError(null);
+    try {
+      await saveRefreshInterval(n);
+      setIntervalMin(n);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSavingInterval(false);
+    }
+  };
+
   const visibleKinds = useMemo(() => PHASE_KINDS.filter((k) => k !== "submit"), []);
 
   if (loading) return <Spinner />;
+
+  const intervalDirty = String(intervalMin) !== intervalDraft;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <Heading as="h2" sx={{ fontSize: 2 }}>Execution</Heading>
       {error && <Flash variant="danger">{error}</Flash>}
+
+      <Box>
+        <Heading as="h3" sx={{ fontSize: 1, mb: 1 }}>Auto-refresh</Heading>
+        <Text sx={{ color: "fg.muted", fontSize: 1, display: "block", mb: 2 }}>
+          How often Conveyer polls your sources for new and updated tasks.
+        </Text>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+          <TextInput
+            type="number"
+            value={intervalDraft}
+            onChange={(e) => setIntervalDraft(e.target.value)}
+            sx={{ width: 120 }}
+            min={1}
+            trailingVisual={() => <Text sx={{ color: "fg.muted" }}>min</Text>}
+          />
+          <Button
+            variant="primary"
+            onClick={saveInterval}
+            disabled={!intervalDirty || savingInterval}
+          >
+            {savingInterval ? "Saving…" : "Save"}
+          </Button>
+        </Box>
+      </Box>
 
       <Box>
         <Heading as="h3" sx={{ fontSize: 1, mb: 1 }}>Phase Gates</Heading>
@@ -417,19 +469,23 @@ function AppearanceSection() {
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
       <Heading as="h2" sx={{ fontSize: 2 }}>Appearance</Heading>
-      <FormControl>
-        <FormControl.Label>Theme</FormControl.Label>
-        <RadioGroup name="theme" onChange={(v) => setMode(v as "day" | "night")}>
-          <FormControl>
-            <Radio value="night" checked={mode === "night"} />
-            <FormControl.Label>Dark</FormControl.Label>
-          </FormControl>
-          <FormControl>
-            <Radio value="day" checked={mode === "day"} />
-            <FormControl.Label>Light</FormControl.Label>
-          </FormControl>
-        </RadioGroup>
-      </FormControl>
+      <Box>
+        <Text sx={{ display: "block", fontWeight: 600, mb: 2 }}>Theme</Text>
+        <SegmentedControl aria-label="Theme">
+          <SegmentedControl.Button
+            selected={mode === "night"}
+            onClick={() => setMode("night")}
+          >
+            Dark
+          </SegmentedControl.Button>
+          <SegmentedControl.Button
+            selected={mode === "day"}
+            onClick={() => setMode("day")}
+          >
+            Light
+          </SegmentedControl.Button>
+        </SegmentedControl>
+      </Box>
     </Box>
   );
 }

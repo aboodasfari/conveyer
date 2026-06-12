@@ -10,6 +10,7 @@ import {
 import { PlusIcon, SyncIcon } from "@primer/octicons-react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
+import { useAutoRefresh } from "../autoRefresh";
 import { Bucket, Source, TaskSummary } from "../types";
 import { EmptyState } from "../components/EmptyState";
 import { Modal } from "../components/Modal";
@@ -51,6 +52,7 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+  useAutoRefresh(load);
 
   const refresh = async () => {
     if (sources.length === 0) return;
