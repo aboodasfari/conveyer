@@ -51,6 +51,8 @@ export function RichText({ content }: { content: string | null }) {
         "& a": { color: "accent.fg" },
         "& h1, & h2, & h3": { mt: 3, mb: 2 },
         "& ul, & ol": { pl: 4 },
+        "& > :first-child": { mt: 0 },
+        "& > :last-child": { mb: 0 },
       }}
       dangerouslySetInnerHTML={{ __html: html }}
     />

@@ -383,7 +383,7 @@ function SystemBubble({ content }: { content: string }) {
           flex: 1,
           color: "fg.muted",
           fontStyle: "italic",
-          fontSize: 0,
+          fontSize: 1,
           whiteSpace: "pre-wrap",
           minWidth: 0,
         }}
@@ -404,7 +404,7 @@ function ThinkingBubble({ content, streaming }: { content: string; streaming: bo
           flex: 1,
           color: "fg.muted",
           fontStyle: "italic",
-          fontSize: 0,
+          fontSize: 1,
           whiteSpace: "pre-wrap",
           minWidth: 0,
         }}
