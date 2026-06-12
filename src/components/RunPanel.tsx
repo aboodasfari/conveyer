@@ -10,12 +10,15 @@ import {
   GitPullRequestIcon,
   PlayIcon,
   ReplyIcon,
+  StopIcon,
 } from "@primer/octicons-react";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { api } from "../api";
 import { Phase, RunDetail } from "../types";
 import { formatError } from "../errors";
 import { TabStrip } from "./TabStrip";
+import { PhaseChat } from "./PhaseChat";
+import { PhaseArtifact } from "./PhaseArtifact";
 
 const PHASE_LABELS: Record<string, string> = {
   exploration: "Exploration",
@@ -73,12 +76,11 @@ const PHASE_TABS: Record<string, ContentTab[]> = {
 };
 
 const PLACEHOLDERS: Record<string, string> = {
-  context: "The exploration session will write a context document here, summarising what it learned about the codebase and the task.",
-  plan: "The planning session will produce an implementation plan here, broken into tasks.",
-  diff: "Code diffs from the implementation session(s) will show up here.",
-  review: "The review session will land its findings here — must-fix issues, nits, or LGTM.",
-  pr: "Once Submit creates the draft PR, the link and required check status will appear here.",
-  chat: "Session chat & thinking will stream in here. You'll be able to inject prompts to steer the agent.",
+  context: "The exploration session will write a context document here. Nothing yet.",
+  plan: "The planning session will produce an implementation plan here. Nothing yet.",
+  diff: "Code diffs from the implementation session will show up here.",
+  review: "Review findings (must-fix / nit / LGTM) will land here.",
+  pr: "The pull request URL and check status will appear here once Submit runs.",
 };
 
 interface RunUpdatedPayload {
@@ -247,7 +249,7 @@ export function RunPanel({ taskId }: { taskId: string }) {
             busy={busy}
             onCollapse={() => setCollapsed(true)}
             onSelect={setSelectedPhaseId}
-            onComplete={complete}
+            onCancel={complete}
             onApprove={approve}
             onRewind={rewindToImplementation}
           />
@@ -269,6 +271,7 @@ export function RunPanel({ taskId }: { taskId: string }) {
           {selectedPhase ? (
             <PhaseContent
               phase={selectedPhase}
+              taskId={taskId}
               tab={contentTab}
               onTabChange={setContentTab}
             />
@@ -289,7 +292,7 @@ function Sidebar({
   busy,
   onCollapse,
   onSelect,
-  onComplete,
+  onCancel,
   onApprove,
   onRewind,
 }: {
@@ -298,7 +301,7 @@ function Sidebar({
   busy: boolean;
   onCollapse: () => void;
   onSelect: (id: string) => void;
-  onComplete: (id: string) => void;
+  onCancel: (id: string) => void;
   onApprove: (id: string) => void;
   onRewind: () => void;
 }) {
@@ -351,7 +354,7 @@ function Sidebar({
             selected={p.id === selectedPhaseId}
             busy={busy}
             onSelect={() => onSelect(p.id)}
-            onComplete={() => onComplete(p.id)}
+            onCancel={() => onCancel(p.id)}
             onApprove={() => onApprove(p.id)}
             onRewind={onRewind}
           />
@@ -368,7 +371,7 @@ function PhaseRow({
   selected,
   busy,
   onSelect,
-  onComplete,
+  onCancel,
   onApprove,
   onRewind,
 }: {
@@ -378,7 +381,7 @@ function PhaseRow({
   selected: boolean;
   busy: boolean;
   onSelect: () => void;
-  onComplete: () => void;
+  onCancel: () => void;
   onApprove: () => void;
   onRewind: () => void;
 }) {
@@ -453,12 +456,14 @@ function PhaseRow({
         {phase.status === "running" && (
           <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
             <Button
-              leadingVisual={CheckIcon}
+              leadingVisual={StopIcon}
               size="small"
-              onClick={(e) => { e.stopPropagation(); onComplete(); }}
+              variant="danger"
+              onClick={(e) => { e.stopPropagation(); onCancel(); }}
               disabled={busy}
+              title="Cancel the agent and mark the phase done"
             >
-              Mark Complete
+              Stop Agent
             </Button>
             {canRewindToImpl && (
               <Button
@@ -506,26 +511,32 @@ function PhaseRow({
 
 function PhaseContent({
   phase,
+  taskId,
   tab,
   onTabChange,
 }: {
   phase: Phase;
+  taskId: string;
   tab: string;
   onTabChange: (t: string) => void;
 }) {
   const tabs = PHASE_TABS[phase.kind] ?? [CHAT_TAB];
-  const placeholder = PLACEHOLDERS[tab] ?? "";
 
   return (
     <>
       <Box sx={{ px: 3, pt: 3, flexShrink: 0 }}>
         <TabStrip<string> tabs={tabs} active={tab} onChange={onTabChange} />
       </Box>
-      <Box sx={{ p: 4, flex: 1, overflowY: "auto", color: "fg.muted" }}>
-        <Text>{placeholder}</Text>
-        <Text sx={{ display: "block", mt: 3, fontSize: 0 }}>
-          (Wires up in M4 when sessions ship.)
-        </Text>
+      <Box sx={{ p: 4, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+        {tab === "chat" ? (
+          <PhaseChat phaseId={phase.id} />
+        ) : (
+          <PhaseArtifact
+            phaseId={phase.id}
+            taskId={taskId}
+            emptyHint={PLACEHOLDERS[tab] ?? ""}
+          />
+        )}
       </Box>
     </>
   );

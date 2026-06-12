@@ -66,6 +66,25 @@ export interface RunDetail {
   phases: Phase[];
 }
 
+export interface Session {
+  id: string;
+  phase_id: string;
+  role: string;
+  status: string;
+  pid: number | null;
+  log_path: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface Message {
+  id: number;
+  session_id: string;
+  ts: string;
+  role: string;
+  content: string;
+}
+
 export interface Gate {
   phase_kind: string;
   auto_advance: number;

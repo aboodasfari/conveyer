@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Gate, Run, RunDetail, Source, TaskSummary } from "./types";
+import type { Gate, Message, Run, RunDetail, Session, Source, TaskSummary } from "./types";
 
 export interface SourceInput {
   kind: string;
@@ -51,6 +51,16 @@ export const api = {
     invoke<RunDetail>("phase_approve", { phaseId }),
   phaseRewind: (phaseId: string) =>
     invoke<RunDetail>("phase_rewind", { phaseId }),
+
+  // sessions / messages / artifacts
+  sessionsForPhase: (phaseId: string) =>
+    invoke<Session[]>("sessions_for_phase", { phaseId }),
+  messagesForSession: (sessionId: string) =>
+    invoke<Message[]>("messages_for_session", { sessionId }),
+  phaseArtifactGet: (phaseId: string) =>
+    invoke<string | null>("phase_artifact_get", { phaseId }),
+  sessionCancel: (phaseId: string) =>
+    invoke<boolean>("session_cancel", { phaseId }),
 
   // gates
   gatesList: () => invoke<Gate[]>("gates_list"),

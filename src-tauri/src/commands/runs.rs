@@ -1,26 +1,21 @@
 //! Run + phase lifecycle.
 //!
 //! A "run" is one full attempt at tackling a task. It owns 5 ordered phases
-//! (exploration → planning → implementation → review → submit). Until the
-//! Copilot session runner ships in M4, phases transition via user action
-//! only — there's a stub Complete button per running phase and an Approve
-//! button on phases that have finished but are awaiting human sign-off.
+//! (exploration → planning → implementation → review → submit). Phases are
+//! driven by Copilot subprocesses (the "session runner") which write their
+//! output to the messages table and update phase.artifact_path. The runner
+//! calls back into this module via `complete_phase_internal` when the
+//! subprocess exits cleanly.
 //!
 //! Gate semantics: the gate for a phase decides what happens **after** that
 //! phase finishes — auto-advance the run, or pause for user approval first.
-//!
-//! State machine:
-//!   pending  → running       (runs_start, or after auto-advance from prev)
-//!   running  → done          (phase_complete, if this phase's gate auto-advances)
-//!   running  → waiting       (phase_complete, if this phase's gate is manual)
-//!   waiting  → done          (phase_approve)
-//!   done     → (next phase running, OR run done if there is no next)
 
 use crate::error::{AppError, AppResult};
 use crate::models::{Phase, Run, PHASE_KINDS};
+use crate::session_runner;
 use crate::state::AppState;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 
 #[derive(Debug, Serialize)]
@@ -84,6 +79,12 @@ pub async fn runs_start(
 
     let detail = run_get_inner(&state, &run_id).await?;
     emit_run_updated(&app, &task_id, &run_id);
+
+    // Spawn the runner for phase 0.
+    if let Some(p0) = detail.phases.first() {
+        session_runner::spawn_for_phase(app.clone(), p0.id.clone());
+    }
+
     Ok(detail)
 }
 
@@ -124,31 +125,49 @@ pub async fn phase_complete(
     state: State<'_, AppState>,
     phase_id: String,
 ) -> AppResult<RunDetail> {
-    let phase = load_phase(&state, &phase_id).await?;
+    // If there's an active sidecar for this phase, cancel it — the user
+    // is choosing to advance manually. The runner won't auto-advance
+    // because its `ok` flag stays false on cancel.
+    let registry = app.state::<session_runner::RunnerRegistry>();
+    let _ = registry.cancel(&phase_id);
+
+    complete_phase_internal(&app, &state, &phase_id).await
+}
+
+/// Mark `phase_id` complete and advance the pipeline. Called both from
+/// the IPC handler above and from `session_runner` when a sidecar exits
+/// cleanly.
+pub async fn complete_phase_internal(
+    app: &AppHandle,
+    state: &AppState,
+    phase_id: &str,
+) -> AppResult<RunDetail> {
+    let phase = load_phase(state, phase_id).await?;
 
     if phase.status != "running" {
-        return Err(AppError::Config(format!(
-            "Phase '{}' is in state '{}' — only running phases can be completed.",
-            phase.kind, phase.status
-        )));
+        // Treat as no-op rather than an error — the runner might race.
+        return run_get_inner(state, &phase.run_id).await;
     }
 
-    let auto = gate_auto_advance(&state, &phase.kind).await?;
+    let auto = gate_auto_advance(state, &phase.kind).await?;
 
     if auto {
         sqlx::query(
             "UPDATE phases SET status='done', finished_at=datetime('now') WHERE id=?",
         )
-        .bind(&phase_id)
+        .bind(phase_id)
         .execute(&state.db)
         .await?;
-        start_next_phase(&state, &phase.run_id, phase.ord).await?;
+        let next_id = start_next_phase(state, &phase.run_id, phase.ord).await?;
+        if let Some(id) = next_id {
+            session_runner::spawn_for_phase(app.clone(), id);
+        }
     } else {
         // Awaiting user approval before we advance.
         sqlx::query(
             "UPDATE phases SET status='waiting', finished_at=datetime('now') WHERE id=?",
         )
-        .bind(&phase_id)
+        .bind(phase_id)
         .execute(&state.db)
         .await?;
         sqlx::query("UPDATE runs SET status='waiting' WHERE id=?")
@@ -157,8 +176,8 @@ pub async fn phase_complete(
             .await?;
     }
 
-    let detail = run_get_inner(&state, &phase.run_id).await?;
-    emit_run_updated_for_run(&app, &state, &phase.run_id).await;
+    let detail = run_get_inner(state, &phase.run_id).await?;
+    emit_run_updated_for_run(app, state, &phase.run_id).await;
     Ok(detail)
 }
 
@@ -182,7 +201,10 @@ pub async fn phase_approve(
         .bind(&phase_id)
         .execute(&state.db)
         .await?;
-    start_next_phase(&state, &phase.run_id, phase.ord).await?;
+    let next_id = start_next_phase(&state, &phase.run_id, phase.ord).await?;
+    if let Some(id) = next_id {
+        session_runner::spawn_for_phase(app.clone(), id);
+    }
 
     let detail = run_get_inner(&state, &phase.run_id).await?;
     emit_run_updated_for_run(&app, &state, &phase.run_id).await;
@@ -240,6 +262,14 @@ pub async fn phase_rewind(
 
     let detail = run_get_inner(&state, &target.run_id).await?;
     emit_run_updated_for_run(&app, &state, &target.run_id).await;
+
+    // Cancel anything that might be running for the target's run (e.g. the
+    // implementation phase we're rewinding to had a stale runner), then
+    // spawn fresh.
+    let registry = app.state::<session_runner::RunnerRegistry>();
+    let _ = registry.cancel(&target.id);
+    session_runner::spawn_for_phase(app.clone(), target.id.clone());
+
     Ok(detail)
 }
 
@@ -253,8 +283,9 @@ async fn gate_auto_advance(state: &AppState, kind: &str) -> AppResult<bool> {
 }
 
 /// Start the phase after `prev_ord`. If there is no next phase, the run is
-/// complete and gets marked `done`. Otherwise the run goes back to `running`.
-async fn start_next_phase(state: &AppState, run_id: &str, prev_ord: i64) -> AppResult<()> {
+/// complete and gets marked `done`. Returns the new phase id (if any) so
+/// the caller can kick off its session runner.
+async fn start_next_phase(state: &AppState, run_id: &str, prev_ord: i64) -> AppResult<Option<String>> {
     let next: Option<Phase> = sqlx::query_as::<_, Phase>(&format!(
         "SELECT {PHASE_COLS} FROM phases WHERE run_id=? AND ord=?"
     ))
@@ -274,6 +305,7 @@ async fn start_next_phase(state: &AppState, run_id: &str, prev_ord: i64) -> AppR
             .bind(run_id)
             .execute(&state.db)
             .await?;
+        Ok(Some(next.id))
     } else {
         sqlx::query(
             "UPDATE runs SET status='done', finished_at=datetime('now') WHERE id=?",
@@ -281,8 +313,8 @@ async fn start_next_phase(state: &AppState, run_id: &str, prev_ord: i64) -> AppR
         .bind(run_id)
         .execute(&state.db)
         .await?;
+        Ok(None)
     }
-    Ok(())
 }
 
 fn emit_run_updated(app: &AppHandle, task_id: &str, run_id: &str) {

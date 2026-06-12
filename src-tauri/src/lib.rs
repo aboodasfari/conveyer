@@ -4,8 +4,10 @@ mod db;
 mod error;
 mod macos;
 mod models;
+mod session_runner;
 mod state;
 
+use session_runner::RunnerRegistry;
 use state::AppState;
 use tauri::Manager;
 use tracing_subscriber::EnvFilter;
@@ -20,6 +22,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .manage(RunnerRegistry::new())
         .setup(|app| {
             // In `tauri dev` we run the bare binary, not a proper .app
             // bundle — so macOS falls back to the binary's name ("conveyer")
@@ -65,6 +68,10 @@ pub fn run() {
             commands::runs::phase_complete,
             commands::runs::phase_approve,
             commands::runs::phase_rewind,
+            commands::sessions::sessions_for_phase,
+            commands::sessions::messages_for_session,
+            commands::sessions::phase_artifact_get,
+            commands::sessions::session_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
