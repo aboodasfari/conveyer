@@ -24,9 +24,10 @@ import {
 } from "../types";
 import { Modal } from "../components/Modal";
 import { ModelDropdown, ModelInfo } from "../components/ModelDropdown";
-import { ReasoningDropdown } from "../components/ReasoningDropdown";
+import { ReasoningDropdown, REASONING_LABEL } from "../components/ReasoningDropdown";
 import { useColorMode } from "../theme";
 import { loadRefreshInterval, saveRefreshInterval } from "../autoRefresh";
+import { loadModels } from "../modelsCache";
 import { formatError } from "../errors";
 
 type Section = "sources" | "execution" | "appearance";
@@ -182,7 +183,9 @@ function SourcesSection() {
         </Box>
         {error && <Flash variant="danger">{error}</Flash>}
         {loading ? (
-          <Spinner />
+          <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
+            <Spinner />
+          </Box>
         ) : sources.length === 0 ? (
           <Text sx={{ color: "fg.muted" }}>
             No sources yet. Add one to start discovering tasks.
@@ -410,7 +413,7 @@ function ExecutionSection() {
       const [g, cb, mList, mDef, rDef, ...rest] = await Promise.all([
         api.gatesList(),
         api.settingGet("codebase_path"),
-        api.modelsList().catch(() => []),
+        loadModels(),
         api.settingGet("model_default"),
         api.settingGet("reasoning_default"),
         ...PHASE_KINDS.map((k) => api.settingGet(`model_${k}`)),
@@ -467,19 +470,23 @@ function ExecutionSection() {
     }
   };
 
-  if (loading) return <Spinner />;
+  if (loading) {
+    return (
+      <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
+        <Spinner />
+      </Box>
+    );
+  }
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 5 }}>
       <Heading as="h2" sx={{ fontSize: 2 }}>Execution</Heading>
       {error && <Flash variant="danger">{error}</Flash>}
 
-      <Box>
-        <Heading as="h3" sx={{ fontSize: 1, mb: 1 }}>Codebase Path</Heading>
-        <Text sx={{ color: "fg.muted", fontSize: 1, display: "block", mb: 2 }}>
-          Absolute path the Copilot agent runs in. Defaults to{" "}
-          <code>~/code/conveyer-test-repo</code>.
-        </Text>
+      <SubSection
+        title="Codebase Path"
+        description={<>Absolute path the Copilot agent runs in. Defaults to <code>~/code/conveyer-test-repo</code>.</>}
+      >
         <TextInput
           block
           value={codebase}
@@ -489,14 +496,17 @@ function ExecutionSection() {
           placeholder="/Users/you/code/rp"
           sx={{ maxWidth: 480 }}
         />
-      </Box>
+      </SubSection>
 
-      <Box>
-        <Heading as="h3" sx={{ fontSize: 1, mb: 1 }}>Models</Heading>
-        <Text sx={{ color: "fg.muted", fontSize: 1, display: "block", mb: 3 }}>
-          Default model used by every phase, with optional per-phase overrides.
-          {models.length === 0 && " Could not reach the Copilot SDK to list models — make sure `copilot` is signed in."}
-        </Text>
+      <SubSection
+        title="Models"
+        description={
+          <>
+            Default model used by every phase, with optional per-phase overrides.
+            {models.length === 0 && " Could not reach the Copilot SDK to list models — make sure `copilot` is signed in."}
+          </>
+        }
+      >
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
           <ModelChooser
             label="Default"
@@ -504,11 +514,15 @@ function ExecutionSection() {
             model={modelDefault}
             effectiveModelId={modelDefault}
             reasoning={reasoningDefault}
+            effectiveReasoning={reasoningDefault}
             inheritLabel="Pick a model…"
             allowInheritModel={false}
             onModelChange={(v) => {
               setModelDefault(v);
               void setModel("model_default", v);
+              // Changing the model invalidates the reasoning value; reset.
+              setReasoningDefault("");
+              void setModel("reasoning_default", "");
             }}
             onReasoningChange={(v) => {
               setReasoningDefault(v);
@@ -522,6 +536,10 @@ function ExecutionSection() {
             const inheritLabel = !phaseModelId
               ? `Inherit · ${inherited?.name ?? modelDefault ?? "gpt-5.1"}`
               : "Inherit default";
+            const phaseReasoning = reasoningPhase[k] ?? "";
+            const effectiveReasoning = phaseReasoning ||
+              reasoningDefault ||
+              inherited?.default_reasoning_effort || "";
             return (
               <ModelChooser
                 key={k}
@@ -529,12 +547,16 @@ function ExecutionSection() {
                 models={models}
                 model={phaseModelId}
                 effectiveModelId={effectiveId}
-                reasoning={reasoningPhase[k] ?? ""}
+                reasoning={phaseReasoning}
+                effectiveReasoning={effectiveReasoning}
                 inheritLabel={inheritLabel}
                 allowInheritModel
                 onModelChange={(v) => {
                   setModelPhase((cur) => ({ ...cur, [k]: v }));
                   void setModel(`model_${k}`, v);
+                  // Reset reasoning when model changes for this phase.
+                  setReasoningPhase((cur) => ({ ...cur, [k]: "" }));
+                  void setModel(`reasoning_${k}`, "");
                 }}
                 onReasoningChange={(v) => {
                   setReasoningPhase((cur) => ({ ...cur, [k]: v }));
@@ -544,15 +566,13 @@ function ExecutionSection() {
             );
           })}
         </Box>
-      </Box>
+      </SubSection>
 
-      <Box>
-        <Heading as="h3" sx={{ fontSize: 1, mb: 1 }}>Phase Gates</Heading>
-        <Text sx={{ color: "fg.muted", fontSize: 1 }}>
-          After a phase finishes, auto-advance to the next phase. Turn off to
-          pause for your approval before continuing.
-        </Text>
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 3 }}>
+      <SubSection
+        title="Phase Gates"
+        description="After a phase finishes, auto-advance to the next phase. Turn off to pause for your approval before continuing."
+      >
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
           {PHASE_KINDS.map((k) => {
             const g = gates.find((x) => x.phase_kind === k) ?? { phase_kind: k, auto_advance: 0 };
             const on = g.auto_advance === 1;
@@ -586,7 +606,7 @@ function ExecutionSection() {
             );
           })}
         </Box>
-      </Box>
+      </SubSection>
     </Box>
   );
 }
@@ -594,6 +614,38 @@ function ExecutionSection() {
 /* -------------------------------------------------------------------------- */
 /*                                 Helpers                                    */
 /* -------------------------------------------------------------------------- */
+
+/** Bordered card for a labelled subsection inside Execution. */
+function SubSection({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <Box
+      sx={{
+        borderWidth: 1,
+        borderStyle: "solid",
+        borderColor: "border.default",
+        borderRadius: 2,
+        p: 4,
+        bg: "canvas.default",
+      }}
+    >
+      <Heading as="h3" sx={{ fontSize: 1, mb: 1 }}>{title}</Heading>
+      {description && (
+        <Text sx={{ color: "fg.muted", fontSize: 1, display: "block", mb: 3 }}>
+          {description}
+        </Text>
+      )}
+      {children}
+    </Box>
+  );
+}
 
 /**
  * One row in the model picker: a label, the model dropdown, and a
@@ -605,6 +657,7 @@ function ModelChooser({
   model,
   effectiveModelId,
   reasoning,
+  effectiveReasoning,
   inheritLabel,
   allowInheritModel,
   onModelChange,
@@ -616,6 +669,8 @@ function ModelChooser({
   /** Model id this row will actually run with — own value if set, else parent's. */
   effectiveModelId: string;
   reasoning: string;
+  /** Reasoning value this row will actually run with — own → parent default → model default. */
+  effectiveReasoning: string;
   inheritLabel: string;
   allowInheritModel: boolean;
   onModelChange: (v: string) => void;
@@ -623,41 +678,52 @@ function ModelChooser({
 }) {
   const effective = models.find((m) => m.id === effectiveModelId);
   const supported = effective?.supported_reasoning_efforts ?? [];
+  // When inheriting reasoning, label with the actual value (e.g. "Inherit (Medium)").
+  const inheritReasoningLabel = (() => {
+    const eff = effectiveReasoning || effective?.default_reasoning_effort;
+    if (!eff) return "Inherit";
+    return `Inherit (${REASONING_LABEL[eff] ?? eff})`;
+  })();
 
   return (
     <Box
       sx={{
         display: "grid",
-        gridTemplateColumns: "140px minmax(0, 360px) auto",
+        // 1fr column for the model picker so it shrinks; reasoning column
+        // is fixed-width and won't overlap on long names.
+        gridTemplateColumns: "120px minmax(0, 1fr) auto",
         gap: 3,
         alignItems: "center",
       }}
     >
-      <Text>{label}</Text>
-      {models.length > 0 ? (
-        <ModelDropdown
-          value={model}
-          models={models}
-          onChange={onModelChange}
-          allowInherit={allowInheritModel}
-          inheritLabel={inheritLabel}
-        />
-      ) : (
-        <TextInput
-          value={model}
-          onChange={(e) => onModelChange(e.target.value)}
-          placeholder={allowInheritModel ? "(inherit default)" : "gpt-5.1"}
-          sx={{ maxWidth: 360 }}
-        />
-      )}
+      <Text sx={{ overflow: "hidden", textOverflow: "ellipsis" }}>{label}</Text>
+      <Box sx={{ minWidth: 0 }}>
+        {models.length > 0 ? (
+          <ModelDropdown
+            value={model}
+            models={models}
+            onChange={onModelChange}
+            allowInherit={allowInheritModel}
+            inheritLabel={inheritLabel}
+            width="100%"
+          />
+        ) : (
+          <TextInput
+            value={model}
+            onChange={(e) => onModelChange(e.target.value)}
+            placeholder={allowInheritModel ? "(inherit default)" : "gpt-5.1"}
+            block
+          />
+        )}
+      </Box>
       {supported.length > 0 ? (
         <ReasoningDropdown
           value={reasoning}
           supported={supported}
           defaultEffort={effective?.default_reasoning_effort}
           onChange={onReasoningChange}
-          allowInherit={allowInheritModel}
-          inheritLabel={allowInheritModel ? "Inherit" : "Model default"}
+          allowInherit
+          inheritLabel={inheritReasoningLabel}
         />
       ) : (
         <Box sx={{ width: 180 }} aria-hidden />

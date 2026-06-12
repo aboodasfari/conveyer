@@ -1,7 +1,7 @@
 import { ActionList, ActionMenu, Box, Text } from "@primer/react";
 import { ChevronDownIcon } from "@primer/octicons-react";
 
-const LABEL: Record<string, string> = {
+export const REASONING_LABEL: Record<string, string> = {
   minimal: "Minimal",
   low: "Low",
   medium: "Medium",
@@ -30,7 +30,7 @@ export function ReasoningDropdown({
   inheritLabel: string;
   width?: number | string;
 }) {
-  const label = !value ? inheritLabel : LABEL[value] ?? value;
+  const label = !value ? inheritLabel : REASONING_LABEL[value] ?? value;
   return (
     <ActionMenu>
       <ActionMenu.Button
@@ -46,7 +46,7 @@ export function ReasoningDropdown({
           {label}
         </Box>
       </ActionMenu.Button>
-      <ActionMenu.Overlay align="start">
+      <ActionMenu.Overlay align="start" sx={{ maxHeight: 320, overflowY: "auto" }}>
         <ActionList selectionVariant="single">
           {allowInherit && (
             <ActionList.Item selected={!value} onSelect={() => onChange("")}>
@@ -60,7 +60,7 @@ export function ReasoningDropdown({
               selected={eff === value}
               onSelect={() => onChange(eff)}
             >
-              {LABEL[eff] ?? eff}
+              {REASONING_LABEL[eff] ?? eff}
               {eff === defaultEffort && (
                 <ActionList.Description variant="block">model default</ActionList.Description>
               )}

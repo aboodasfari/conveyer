@@ -41,9 +41,11 @@ export function ModelDropdown({
         trailingVisual={ChevronDownIcon}
         sx={{
           width,
+          maxWidth: "100%",
           justifyContent: "space-between",
           fontWeight: 400,
           textAlign: "left",
+          overflow: "hidden",
         }}
       >
         <Box
@@ -55,16 +57,25 @@ export function ModelDropdown({
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
+            minWidth: 0,
             color: !value ? "fg.muted" : "fg.default",
           }}
         >
-          {label}
+          <Text
+            sx={{
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {label}
+          </Text>
           {value && selected && selected.name !== selected.id && (
-            <Text sx={{ color: "fg.muted", fontSize: 0 }}>{selected.id}</Text>
+            <Text sx={{ color: "fg.muted", fontSize: 0, flexShrink: 0 }}>{selected.id}</Text>
           )}
         </Box>
       </ActionMenu.Button>
-      <ActionMenu.Overlay width="large" align="start">
+      <ActionMenu.Overlay width="large" align="start" sx={{ maxHeight: 360, overflowY: "auto" }}>
         <ActionList selectionVariant="single">
           {allowInherit && (
             <ActionList.Item selected={!value} onSelect={() => onChange("")}>
