@@ -20,6 +20,19 @@ import { TabStrip } from "./TabStrip";
 import { PhaseChat } from "./PhaseChat";
 import { PhaseArtifact } from "./PhaseArtifact";
 
+const RING_PULSE_KEYFRAMES = `
+@keyframes conveyerRingPulse {
+  0%   { box-shadow: 0 0 0 0   rgba(31,111,235,0.45); }
+  70%  { box-shadow: 0 0 0 8px rgba(31,111,235,0);    }
+  100% { box-shadow: 0 0 0 0   rgba(31,111,235,0);    }
+}`;
+if (typeof document !== "undefined" && !document.getElementById("conveyer-ring-pulse-kf")) {
+  const style = document.createElement("style");
+  style.id = "conveyer-ring-pulse-kf";
+  style.textContent = RING_PULSE_KEYFRAMES;
+  document.head.appendChild(style);
+}
+
 const PHASE_LABELS: Record<string, string> = {
   exploration: "Exploration",
   planning: "Planning",
@@ -430,9 +443,9 @@ function PhaseRow({
             borderRadius: "50%",
             bg: color,
             flexShrink: 0,
-            boxShadow:
+            animation:
               phase.status === "running"
-                ? "0 0 0 4px rgba(31,111,235,0.25)"
+                ? "conveyerRingPulse 1.6s ease-out infinite"
                 : "none",
           }}
         />

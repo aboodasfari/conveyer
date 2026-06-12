@@ -239,7 +239,7 @@ async function tackle(task: TaskSummary, nav: ReturnType<typeof useNavigate>) {
       return;
     }
   }
-  nav(`/tasks/${task.id}`);
+  nav(`/tasks/${task.id}?tab=run`);
 }
 
 function ChildRow({ task, last }: { task: TaskSummary; last: boolean }) {

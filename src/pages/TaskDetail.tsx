@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
+import { useParams, Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Box,
   Button,
@@ -23,10 +23,18 @@ type Tab = "description" | "run";
 export function TaskDetail() {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
+  const [params] = useSearchParams();
   const [task, setTask] = useState<TaskSummary | null>(null);
   const [parent, setParent] = useState<TaskSummary | null>(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<Tab>("description");
+  const [tab, setTab] = useState<Tab>(() => (params.get("tab") === "run" ? "run" : "description"));
+
+  // Honour ?tab= changes from sibling navigations (e.g. "Tackle" from
+  // the dashboard while already on this page).
+  useEffect(() => {
+    const t = params.get("tab");
+    if (t === "run" || t === "description") setTab(t);
+  }, [params]);
 
   useEffect(() => {
     void (async () => {
