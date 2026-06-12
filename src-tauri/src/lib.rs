@@ -21,6 +21,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            // Embed the dock icon so `tauri dev` shows our logo instead of
+            // the default Tauri icon. (Production .app bundles get this
+            // from Info.plist automatically.)
+            macos::set_dock_icon(include_bytes!("../icons/icon.png"));
+
             // Attach an empty NSToolbar so the title bar is tall enough for
             // the macOS traffic lights to sit centred against our header.
             if let Some(win) = app.get_webview_window("main") {
