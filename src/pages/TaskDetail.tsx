@@ -8,7 +8,6 @@ import {
   Link as PrimerLink,
   Spinner,
   Text,
-  UnderlineNav,
 } from "@primer/react";
 import { ArrowLeftIcon, LinkExternalIcon, PlayIcon, FileIcon } from "@primer/octicons-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -17,6 +16,7 @@ import { TaskSummary } from "../types";
 import { StatusBadge } from "../components/StatusBadge";
 import { RichText } from "../components/RichText";
 import { RunPanel } from "../components/RunPanel";
+import { TabStrip } from "../components/TabStrip";
 
 type Tab = "description" | "run";
 
@@ -79,7 +79,7 @@ export function TaskDetail() {
           <Text sx={{ color: "fg.muted", fontSize: 0 }}>#{task.source_ref}</Text>
           <Text sx={{ color: "fg.muted", fontSize: 0 }}>·</Text>
           <Text sx={{ color: "fg.muted", fontSize: 0 }}>{task.state}</Text>
-          <StatusBadge status={task.run_status} />
+          <StatusBadge status={task.run_status} phase={task.current_phase} />
         </Box>
         <Box sx={{ mt: 1, display: "flex", alignItems: "center", gap: 2 }}>
           <Heading as="h1" sx={{ fontSize: 4 }}>{task.title}</Heading>
@@ -101,24 +101,16 @@ export function TaskDetail() {
         )}
       </Box>
 
-      <UnderlineNav aria-label="Task sections">
-        <UnderlineNav.Item
-          aria-current={tab === "description" ? "page" : undefined}
-          icon={FileIcon}
-          onSelect={(e) => { e.preventDefault(); setTab("description"); }}
-        >
-          Description
-        </UnderlineNav.Item>
-        <UnderlineNav.Item
-          aria-current={tab === "run" ? "page" : undefined}
-          icon={PlayIcon}
-          onSelect={(e) => { e.preventDefault(); setTab("run"); }}
-        >
-          Run
-        </UnderlineNav.Item>
-      </UnderlineNav>
+      <TabStrip<Tab>
+        tabs={[
+          { id: "description", label: "Description", icon: FileIcon },
+          { id: "run", label: "Run", icon: PlayIcon },
+        ]}
+        active={tab}
+        onChange={setTab}
+      />
 
-      <Box sx={{ pt: 1 }}>
+      <Box>
         {tab === "description" ? (
           <RichText content={task.description} />
         ) : (

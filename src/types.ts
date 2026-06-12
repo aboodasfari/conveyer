@@ -39,6 +39,7 @@ export interface Task {
 
 export interface TaskSummary extends Task {
   run_status: string | null;
+  current_phase: string | null;
 }
 
 export interface Run {

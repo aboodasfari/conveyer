@@ -202,7 +202,7 @@ function StoryHeader({
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 3 }}>
           <StateChip state={task.state} />
-          <StatusBadge status={task.run_status} />
+          <StatusBadge status={task.run_status} phase={task.current_phase} />
         </Box>
       </Box>
       {showTackle && (
@@ -281,7 +281,7 @@ function ChildRow({ task, last }: { task: TaskSummary; last: boolean }) {
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 3 }}>
           <StateChip state={task.state} />
-          <StatusBadge status={task.run_status} />
+          <StatusBadge status={task.run_status} phase={task.current_phase} />
         </Box>
       </Box>
       {isActionable(task) && (

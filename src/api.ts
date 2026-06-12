@@ -49,6 +49,8 @@ export const api = {
     invoke<RunDetail>("phase_complete", { phaseId }),
   phaseApprove: (phaseId: string) =>
     invoke<RunDetail>("phase_approve", { phaseId }),
+  phaseRewind: (phaseId: string) =>
+    invoke<RunDetail>("phase_rewind", { phaseId }),
 
   // gates
   gatesList: () => invoke<Gate[]>("gates_list"),

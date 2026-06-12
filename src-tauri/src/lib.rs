@@ -64,6 +64,7 @@ pub fn run() {
             commands::runs::run_get,
             commands::runs::phase_complete,
             commands::runs::phase_approve,
+            commands::runs::phase_rewind,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

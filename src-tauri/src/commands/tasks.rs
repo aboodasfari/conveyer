@@ -20,6 +20,10 @@ pub struct TaskSummary {
     #[serde(flatten)]
     pub task: Task,
     pub run_status: Option<String>,
+    /// Kind of the currently-running or awaiting-approval phase, when there
+    /// is an active run. Used by the dashboard to surface what's happening
+    /// in flight instead of a generic "running" pill.
+    pub current_phase: Option<String>,
 }
 
 async fn source_auth_header(src: &Source) -> AppResult<String> {
@@ -68,13 +72,28 @@ pub async fn tasks_list(state: State<'_, AppState>) -> AppResult<Vec<TaskSummary
 
     let mut out = Vec::with_capacity(tasks.len());
     for t in tasks {
-        let status: Option<(String,)> = sqlx::query_as(
-            "SELECT status FROM runs WHERE task_id = ? ORDER BY started_at DESC LIMIT 1",
+        let row: Option<(String, String)> = sqlx::query_as(
+            "SELECT r.id, r.status FROM runs r
+             WHERE r.task_id = ? ORDER BY r.started_at DESC LIMIT 1",
         )
         .bind(&t.id)
         .fetch_optional(&state.db)
         .await?;
-        out.push(TaskSummary { task: t, run_status: status.map(|r| r.0) });
+        let (run_status, current_phase) = if let Some((run_id, status)) = row {
+            // For active runs, surface the currently-running/awaiting phase.
+            let phase: Option<(String,)> = sqlx::query_as(
+                "SELECT kind FROM phases
+                 WHERE run_id = ? AND status IN ('running','waiting')
+                 ORDER BY ord LIMIT 1",
+            )
+            .bind(&run_id)
+            .fetch_optional(&state.db)
+            .await?;
+            (Some(status), phase.map(|(k,)| k))
+        } else {
+            (None, None)
+        };
+        out.push(TaskSummary { task: t, run_status, current_phase });
     }
     Ok(out)
 }

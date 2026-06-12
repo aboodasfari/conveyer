@@ -199,6 +199,50 @@ async fn load_phase(state: &AppState, phase_id: &str) -> AppResult<Phase> {
     .ok_or_else(|| AppError::NotFound(format!("phase {phase_id}")))
 }
 
+/// Send the pipeline back to an earlier phase. Sets the target phase to
+/// running, all subsequent phases back to pending (clearing their times),
+/// and brings the run back to running. Useful for e.g. "Review found
+/// something — back to Implementation".
+#[tauri::command]
+pub async fn phase_rewind(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    phase_id: String,
+) -> AppResult<RunDetail> {
+    let target = load_phase(&state, &phase_id).await?;
+
+    let mut tx = state.db.begin().await?;
+    // Reset target to running.
+    sqlx::query(
+        "UPDATE phases SET status='running', started_at=datetime('now'),
+                            finished_at=NULL WHERE id=?",
+    )
+    .bind(&target.id)
+    .execute(&mut *tx)
+    .await?;
+    // Clear all phases after the target.
+    sqlx::query(
+        "UPDATE phases SET status='pending', started_at=NULL, finished_at=NULL
+         WHERE run_id=? AND ord > ?",
+    )
+    .bind(&target.run_id)
+    .bind(target.ord)
+    .execute(&mut *tx)
+    .await?;
+    // Run is active again.
+    sqlx::query(
+        "UPDATE runs SET status='running', finished_at=NULL WHERE id=?",
+    )
+    .bind(&target.run_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    let detail = run_get_inner(&state, &target.run_id).await?;
+    emit_run_updated_for_run(&app, &state, &target.run_id).await;
+    Ok(detail)
+}
+
 async fn gate_auto_advance(state: &AppState, kind: &str) -> AppResult<bool> {
     let row: Option<(i64,)> =
         sqlx::query_as("SELECT auto_advance FROM gates WHERE phase_kind = ?")
