@@ -6,21 +6,21 @@
     </linearGradient>
   </defs>
 
-  <!-- Rounded square background (macOS-ish corner radius) -->
-  <rect width="1024" height="1024" rx="224" ry="224" fill="url(#bg)"/>
-
-  <!-- Subtle inner highlight to give depth -->
-  <rect x="64" y="64" width="896" height="896" rx="180" ry="180"
-        fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="2"/>
-
-  <!-- Three right-pointing chevrons: items being conveyed forward.
-       Increasing opacity reads as motion / acceleration. -->
-  <g fill="#ffffff">
-    <path opacity="0.55"
-          d="M 260 380 L 420 512 L 260 644 L 320 644 L 480 512 L 320 380 Z"/>
-    <path opacity="0.8"
-          d="M 420 380 L 580 512 L 420 644 L 480 644 L 640 512 L 480 380 Z"/>
-    <path opacity="1"
-          d="M 580 380 L 740 512 L 580 644 L 640 644 L 800 512 L 640 380 Z"/>
+  <!-- Apple macOS icon grid: visual square is 824/1024 (~80%) of the canvas
+       with 100px transparent padding on each side. Wrap original design in
+       a transform so it sits inside the safe area. -->
+  <g transform="translate(100, 100) scale(0.8046875)">
+    <rect width="1024" height="1024" rx="224" ry="224" fill="url(#bg)"/>
+    <rect x="64" y="64" width="896" height="896" rx="180" ry="180"
+          fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="3"/>
+    <g fill="#ffffff">
+      <path opacity="0.55"
+            d="M 260 380 L 420 512 L 260 644 L 320 644 L 480 512 L 320 380 Z"/>
+      <path opacity="0.8"
+            d="M 420 380 L 580 512 L 420 644 L 480 644 L 640 512 L 480 380 Z"/>
+      <path opacity="1"
+            d="M 580 380 L 740 512 L 580 644 L 640 644 L 800 512 L 640 380 Z"/>
+    </g>
   </g>
 </svg>
+

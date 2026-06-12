@@ -51,9 +51,29 @@ pub fn set_dock_icon(png_bytes: &[u8]) {
     }
 }
 
+/// Override the process name shown in the menu bar and Dock label.
+/// In `tauri dev` macOS uses argv[0] (the binary name — lowercase
+/// "conveyer"); production .app bundles get this from Info.plist instead.
+#[cfg(target_os = "macos")]
+pub fn set_process_name(name: &str) {
+    use cocoa::base::{id, nil};
+    use cocoa::foundation::NSString;
+    use objc::{class, msg_send, sel, sel_impl};
+
+    unsafe {
+        let pi_class = class!(NSProcessInfo);
+        let process_info: id = msg_send![pi_class, processInfo];
+        let new_name: id = NSString::alloc(nil).init_str(name);
+        let _: () = msg_send![process_info, setProcessName: new_name];
+    }
+}
+
 #[cfg(not(target_os = "macos"))]
 pub fn extend_titlebar(_window: &tauri::WebviewWindow) {}
 
 #[cfg(not(target_os = "macos"))]
 pub fn set_dock_icon(_png_bytes: &[u8]) {}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_process_name(_name: &str) {}
 

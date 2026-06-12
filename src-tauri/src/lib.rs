@@ -21,9 +21,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            // Embed the dock icon so `tauri dev` shows our logo instead of
-            // the default Tauri icon. (Production .app bundles get this
-            // from Info.plist automatically.)
+            // In `tauri dev` we run the bare binary, not a proper .app
+            // bundle — so macOS falls back to the binary's name ("conveyer")
+            // and the default Tauri icon. Patch both at runtime.
+            macos::set_process_name("Conveyer");
             macos::set_dock_icon(include_bytes!("../icons/icon.png"));
 
             // Attach an empty NSToolbar so the title bar is tall enough for
