@@ -70,6 +70,20 @@ impl RunnerRegistry {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum SidecarEvent {
     Message { role: String, content: String },
+    ToolCall {
+        phase: String,
+        #[serde(default)]
+        tool_call_id: Option<String>,
+        tool: String,
+        #[serde(default)]
+        arguments: Option<Value>,
+        #[serde(default)]
+        success: Option<bool>,
+        #[serde(default)]
+        result: Option<String>,
+        #[serde(default)]
+        error: Option<String>,
+    },
     Artifact { path: String },
     NeedsInput {
         prompt: String,
@@ -506,6 +520,26 @@ async fn handle_line(
     match event {
         SidecarEvent::Message { role, content } => {
             let _ = persist_message(state, session_id, &role, &content).await;
+            let _ = app.emit("message_appended", serde_json::json!({
+                "session_id": session_id,
+                "role": role,
+                "content": content,
+            }));
+        }
+        SidecarEvent::ToolCall { phase, tool_call_id, tool, arguments, success, result, error } => {
+            // Persist the tool call as a structured message. Frontend
+            // pairs starts/completes by tool_call_id when rendering.
+            let role = if phase == "start" { "tool_call_start" } else { "tool_call_complete" };
+            let payload = serde_json::json!({
+                "tool_call_id": tool_call_id,
+                "tool": tool,
+                "arguments": arguments,
+                "success": success,
+                "result": result,
+                "error": error,
+            });
+            let content = payload.to_string();
+            let _ = persist_message(state, session_id, role, &content).await;
             let _ = app.emit("message_appended", serde_json::json!({
                 "session_id": session_id,
                 "role": role,

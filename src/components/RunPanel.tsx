@@ -214,8 +214,8 @@ export function RunPanel({ taskId }: { taskId: string }) {
         display: "flex",
         flexDirection: "column",
         gap: 2,
-        height: "calc(100vh - 340px)",
-        minHeight: 400,
+        height: "calc(100vh - 260px)",
+        minHeight: 480,
       }}
     >
       {error && <Flash variant="danger">{error}</Flash>}

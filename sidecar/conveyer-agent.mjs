@@ -8,6 +8,8 @@
  *
  * Event types:
  *   {"type":"message","role":"assistant"|"tool"|"system","content":"..."}
+ *   {"type":"tool_call","phase":"start","tool_call_id":"...","tool":"view","arguments":{...}}
+ *   {"type":"tool_call","phase":"complete","tool_call_id":"...","tool":"view","success":true,"result":"...","error":null}
  *   {"type":"artifact","path":"..."}                 // absolute path
  *   {"type":"needs_input","prompt":"...","kind":"open"|"multi","choices":[...]}
  *   {"type":"done","ok":true}                        // success → phase advances
@@ -205,14 +207,24 @@ async function runCopilot(phase, prompt) {
         if (event.data?.content) msg("system", `[thinking] ${event.data.content}`);
         break;
       case "tool.execution_start":
-        msg("tool", `→ ${event.data?.toolName ?? "tool"}${event.data?.input ? ": " + truncate(JSON.stringify(event.data.input), 240) : ""}`);
+        emit({
+          type: "tool_call",
+          phase: "start",
+          tool_call_id: event.data?.toolCallId ?? null,
+          tool: event.data?.toolName ?? event.data?.mcpToolName ?? "tool",
+          arguments: event.data?.arguments ?? null,
+        });
         break;
       case "tool.execution_complete":
-        if (event.data?.error) {
-          msg("tool", `← ${event.data?.toolName ?? "tool"} failed: ${event.data.error}`);
-        } else if (event.data?.output !== undefined) {
-          msg("tool", `← ${event.data?.toolName ?? "tool"}: ${truncate(stringifyOutput(event.data.output), 240)}`);
-        }
+        emit({
+          type: "tool_call",
+          phase: "complete",
+          tool_call_id: event.data?.toolCallId ?? null,
+          tool: event.data?.toolName ?? event.data?.mcpToolName ?? "tool",
+          success: event.data?.success ?? false,
+          result: event.data?.result?.detailedContent ?? event.data?.result?.content ?? null,
+          error: event.data?.error?.message ?? null,
+        });
         break;
       case "session.error":
         msg("system", `[error] ${event.data?.message ?? JSON.stringify(event.data)}`);
