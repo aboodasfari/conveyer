@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Gate, Source, TaskSummary } from "./types";
+import type { Gate, Run, RunDetail, Source, TaskSummary } from "./types";
 
 export interface SourceInput {
   kind: string;
@@ -37,6 +37,18 @@ export const api = {
     invoke<TaskSummary>("tasks_add_by_url", { sourceId, url }),
   tasksSetBucket: (taskId: string, bucket: string) =>
     invoke<void>("tasks_set_bucket", { taskId, bucket }),
+
+  // runs
+  runsStart: (taskId: string) =>
+    invoke<RunDetail>("runs_start", { taskId }),
+  runsForTask: (taskId: string) =>
+    invoke<Run[]>("runs_for_task", { taskId }),
+  runGet: (runId: string) =>
+    invoke<RunDetail>("run_get", { runId }),
+  phaseComplete: (phaseId: string) =>
+    invoke<RunDetail>("phase_complete", { phaseId }),
+  phaseApprove: (phaseId: string) =>
+    invoke<RunDetail>("phase_approve", { phaseId }),
 
   // gates
   gatesList: () => invoke<Gate[]>("gates_list"),

@@ -14,9 +14,11 @@ import {
   PlayIcon,
 } from "@primer/octicons-react";
 import { useNavigate } from "react-router-dom";
+import { api } from "../api";
 import { Bucket, TaskSummary } from "../types";
 import { StatusBadge } from "./StatusBadge";
 import { StateChip } from "./StateChip";
+import { formatError } from "../errors";
 
 interface Node {
   task: TaskSummary;
@@ -208,9 +210,8 @@ function StoryHeader({
           leadingVisual={PlayIcon}
           variant="primary"
           size="small"
-          disabled
-          onClick={stop}
-          title="Tackle — wires up in M3"
+          onClick={(e) => { stop(e); void tackle(task, nav); }}
+          title="Start a Conveyer run for this task"
         >
           Tackle
         </Button>
@@ -218,6 +219,27 @@ function StoryHeader({
       {menu}
     </Box>
   );
+}
+
+/**
+ * Starts a run for the task and navigates to its detail page so the user
+ * can watch the phases progress. If a run is already active, we still
+ * navigate — the panel surfaces the existing run.
+ */
+async function tackle(task: TaskSummary, nav: ReturnType<typeof useNavigate>) {
+  try {
+    await api.runsStart(task.id);
+  } catch (e) {
+    const msg = formatError(e);
+    // If the only problem is that a run already exists, just navigate.
+    // Anything else, bubble up via alert so the click isn't silently lost.
+    if (!/already has an active run/i.test(msg)) {
+      // eslint-disable-next-line no-alert
+      window.alert(msg);
+      return;
+    }
+  }
+  nav(`/tasks/${task.id}`);
 }
 
 function ChildRow({ task, last }: { task: TaskSummary; last: boolean }) {
@@ -267,9 +289,8 @@ function ChildRow({ task, last }: { task: TaskSummary; last: boolean }) {
           leadingVisual={PlayIcon}
           variant="primary"
           size="small"
-          disabled
-          onClick={stop}
-          title="Tackle — wires up in M3"
+          onClick={(e) => { stop(e); void tackle(task, nav); }}
+          title="Start a Conveyer run for this task"
         >
           Tackle
         </Button>

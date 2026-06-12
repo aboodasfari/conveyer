@@ -41,6 +41,30 @@ export interface TaskSummary extends Task {
   run_status: string | null;
 }
 
+export interface Run {
+  id: string;
+  task_id: string;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface Phase {
+  id: string;
+  run_id: string;
+  kind: PhaseKind;
+  ord: number;
+  status: string;
+  started_at: string | null;
+  finished_at: string | null;
+  artifact_path: string | null;
+}
+
+export interface RunDetail {
+  run: Run;
+  phases: Phase[];
+}
+
 export interface Gate {
   phase_kind: string;
   auto_advance: number;

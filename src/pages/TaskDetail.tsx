@@ -7,6 +7,7 @@ import { api } from "../api";
 import { TaskSummary } from "../types";
 import { StatusBadge } from "../components/StatusBadge";
 import { RichText } from "../components/RichText";
+import { RunPanel } from "../components/RunPanel";
 
 export function TaskDetail() {
   const { id } = useParams<{ id: string }>();
@@ -93,9 +94,7 @@ export function TaskDetail() {
       </Section>
 
       <Section title="Run">
-        <Text sx={{ color: "fg.muted" }}>
-          No run yet. Tackle wires up in M3.
-        </Text>
+        <RunPanel taskId={task.id} />
       </Section>
     </Box>
   );

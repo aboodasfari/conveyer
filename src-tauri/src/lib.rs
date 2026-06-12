@@ -59,6 +59,11 @@ pub fn run() {
             commands::tasks::tasks_set_bucket,
             commands::gates::gates_list,
             commands::gates::gates_set,
+            commands::runs::runs_start,
+            commands::runs::runs_for_task,
+            commands::runs::run_get,
+            commands::runs::phase_complete,
+            commands::runs::phase_approve,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
