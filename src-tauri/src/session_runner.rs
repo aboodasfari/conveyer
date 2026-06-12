@@ -87,7 +87,7 @@ enum SidecarEvent {
 
 /// Resolve paths. Sidecar lives at `<app dir>/sidecar/conveyer-agent.mjs`.
 /// Artifacts live at `<data dir>/conveyer/artifacts/<task_id>/<run_number>/`.
-fn sidecar_path() -> Option<PathBuf> {
+pub fn sidecar_path() -> Option<PathBuf> {
     // 1. CONVEYER_SIDECAR override (useful for tauri dev cwd).
     if let Ok(p) = std::env::var("CONVEYER_SIDECAR") {
         let pb = PathBuf::from(p);
@@ -152,6 +152,7 @@ struct PhaseContext {
     parent_title: Option<String>,
     parent_description: Option<String>,
     codebase_path: String,
+    model: String,
 }
 
 async fn load_phase_context(state: &AppState, phase_id: &str) -> AppResult<(PhaseContext, String, String)> {
@@ -201,6 +202,9 @@ async fn load_phase_context(state: &AppState, phase_id: &str) -> AppResult<(Phas
         })
     };
 
+    // Model: env override → settings KV per-phase → settings KV default → built-in default.
+    let model = resolve_model(&state, &phase_kind).await?;
+
     let run_id_row: (String,) = sqlx::query_as("SELECT run_id FROM phases WHERE id = ?")
         .bind(phase_id)
         .fetch_one(&state.db)
@@ -215,10 +219,47 @@ async fn load_phase_context(state: &AppState, phase_id: &str) -> AppResult<(Phas
             parent_title,
             parent_description,
             codebase_path,
+            model,
         },
         run_id_row.0,
         phase_kind,
     ))
+}
+
+/// Resolve which model the sidecar should use for this phase. Priority:
+///   1. CONVEYER_COPILOT_MODEL env var (escape hatch)
+///   2. settings KV `model_<phase>` (per-phase override)
+///   3. settings KV `model_default`
+///   4. fallback "gpt-5.1"
+pub async fn resolve_model(state: &AppState, phase_kind: &str) -> AppResult<String> {
+    if let Ok(v) = std::env::var("CONVEYER_COPILOT_MODEL") {
+        if !v.is_empty() {
+            return Ok(v);
+        }
+    }
+    let key_phase = format!("model_{phase_kind}");
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT value FROM settings WHERE key = ?",
+    )
+    .bind(&key_phase)
+    .fetch_optional(&state.db)
+    .await?;
+    if let Some((v,)) = row {
+        if !v.is_empty() {
+            return Ok(v);
+        }
+    }
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT value FROM settings WHERE key = 'model_default'",
+    )
+    .fetch_optional(&state.db)
+    .await?;
+    if let Some((v,)) = row {
+        if !v.is_empty() {
+            return Ok(v);
+        }
+    }
+    Ok("gpt-5.1".to_string())
 }
 
 /// Spawn the sidecar for a phase. Records a `sessions` row, streams
@@ -282,6 +323,7 @@ async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
         .env("CONVEYER_CODEBASE_PATH", &ctx.codebase_path)
         .env("CONVEYER_PROMPTS_DIR", prompts.display().to_string())
         .env("CONVEYER_ARTIFACT_PATH", artifact_path.display().to_string())
+        .env("CONVEYER_COPILOT_MODEL", &ctx.model)
         .env("CONVEYER_BACKEND", &backend)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

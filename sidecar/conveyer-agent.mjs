@@ -272,6 +272,13 @@ async function writeArtifact(body) {
 }
 
 async function main() {
+  // Special mode: list available Copilot models and exit. Used by the
+  // Settings UI to populate model dropdowns.
+  if (env.CONVEYER_MODE === "list_models") {
+    await listModels();
+    return;
+  }
+
   const phase = env.CONVEYER_PHASE;
   if (!phase) {
     emit({ type: "done", ok: false, error: "CONVEYER_PHASE not set" });
@@ -302,3 +309,28 @@ main().catch((e) => {
   emit({ type: "done", ok: false, error: e?.message ?? String(e) });
   process.exit(1);
 });
+
+/* -------------------------------------------------------------------------- */
+/*                              List models mode                              */
+/* -------------------------------------------------------------------------- */
+
+async function listModels() {
+  let CopilotClient;
+  try {
+    ({ CopilotClient } = await import("@github/copilot-sdk"));
+  } catch (e) {
+    emit({ type: "models", models: [], error: `Could not load Copilot SDK: ${e?.message ?? e}` });
+    return;
+  }
+  const client = new CopilotClient();
+  try {
+    await client.start?.();
+    const models = await client.listModels();
+    const slim = models.map((m) => ({ id: m.id, name: m.name || m.id }));
+    emit({ type: "models", models: slim });
+  } catch (e) {
+    emit({ type: "models", models: [], error: e?.message ?? String(e) });
+  } finally {
+    try { await client.stop?.(); } catch { /* noop */ }
+  }
+}

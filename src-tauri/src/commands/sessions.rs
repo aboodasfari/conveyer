@@ -2,7 +2,11 @@ use crate::error::AppResult;
 use crate::session_runner;
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::process::Stdio;
 use tauri::{AppHandle, Manager, State};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Session {
@@ -73,4 +77,52 @@ pub async fn phase_artifact_get(state: State<'_, AppState>, phase_id: String) ->
 pub async fn session_cancel(app: AppHandle, phase_id: String) -> AppResult<bool> {
     let registry = app.state::<session_runner::RunnerRegistry>();
     Ok(registry.cancel(&phase_id).is_some())
+}
+
+#[derive(Debug, Serialize)]
+pub struct ModelInfo {
+    pub id: String,
+    pub name: String,
+}
+
+/// Ask the Copilot SDK for the available models by spawning the sidecar in
+/// list_models mode. Returns an empty list (plus the error in the log) if
+/// the SDK can't be reached.
+#[tauri::command]
+pub async fn models_list() -> AppResult<Vec<ModelInfo>> {
+    let Some(sidecar) = session_runner::sidecar_path() else {
+        return Ok(vec![]);
+    };
+    let mut cmd = Command::new("node");
+    cmd.arg(&sidecar)
+        .env("CONVEYER_MODE", "list_models")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("failed to spawn sidecar for list_models: {e}");
+            return Ok(vec![]);
+        }
+    };
+    let stdout = child.stdout.take().expect("piped");
+    let mut reader = BufReader::new(stdout).lines();
+    let mut models = vec![];
+    while let Ok(Some(line)) = reader.next_line().await {
+        if let Ok(v) = serde_json::from_str::<Value>(&line) {
+            if v.get("type").and_then(|t| t.as_str()) == Some("models") {
+                if let Some(arr) = v.get("models").and_then(|m| m.as_array()) {
+                    for m in arr {
+                        let id = m.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                        let name = m.get("name").and_then(|x| x.as_str()).unwrap_or(&id).to_string();
+                        if !id.is_empty() {
+                            models.push(ModelInfo { id, name });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let _ = child.wait().await;
+    Ok(models)
 }

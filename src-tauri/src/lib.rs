@@ -73,6 +73,7 @@ pub fn run() {
             commands::sessions::messages_for_session,
             commands::sessions::phase_artifact_get,
             commands::sessions::session_cancel,
+            commands::sessions::models_list,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

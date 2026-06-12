@@ -397,16 +397,29 @@ function ExecutionSection() {
   const [error, setError] = useState<string | null>(null);
   const [codebase, setCodebase] = useState<string>("");
   const [codebaseSaved, setCodebaseSaved] = useState<string>("");
+  const [models, setModels] = useState<{ id: string; name: string }[]>([]);
+  const [modelDefault, setModelDefault] = useState<string>("");
+  const [modelPhase, setModelPhase] = useState<Record<string, string>>({});
 
   const load = async () => {
     try {
-      const [g, cb] = await Promise.all([
+      // Pull settings in parallel. Model list is best-effort — if the SDK
+      // isn't reachable it just returns []; we fall back to free-form text.
+      const [g, cb, mList, mDef, ...mPhaseVals] = await Promise.all([
         api.gatesList(),
         api.settingGet("codebase_path"),
+        api.modelsList().catch(() => []),
+        api.settingGet("model_default"),
+        ...PHASE_KINDS.map((k) => api.settingGet(`model_${k}`)),
       ]);
       setGates(g);
       setCodebase(cb ?? "");
       setCodebaseSaved(cb ?? "");
+      setModels(mList);
+      setModelDefault(mDef ?? "");
+      const overrides: Record<string, string> = {};
+      PHASE_KINDS.forEach((k, i) => { overrides[k] = mPhaseVals[i] ?? ""; });
+      setModelPhase(overrides);
     } catch (e) { setError(formatError(e)); } finally { setLoading(false); }
   };
 
@@ -434,6 +447,14 @@ function ExecutionSection() {
     }
   };
 
+  const setModel = async (key: string, value: string) => {
+    try {
+      await api.settingSet(key, value);
+    } catch (e) {
+      setError(formatError(e));
+    }
+  };
+
   if (loading) return <Spinner />;
 
   return (
@@ -456,6 +477,41 @@ function ExecutionSection() {
           placeholder="/Users/you/code/rp"
           sx={{ maxWidth: 480 }}
         />
+      </Box>
+
+      <Box>
+        <Heading as="h3" sx={{ fontSize: 1, mb: 1 }}>Models</Heading>
+        <Text sx={{ color: "fg.muted", fontSize: 1, display: "block", mb: 3 }}>
+          Default model used by every phase, with optional per-phase overrides.
+          {models.length === 0 && " (Could not reach the Copilot SDK to list models — free-form ids accepted; e.g. gpt-5.1.)"}
+        </Text>
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <ModelRow
+            label="Default"
+            value={modelDefault}
+            models={models}
+            onChange={(v) => {
+              setModelDefault(v);
+              void setModel("model_default", v);
+            }}
+            allowEmpty={false}
+            placeholder="gpt-5.1"
+          />
+          {PHASE_KINDS.map((k) => (
+            <ModelRow
+              key={k}
+              label={k.charAt(0).toUpperCase() + k.slice(1)}
+              value={modelPhase[k] ?? ""}
+              models={models}
+              onChange={(v) => {
+                setModelPhase((cur) => ({ ...cur, [k]: v }));
+                void setModel(`model_${k}`, v);
+              }}
+              allowEmpty
+              placeholder={modelDefault || "(use default)"}
+            />
+          ))}
+        </Box>
       </Box>
 
       <Box>
@@ -506,6 +562,78 @@ function ExecutionSection() {
 /* -------------------------------------------------------------------------- */
 /*                                Appearance                                  */
 /* -------------------------------------------------------------------------- */
+
+/* -------------------------------------------------------------------------- */
+/*                                Appearance                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One row in the model picker. Renders a native <select> populated from the
+ * SDK's listModels() result. When the SDK isn't reachable (empty list), we
+ * fall back to a free-form text input so the user can still type an id.
+ */
+function ModelRow({
+  label,
+  value,
+  models,
+  onChange,
+  allowEmpty,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  models: { id: string; name: string }[];
+  onChange: (v: string) => void;
+  allowEmpty: boolean;
+  placeholder?: string;
+}) {
+  return (
+    <Box
+      sx={{
+        display: "grid",
+        gridTemplateColumns: "180px 1fr",
+        gap: 3,
+        alignItems: "center",
+      }}
+    >
+      <Text>{label}</Text>
+      {models.length > 0 ? (
+        <Box
+          as="select"
+          value={value}
+          onChange={(e) => onChange((e.target as HTMLSelectElement).value)}
+          sx={{
+            px: 2,
+            py: "5px",
+            fontSize: 1,
+            borderRadius: 2,
+            borderWidth: 1,
+            borderStyle: "solid",
+            borderColor: "border.default",
+            bg: "canvas.default",
+            color: "fg.default",
+            maxWidth: 320,
+          }}
+        >
+          {allowEmpty && <option value="">{placeholder ?? "(use default)"}</option>}
+          {models.map((m) => (
+            <option key={m.id} value={m.id}>{m.name === m.id ? m.id : `${m.name} (${m.id})`}</option>
+          ))}
+          {value && !models.some((m) => m.id === value) && (
+            <option value={value}>{value} (custom)</option>
+          )}
+        </Box>
+      ) : (
+        <TextInput
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          sx={{ maxWidth: 320 }}
+        />
+      )}
+    </Box>
+  );
+}
 
 function AppearanceSection() {
   const { mode, setMode } = useColorMode();
