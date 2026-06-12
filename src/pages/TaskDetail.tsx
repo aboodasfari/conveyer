@@ -66,6 +66,7 @@ export function TaskDetail() {
           <Text sx={{ color: "fg.muted", fontSize: 0 }}>#{task.source_ref}</Text>
           <Text sx={{ color: "fg.muted", fontSize: 0 }}>·</Text>
           <Text sx={{ color: "fg.muted", fontSize: 0 }}>{task.state}</Text>
+          <StatusBadge status={task.run_status} />
         </Box>
         <Box sx={{ mt: 1, display: "flex", alignItems: "center", gap: 2 }}>
           <Heading as="h1" sx={{ fontSize: 4 }}>{task.title}</Heading>
@@ -85,9 +86,6 @@ export function TaskDetail() {
             </PrimerLink>
           </Text>
         )}
-        <Box sx={{ mt: 2, display: "flex", gap: 2, alignItems: "center" }}>
-          <StatusBadge status={task.run_status} />
-        </Box>
       </Box>
 
       <Section title="Description">

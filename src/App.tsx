@@ -4,13 +4,19 @@ import { Layout } from "./components/Layout";
 import { Dashboard } from "./pages/Dashboard";
 import { Settings } from "./pages/Settings";
 import { TaskDetail } from "./pages/TaskDetail";
+import { useScrollRestoration } from "./scrollRestoration";
+
+function ScrollAwareLayout() {
+  useScrollRestoration();
+  return <Layout />;
+}
 
 export default function App() {
   return (
     <AppTheme>
       <BrowserRouter>
         <Routes>
-          <Route element={<Layout />}>
+          <Route element={<ScrollAwareLayout />}>
             <Route path="/" element={<Dashboard bucket="active" />} />
             <Route path="/backlog" element={<Dashboard bucket="backlog" />} />
             <Route path="/archive" element={<Dashboard bucket="archive" />} />

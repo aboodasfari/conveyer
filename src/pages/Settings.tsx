@@ -111,10 +111,15 @@ function SourcesSection() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [intervalMin, setIntervalMin] = useState<number>(30);
+  const [intervalDraft, setIntervalDraft] = useState<string>("30");
 
   const load = async () => {
     try {
-      setSources(await api.sourcesList());
+      const [s, i] = await Promise.all([api.sourcesList(), loadRefreshInterval()]);
+      setSources(s);
+      setIntervalMin(i);
+      setIntervalDraft(String(i));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -133,26 +138,66 @@ function SourcesSection() {
     }
   };
 
+  // Persist the interval on blur or Enter — autosave avoids an extra click.
+  // Falls back to the last good value if the input isn't a positive number.
+  const commitInterval = async () => {
+    const n = parseInt(intervalDraft, 10);
+    if (!Number.isFinite(n) || n <= 0) {
+      setIntervalDraft(String(intervalMin));
+      return;
+    }
+    if (n === intervalMin) return;
+    try {
+      await saveRefreshInterval(n);
+      setIntervalMin(n);
+    } catch (e) {
+      setError(String(e));
+      setIntervalDraft(String(intervalMin));
+    }
+  };
+
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
-      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <Heading as="h2" sx={{ fontSize: 2 }}>Sources</Heading>
-        <Button leadingVisual={PlusIcon} variant="primary" onClick={() => setAddOpen(true)}>
-          Add Source
-        </Button>
-      </Box>
-      {error && <Flash variant="danger">{error}</Flash>}
-      {loading ? (
-        <Spinner />
-      ) : sources.length === 0 ? (
-        <Text sx={{ color: "fg.muted" }}>
-          No sources yet. Add one to start discovering tasks.
-        </Text>
-      ) : (
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          {sources.map((s) => <SourceRow key={s.id} source={s} onDelete={() => onDelete(s.id)} />)}
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <Box>
+        <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 3 }}>
+          <Heading as="h2" sx={{ fontSize: 2 }}>Sources</Heading>
+          <Button leadingVisual={PlusIcon} variant="primary" onClick={() => setAddOpen(true)}>
+            Add Source
+          </Button>
         </Box>
-      )}
+        {error && <Flash variant="danger">{error}</Flash>}
+        {loading ? (
+          <Spinner />
+        ) : sources.length === 0 ? (
+          <Text sx={{ color: "fg.muted" }}>
+            No sources yet. Add one to start discovering tasks.
+          </Text>
+        ) : (
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {sources.map((s) => <SourceRow key={s.id} source={s} onDelete={() => onDelete(s.id)} />)}
+          </Box>
+        )}
+      </Box>
+
+      <Box>
+        <Heading as="h3" sx={{ fontSize: 1, mb: 1 }}>Auto-refresh</Heading>
+        <Text sx={{ color: "fg.muted", fontSize: 1, display: "block", mb: 2 }}>
+          How often Conveyer polls your sources for new and updated tasks.
+        </Text>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+          <TextInput
+            type="number"
+            value={intervalDraft}
+            onChange={(e) => setIntervalDraft(e.target.value)}
+            onBlur={() => void commitInterval()}
+            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+            sx={{ width: 100 }}
+            min={1}
+          />
+          <Text sx={{ color: "fg.muted" }}>minutes</Text>
+        </Box>
+      </Box>
+
       <AddSourceModal
         open={addOpen}
         onClose={() => setAddOpen(false)}
@@ -337,16 +382,10 @@ function ExecutionSection() {
   const [gates, setGates] = useState<Gate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [intervalMin, setIntervalMin] = useState<number>(30);
-  const [intervalDraft, setIntervalDraft] = useState<string>("30");
-  const [savingInterval, setSavingInterval] = useState(false);
 
   const load = async () => {
     try {
-      const [g, i] = await Promise.all([api.gatesList(), loadRefreshInterval()]);
-      setGates(g);
-      setIntervalMin(i);
-      setIntervalDraft(String(i));
+      setGates(await api.gatesList());
     } catch (e) { setError(String(e)); } finally { setLoading(false); }
   };
 
@@ -363,58 +402,14 @@ function ExecutionSection() {
     }
   };
 
-  const saveInterval = async () => {
-    const n = parseInt(intervalDraft, 10);
-    if (!Number.isFinite(n) || n <= 0) {
-      setError("Refresh interval must be a positive number of minutes.");
-      return;
-    }
-    setSavingInterval(true);
-    setError(null);
-    try {
-      await saveRefreshInterval(n);
-      setIntervalMin(n);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setSavingInterval(false);
-    }
-  };
-
   const visibleKinds = useMemo(() => PHASE_KINDS.filter((k) => k !== "submit"), []);
 
   if (loading) return <Spinner />;
-
-  const intervalDirty = String(intervalMin) !== intervalDraft;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <Heading as="h2" sx={{ fontSize: 2 }}>Execution</Heading>
       {error && <Flash variant="danger">{error}</Flash>}
-
-      <Box>
-        <Heading as="h3" sx={{ fontSize: 1, mb: 1 }}>Auto-refresh</Heading>
-        <Text sx={{ color: "fg.muted", fontSize: 1, display: "block", mb: 2 }}>
-          How often Conveyer polls your sources for new and updated tasks.
-        </Text>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <TextInput
-            type="number"
-            value={intervalDraft}
-            onChange={(e) => setIntervalDraft(e.target.value)}
-            sx={{ width: 120 }}
-            min={1}
-            trailingVisual={() => <Text sx={{ color: "fg.muted" }}>min</Text>}
-          />
-          <Button
-            variant="primary"
-            onClick={saveInterval}
-            disabled={!intervalDirty || savingInterval}
-          >
-            {savingInterval ? "Saving…" : "Save"}
-          </Button>
-        </Box>
-      </Box>
 
       <Box>
         <Heading as="h3" sx={{ fontSize: 1, mb: 1 }}>Phase Gates</Heading>
