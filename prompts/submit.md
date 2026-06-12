@@ -1,3 +1,6 @@
+<!-- Available vars: {{TASK_TITLE}}, {{ARTIFACT_PATH}}.
+     See prompts/_system.md for the full list. -->
+
 # Submit phase
 
 Open a draft pull request for the work in this branch.

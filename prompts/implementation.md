@@ -1,3 +1,6 @@
+<!-- Available vars: {{TASK_TITLE}}, {{PLAN_DOCUMENT}}, {{ARTIFACT_PATH}}.
+     See prompts/_system.md for the full list. -->
+
 # Implementation phase
 
 Implement the plan from the previous phase. Make focused changes, commit nothing — Conveyer captures the diff for you.

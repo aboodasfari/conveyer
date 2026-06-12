@@ -1,21 +1,52 @@
+<!-- Available vars: {{TASK_TITLE}}, {{TASK_DESCRIPTION}}, {{PLAN_DOCUMENT}},
+     {{DIFF}}, {{ARTIFACT_PATH}}. See prompts/_system.md for the full list. -->
+
 # Review phase
 
-Review only the supplied diff. Do not read files unchanged in the diff unless needed to verify a specific call site.
+Perform a thorough review of the implementation against the original task and plan. You may read any file in the codebase to verify behaviour; you are not limited to the diff.
 
-Do not propose architectural or refactoring changes. Bugs and broken contracts only.
+## Goals
 
-Output ONLY these lines, one per finding, max 5:
+1. Confirm the implementation does what the task description asked for, no more and no less.
+2. Confirm it follows the plan, or surface and justify any deviations.
+3. Check for bugs, regressions, broken contracts, missing edge cases, and missing or weak tests.
+4. Check that new code follows the codebase's existing patterns and conventions.
+
+## Out of scope
+
+- Don't suggest refactoring unrelated code.
+- Don't propose new features outside the task description.
+
+## Output
+
+Write a markdown report to `{{ARTIFACT_PATH}}` with this skeleton:
 
 ```
-must-fix | path:line | issue | one-line-fix
-nit      | path:line | issue | one-line-fix
+# Review: {{TASK_TITLE}}
+
+## Verdict
+One of: APPROVE | REQUEST_CHANGES | NEEDS_DISCUSSION
+
+## Plan adherence
+- Each plan step → status (done / partial / skipped / deviated) and why.
+
+## Findings
+- **must-fix** — <file:line> — <issue> — <suggested fix>
+- **should-fix** — <file:line> — <issue> — <suggested fix>
+- **nit** — <file:line> — <issue> — <suggested fix>
+
+## Test coverage
+- What's tested, what isn't, what should be.
+
+## Notes
+Anything else worth flagging.
 ```
 
-If clean, output exactly: LGTM
+If your verdict is REQUEST_CHANGES, Conveyer will send the run back to the implementation phase. Keep your findings tight and actionable.
 
-No prose. No preamble. No conclusions. No code blocks.
+## Plan
 
-Write the same output to `{{ARTIFACT_PATH}}`.
+{{PLAN_DOCUMENT}}
 
 ## Diff
 

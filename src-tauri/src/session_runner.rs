@@ -150,6 +150,7 @@ struct PhaseContext {
     task_state: String,
     task_description: String,
     parent_title: Option<String>,
+    parent_description: Option<String>,
     codebase_path: String,
 }
 
@@ -168,18 +169,21 @@ async fn load_phase_context(state: &AppState, phase_id: &str) -> AppResult<(Phas
     .await?;
     let (task_id, task_title, task_state, task_description, source_id, parent_ref, phase_kind) = row;
 
-    // Optional parent title.
-    let parent_title = if let Some(pr) = parent_ref {
-        let r: Option<(String,)> = sqlx::query_as(
-            "SELECT title FROM tasks WHERE source_id = ? AND source_ref = ?",
+    // Optional parent story title + description.
+    let (parent_title, parent_description) = if let Some(pr) = parent_ref {
+        let r: Option<(String, Option<String>)> = sqlx::query_as(
+            "SELECT title, description FROM tasks WHERE source_id = ? AND source_ref = ?",
         )
         .bind(&source_id)
         .bind(&pr)
         .fetch_optional(&state.db)
         .await?;
-        r.map(|(t,)| t)
+        match r {
+            Some((t, d)) => (Some(t), d),
+            None => (None, None),
+        }
     } else {
-        None
+        (None, None)
     };
 
     // Codebase path: env override → settings KV → default ~/code/rp.
@@ -209,6 +213,7 @@ async fn load_phase_context(state: &AppState, phase_id: &str) -> AppResult<(Phas
             task_state,
             task_description,
             parent_title,
+            parent_description,
             codebase_path,
         },
         run_id_row.0,
@@ -283,6 +288,9 @@ async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
         .kill_on_drop(true);
     if let Some(p) = &ctx.parent_title {
         cmd.env("CONVEYER_PARENT_TITLE", p);
+    }
+    if let Some(p) = &ctx.parent_description {
+        cmd.env("CONVEYER_PARENT_DESCRIPTION", p);
     }
     // Hand over previous phase artifacts if they exist on disk.
     let context_doc = artifact_path_for(&ctx.task_id, 1, "exploration").ok();

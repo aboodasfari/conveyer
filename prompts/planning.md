@@ -1,3 +1,6 @@
+<!-- Available vars: {{TASK_TITLE}}, {{TASK_DESCRIPTION}}, {{CONTEXT_DOCUMENT}},
+     {{ARTIFACT_PATH}}. See prompts/_system.md for the full list. -->
+
 # Planning phase
 
 Use the context document from exploration to produce an implementation plan.

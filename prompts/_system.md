@@ -1,3 +1,13 @@
+<!--
+Available substitution variables (provided by sidecar/conveyer-agent.mjs):
+  {{TASK_TITLE}}, {{TASK_STATE}}, {{TASK_DESCRIPTION}}
+  {{PARENT_TITLE}}, {{PARENT_DESCRIPTION}}
+  {{CODEBASE_PATH}}, {{ARTIFACT_PATH}}
+  {{CONTEXT_DOCUMENT}}, {{PLAN_DOCUMENT}}, {{DIFF}}
+Conditional blocks:
+  {{#PARENT_TITLE}}…{{/PARENT_TITLE}}  (rendered only when PARENT_TITLE is set)
+-->
+
 # Shared system instructions
 
 These apply to every phase. Phase-specific prompts append to this.
@@ -19,7 +29,12 @@ You are working inside `{{CODEBASE_PATH}}`. Treat it as the only source of truth
 
 **State:** {{TASK_STATE}}
 {{#PARENT_TITLE}}
+
 **Parent story:** {{PARENT_TITLE}}
+
+**Parent story description:**
+
+{{PARENT_DESCRIPTION}}
 {{/PARENT_TITLE}}
 
 **Description:**

@@ -1,3 +1,7 @@
+<!-- Available vars: {{TASK_TITLE}}, {{TASK_STATE}}, {{TASK_DESCRIPTION}},
+     {{PARENT_TITLE}}, {{PARENT_DESCRIPTION}}, {{CODEBASE_PATH}},
+     {{ARTIFACT_PATH}}. See prompts/_system.md for the full list. -->
+
 # Exploration phase
 
 Research the task and the relevant parts of the codebase. Produce a context document that will inform the planning phase.
