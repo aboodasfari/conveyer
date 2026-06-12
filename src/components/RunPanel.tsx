@@ -204,7 +204,17 @@ export function RunPanel({ taskId }: { taskId: string }) {
   }
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 2, flex: 1, minHeight: 0 }}>
+    // Explicit min-height so the run panel still fills the viewport without
+    // a fragile flex chain. ~280 px subtracted for header + breadcrumb +
+    // tab strip + paddings. Body scroll still works on every other page.
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+        minHeight: "calc(100vh - 280px)",
+      }}
+    >
       {error && <Flash variant="danger">{error}</Flash>}
 
       <Box
