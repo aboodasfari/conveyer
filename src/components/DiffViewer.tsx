@@ -1,24 +1,38 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Box, Flash, IconButton, Spinner, Text } from "@primer/react";
-import { ChevronDownIcon, ChevronRightIcon, FileDirectoryOpenFillIcon, FileIcon } from "@primer/octicons-react";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ActionList, ActionMenu, Box, Flash, IconButton, Spinner, Text } from "@primer/react";
+import {
+  DiffAddedIcon,
+  DiffModifiedIcon,
+  DiffRemovedIcon,
+  DiffRenamedIcon,
+  FileBinaryIcon,
+  FileDirectoryOpenFillIcon,
+  GitCommitIcon,
+} from "@primer/octicons-react";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
 import { DiffSummary } from "../types";
 import { formatError } from "../errors";
 
+const LEFT_PANE_DEFAULT = 260;
+const LEFT_PANE_MIN = 180;
+const LEFT_PANE_MAX = 520;
+
 /**
- * Diff viewer for the implementation/review/submit phases. Shows the diff
- * between the run's recorded base commit and the worktree HEAD, with a left
- * rail listing each individual commit so the user can also inspect a single
- * commit in isolation.
+ * Diff viewer for the implementation/review/submit phases. Top header has the
+ * branch/worktree + commit selector; below is a resizable two-pane split:
+ * left = file list (status icon + path + ± counts), right = the selected
+ * file's diff. Click a file to focus it; drag the divider to resize.
  */
 export function DiffViewer({ phaseId }: { phaseId: string }) {
   const [summary, setSummary] = useState<DiffSummary | null>(null);
   const [diffText, setDiffText] = useState<string>("");
-  const [selected, setSelected] = useState<string | null>(null); // null = overall
+  const [selectedCommit, setSelectedCommit] = useState<string | null>(null); // null = overall
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [loadingDiff, setLoadingDiff] = useState(false);
+  const [leftWidth, setLeftWidth] = useState<number>(LEFT_PANE_DEFAULT);
 
   const loadSummary = useCallback(async () => {
     setLoading(true);
@@ -48,9 +62,26 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
   }, [phaseId]);
 
   useEffect(() => { void loadSummary(); }, [loadSummary]);
-  useEffect(() => { void loadDiff(selected); }, [selected, loadDiff]);
+  useEffect(() => { void loadDiff(selectedCommit); }, [selectedCommit, loadDiff]);
 
   const files = useMemo(() => parseDiff(diffText), [diffText]);
+
+  // When the file list changes (commit switch, new load), auto-select the
+  // first file if the current selection isn't present.
+  useEffect(() => {
+    if (files.length === 0) {
+      setSelectedFile(null);
+      return;
+    }
+    if (!selectedFile || !files.some((f) => f.path === selectedFile)) {
+      setSelectedFile(files[0].path);
+    }
+  }, [files, selectedFile]);
+
+  const activeFile = useMemo(
+    () => files.find((f) => f.path === selectedFile) ?? null,
+    [files, selectedFile],
+  );
 
   if (loading) {
     return (
@@ -73,131 +104,289 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
     );
   }
 
-  const noChanges = summary.head_sha === summary.base_sha && summary.commits.length === 0;
+  const noCommits = summary.commits.length === 0;
+  const activeCommit = selectedCommit
+    ? summary.commits.find((c) => c.sha === selectedCommit) ?? null
+    : null;
+  const commitLabel = activeCommit
+    ? `${activeCommit.short_sha} · ${activeCommit.subject}`
+    : `Overall (${summary.commits.length} commit${summary.commits.length === 1 ? "" : "s"})`;
 
   return (
-    <Box sx={{ display: "flex", gap: 0, height: "100%", minHeight: 0 }}>
-      {/* Left rail: commit selector */}
+    <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, gap: 2 }}>
+      {/* Header: branch + worktree + open + commit selector */}
       <Box
         sx={{
-          width: 240,
+          display: "flex",
+          alignItems: "center",
+          gap: 3,
+          flexWrap: "wrap",
           flexShrink: 0,
-          borderRight: "1px solid",
-          borderRightColor: "border.muted",
-          overflowY: "auto",
-          pr: 2,
         }}
       >
-        <Box sx={{ mb: 2 }}>
-          <Text sx={{ fontSize: 0, color: "fg.muted", display: "block" }}>
-            Branch
-          </Text>
-          <Text sx={{ fontFamily: "mono", fontSize: 0, display: "block", wordBreak: "break-all" }}>
+        <Box sx={{ display: "flex", alignItems: "baseline", gap: 2, minWidth: 0 }}>
+          <Text sx={{ fontSize: 0, color: "fg.muted" }}>Branch</Text>
+          <Text sx={{ fontFamily: "mono", fontSize: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {summary.branch || "(detached)"}
           </Text>
         </Box>
-        <Box sx={{ mb: 3 }}>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <Text sx={{ fontSize: 0, color: "fg.muted", display: "block", flex: 1 }}>
-              Worktree
-            </Text>
-            <IconButton
-              aria-label="Open worktree in Finder"
-              title="Open worktree in Finder"
-              icon={FileDirectoryOpenFillIcon}
-              variant="invisible"
-              size="small"
-              onClick={() => { void openUrl(summary.worktree_path); }}
-            />
-          </Box>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 0, flex: 1 }}>
+          <Text sx={{ fontSize: 0, color: "fg.muted" }}>Worktree</Text>
           <Text
             sx={{
               fontFamily: "mono",
               fontSize: 0,
-              display: "block",
-              wordBreak: "break-all",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              minWidth: 0,
               color: "fg.default",
             }}
+            title={summary.worktree_path}
           >
             {summary.worktree_path}
           </Text>
-        </Box>
-        <CommitRow
-          label="Overall"
-          subtitle={`${summary.commits.length} commit${summary.commits.length === 1 ? "" : "s"}`}
-          active={selected === null}
-          onSelect={() => setSelected(null)}
-        />
-        {summary.commits.map((c) => (
-          <CommitRow
-            key={c.sha}
-            label={c.subject || c.short_sha}
-            subtitle={`${c.short_sha} · ${c.author}`}
-            active={selected === c.sha}
-            onSelect={() => setSelected(c.sha)}
+          <IconButton
+            aria-label="Open worktree in Finder"
+            title="Open worktree in Finder"
+            icon={FileDirectoryOpenFillIcon}
+            variant="invisible"
+            size="small"
+            onClick={() => { void openPath(summary.worktree_path); }}
           />
-        ))}
+        </Box>
+        <ActionMenu>
+          <ActionMenu.Button leadingVisual={GitCommitIcon} size="small" disabled={noCommits}>
+            {commitLabel}
+          </ActionMenu.Button>
+          <ActionMenu.Overlay>
+            <ActionList selectionVariant="single">
+              <ActionList.Item selected={selectedCommit === null} onSelect={() => setSelectedCommit(null)}>
+                Overall
+                <ActionList.Description variant="block">
+                  {summary.commits.length} commit{summary.commits.length === 1 ? "" : "s"}
+                </ActionList.Description>
+              </ActionList.Item>
+              {summary.commits.length > 0 && <ActionList.Divider />}
+              {summary.commits.map((c) => (
+                <ActionList.Item
+                  key={c.sha}
+                  selected={selectedCommit === c.sha}
+                  onSelect={() => setSelectedCommit(c.sha)}
+                >
+                  {c.subject || c.short_sha}
+                  <ActionList.Description variant="block">
+                    {c.short_sha} · {c.author}
+                  </ActionList.Description>
+                </ActionList.Item>
+              ))}
+            </ActionList>
+          </ActionMenu.Overlay>
+        </ActionMenu>
       </Box>
 
-      {/* Right pane: file diffs */}
-      <Box sx={{ flex: 1, overflowY: "auto", pl: 3, minWidth: 0 }}>
-        {loadingDiff ? (
-          <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
-            <Spinner size="small" />
-          </Box>
-        ) : noChanges ? (
-          <Text sx={{ color: "fg.muted" }}>
-            No commits yet. The agent should commit logically split changes on this branch.
-          </Text>
-        ) : files.length === 0 ? (
-          <Text sx={{ color: "fg.muted" }}>No file changes in this view.</Text>
-        ) : (
-          <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
-            {files.map((f, i) => (
-              <FileDiff key={i} file={f} />
-            ))}
-          </Box>
-        )}
-      </Box>
+      {/* Resizable split */}
+      {loadingDiff ? (
+        <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
+          <Spinner size="small" />
+        </Box>
+      ) : noCommits && files.length === 0 ? (
+        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1, py: 4, color: "fg.muted" }}>
+          <Text>No commits yet.</Text>
+          <Text sx={{ fontSize: 0 }}>The agent will commit logically split changes on this branch.</Text>
+        </Box>
+      ) : files.length === 0 ? (
+        <Text sx={{ color: "fg.muted" }}>No file changes in this view.</Text>
+      ) : (
+        <SplitPane
+          leftWidth={leftWidth}
+          setLeftWidth={setLeftWidth}
+          left={
+            <FileList
+              files={files}
+              selected={selectedFile}
+              onSelect={setSelectedFile}
+            />
+          }
+          right={
+            activeFile ? (
+              <FileDiff file={activeFile} />
+            ) : (
+              <Text sx={{ color: "fg.muted" }}>Select a file to view its diff.</Text>
+            )
+          }
+        />
+      )}
     </Box>
   );
 }
 
-function CommitRow({
-  label,
-  subtitle,
-  active,
-  onSelect,
+/* -------------------------------------------------------------------------- */
+/*                              Resizable split                               */
+/* -------------------------------------------------------------------------- */
+
+function SplitPane({
+  leftWidth,
+  setLeftWidth,
+  left,
+  right,
 }: {
-  label: string;
-  subtitle: string;
-  active: boolean;
-  onSelect: () => void;
+  leftWidth: number;
+  setLeftWidth: (w: number) => void;
+  left: React.ReactNode;
+  right: React.ReactNode;
 }) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const draggingRef = useRef(false);
+
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    draggingRef.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, []);
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!draggingRef.current) return;
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const w = Math.max(LEFT_PANE_MIN, Math.min(LEFT_PANE_MAX, e.clientX - rect.left));
+      setLeftWidth(w);
+    };
+    const onUp = () => {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [setLeftWidth]);
+
   return (
     <Box
-      onClick={onSelect}
+      ref={containerRef}
       sx={{
-        py: 2,
-        px: 2,
-        borderRadius: 1,
-        cursor: "pointer",
-        bg: active ? "accent.subtle" : "transparent",
-        borderLeftWidth: 3,
-        borderLeftStyle: "solid",
-        borderLeftColor: active ? "accent.fg" : "transparent",
-        "&:hover": { bg: active ? "accent.subtle" : "canvas.subtle" },
+        flex: 1,
+        minHeight: 0,
+        display: "flex",
+        border: "1px solid",
+        borderColor: "border.muted",
+        borderRadius: 2,
+        overflow: "hidden",
       }}
     >
-      <Text sx={{ display: "block", fontWeight: active ? 600 : 400, fontSize: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-        {label}
-      </Text>
-      <Text sx={{ display: "block", color: "fg.muted", fontSize: 0, fontFamily: "mono" }}>
-        {subtitle}
-      </Text>
+      <Box sx={{ width: leftWidth, flexShrink: 0, overflowY: "auto" }}>
+        {left}
+      </Box>
+      <Box
+        onMouseDown={onMouseDown}
+        sx={{
+          width: 4,
+          flexShrink: 0,
+          cursor: "col-resize",
+          bg: "border.muted",
+          "&:hover": { bg: "accent.fg" },
+          transition: "background-color 80ms",
+        }}
+        aria-label="Resize file list"
+        role="separator"
+      />
+      <Box sx={{ flex: 1, minWidth: 0, overflowY: "auto", overflowX: "auto" }}>
+        {right}
+      </Box>
     </Box>
   );
 }
+
+/* -------------------------------------------------------------------------- */
+/*                                 File list                                  */
+/* -------------------------------------------------------------------------- */
+
+function FileList({
+  files,
+  selected,
+  onSelect,
+}: {
+  files: DiffFile[];
+  selected: string | null;
+  onSelect: (path: string) => void;
+}) {
+  return (
+    <Box sx={{ py: 1 }}>
+      {files.map((f) => {
+        const Icon = STATUS_ICON[f.status];
+        const iconColor = STATUS_ICON_COLOR[f.status];
+        const active = f.path === selected;
+        return (
+          <Box
+            key={f.path}
+            onClick={() => onSelect(f.path)}
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 2,
+              px: 2,
+              py: 1,
+              cursor: "pointer",
+              bg: active ? "accent.subtle" : "transparent",
+              borderLeftWidth: 3,
+              borderLeftStyle: "solid",
+              borderLeftColor: active ? "accent.fg" : "transparent",
+              "&:hover": { bg: active ? "accent.subtle" : "canvas.subtle" },
+            }}
+            title={f.oldPath && f.oldPath !== f.path ? `${f.oldPath} → ${f.path}` : f.path}
+          >
+            <Box sx={{ color: iconColor, flexShrink: 0, display: "flex" }}>
+              <Icon size={14} />
+            </Box>
+            <Text
+              sx={{
+                fontFamily: "mono",
+                fontSize: 0,
+                flex: 1,
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                direction: "rtl", // ellipsise from the start of the path
+                textAlign: "left",
+              }}
+            >
+              {f.path}
+            </Text>
+            <Text sx={{ fontFamily: "mono", fontSize: 0, flexShrink: 0 }}>
+              <Box as="span" sx={{ color: "success.fg" }}>+{f.additions}</Box>
+              {" "}
+              <Box as="span" sx={{ color: "danger.fg" }}>-{f.deletions}</Box>
+            </Text>
+          </Box>
+        );
+      })}
+    </Box>
+  );
+}
+
+const STATUS_ICON: Record<DiffFile["status"], React.ComponentType<{ size?: number }>> = {
+  added: DiffAddedIcon,
+  deleted: DiffRemovedIcon,
+  renamed: DiffRenamedIcon,
+  modified: DiffModifiedIcon,
+  binary: FileBinaryIcon,
+};
+
+const STATUS_ICON_COLOR: Record<DiffFile["status"], string> = {
+  added: "success.fg",
+  deleted: "danger.fg",
+  renamed: "attention.fg",
+  modified: "accent.fg",
+  binary: "fg.muted",
+};
 
 /* -------------------------------------------------------------------------- */
 /*                                Diff parsing                                */
@@ -315,12 +504,10 @@ function parseFileSection(section: string): DiffFile | null {
 /* -------------------------------------------------------------------------- */
 
 function FileDiff({ file }: { file: DiffFile }) {
-  const [open, setOpen] = useState(true);
   const statusBg = STATUS_BG[file.status];
   return (
-    <Box sx={{ border: "1px solid", borderColor: "border.muted", borderRadius: 2 }}>
+    <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <Box
-        onClick={() => setOpen((o) => !o)}
         sx={{
           display: "flex",
           alignItems: "center",
@@ -328,16 +515,12 @@ function FileDiff({ file }: { file: DiffFile }) {
           px: 2,
           py: 2,
           bg: "canvas.subtle",
-          cursor: "pointer",
-          borderBottom: open ? "1px solid" : "none",
+          borderBottom: "1px solid",
           borderBottomColor: "border.muted",
+          flexShrink: 0,
         }}
       >
-        <Box sx={{ color: "fg.muted" }}>
-          {open ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
-        </Box>
-        <FileIcon size={14} />
-        <Text sx={{ fontFamily: "mono", fontSize: 1, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+        <Text sx={{ fontFamily: "mono", fontSize: 1, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {file.oldPath && file.oldPath !== file.path ? `${file.oldPath} → ${file.path}` : file.path}
         </Text>
         <Text
@@ -361,17 +544,15 @@ function FileDiff({ file }: { file: DiffFile }) {
           </Text>
         )}
       </Box>
-      {open && (
-        <Box sx={{ overflowX: "auto", fontFamily: "mono", fontSize: 0 }}>
-          {file.hunks.length === 0 ? (
-            <Text sx={{ color: "fg.muted", px: 2, py: 2, display: "block" }}>
-              {file.status === "binary" ? "Binary file." : "No textual changes."}
-            </Text>
-          ) : (
-            file.hunks.map((h, i) => <Hunk key={i} hunk={h} />)
-          )}
-        </Box>
-      )}
+      <Box sx={{ flex: 1, minHeight: 0, overflowX: "auto", overflowY: "auto", fontFamily: "mono", fontSize: 0 }}>
+        {file.hunks.length === 0 ? (
+          <Text sx={{ color: "fg.muted", px: 2, py: 2, display: "block" }}>
+            {file.status === "binary" ? "Binary file." : "No textual changes."}
+          </Text>
+        ) : (
+          file.hunks.map((h, i) => <Hunk key={i} hunk={h} />)
+        )}
+      </Box>
     </Box>
   );
 }
