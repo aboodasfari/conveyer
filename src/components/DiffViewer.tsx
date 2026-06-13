@@ -893,9 +893,9 @@ function DiffLineRow({ line }: { line: DiffLine }) {
     : line.kind === "del" ? "danger.subtle"
     : "transparent";
   const marker = line.kind === "add" ? "+" : line.kind === "del" ? "-" : " ";
-  // One line-number column: show newNo for context/add lines, oldNo for
-  // deletions. Doubling them up looked noisy.
-  const lineNo = line.kind === "del" ? line.oldNo : (line.newNo ?? line.oldNo);
+  // One line-number column referring to the new file. Deletion lines
+  // don't exist in the new file, so leave the column blank for them.
+  const lineNo = line.kind === "del" ? undefined : (line.newNo ?? line.oldNo);
   return (
     <Box sx={{ display: "flex", bg, "&:hover": { bg: line.kind === "context" ? "canvas.subtle" : bg } }}>
       <Box sx={{ width: 48, textAlign: "right", pr: 2, color: "fg.muted", userSelect: "none", flexShrink: 0 }}>

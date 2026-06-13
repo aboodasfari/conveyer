@@ -29,7 +29,12 @@ const RING_PULSE_KEYFRAMES = `
   0%   { box-shadow: 0 0 0 0   rgba(31,111,235,0.45); }
   70%  { box-shadow: 0 0 0 8px rgba(31,111,235,0);    }
   100% { box-shadow: 0 0 0 0   rgba(31,111,235,0);    }
-}`;
+}
+/* Primer's Portal renders to #__primerPortalRoot__ on body — bump its
+ * z-index above our fullscreen overlay (z-index 5) so menus/dropdowns
+ * are clickable in fullscreen mode. */
+#__primerPortalRoot__ { position: relative; z-index: 1000; }
+`;
 if (typeof document !== "undefined" && !document.getElementById("conveyer-ring-pulse-kf")) {
   const style = document.createElement("style");
   style.id = "conveyer-ring-pulse-kf";
@@ -116,14 +121,17 @@ export function RunPanel({ taskId }: { taskId: string }) {
   const [fullscreen, setFullscreen] = useState(false);
 
   // Keyboard shortcuts: 'f' toggles fullscreen, Esc exits. Skip when a
-  // text input is focused so they don't fire while the user is typing.
+  // text input is focused, or when an open Primer overlay is going to
+  // handle the key itself (so the dropdown can close first).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const t = e.target as HTMLElement | null;
       const tag = t?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || t?.isContentEditable) return;
-      if (e.key === "Escape" && fullscreen) {
+      // Skip if an overlay (e.g. ActionMenu) is open — let it handle Esc.
+      if (document.querySelector('[role="menu"], [role="dialog"], [data-state="open"]')) return;
+      if (e.key === "Escape") {
         e.preventDefault();
         setFullscreen(false);
       } else if (e.key === "f" || e.key === "F") {
@@ -131,9 +139,9 @@ export function RunPanel({ taskId }: { taskId: string }) {
         setFullscreen((v) => !v);
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [fullscreen]);
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
 
   const reload = useCallback(async () => {
     setError(null);
