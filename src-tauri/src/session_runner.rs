@@ -397,6 +397,12 @@ async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
     // (typically implementation), reused by the rest. The working directory
     // for the SDK session is the worktree so all file ops naturally land on
     // the branch and `git diff base..HEAD` is meaningful.
+    //
+    // The outcome is captured so we can post a system message into chat
+    // *after* the session row is created — that way the user actually sees
+    // what happened (created at X / reused / failed because Y) instead of
+    // it just landing in tracing logs.
+    let mut worktree_note: Option<String> = None;
     let (effective_codebase, branch_name, worktree_path) = if matches!(
         phase_kind.as_str(),
         "implementation" | "review" | "submit"
@@ -409,12 +415,15 @@ async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
         ).await {
             Ok((wt, br, _base)) => {
                 let cwd = wt.to_string_lossy().to_string();
+                worktree_note = Some(format!("[worktree] using {cwd} on branch {br}"));
                 (cwd, Some(br), Some(wt.to_string_lossy().to_string()))
             }
             Err(e) => {
                 tracing::error!("failed to ensure worktree for run {run_id}: {e}");
-                // Fall back to the original codebase rather than blocking the
-                // phase entirely. Diff tab will surface the failure.
+                worktree_note = Some(format!(
+                    "[worktree] FAILED to create worktree in {}: {e}. The agent will run in the original workspace; commits will NOT show up in the Diff tab.",
+                    ctx.codebase_path,
+                ));
                 (ctx.codebase_path.clone(), None, None)
             }
         }
@@ -447,6 +456,16 @@ async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
 
     let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
     registry.register(phase_id.to_string(), session_id.clone(), cancel_tx);
+
+    // Surface worktree outcome to chat now that the session exists.
+    if let Some(note) = worktree_note.take() {
+        let _ = persist_message(&state, &session_id, "system", &note).await;
+        let _ = app.emit("message_appended", serde_json::json!({
+            "session_id": session_id,
+            "role": "system",
+            "content": note,
+        }));
+    }
 
     // Spawn the sidecar.
     let backend = std::env::var("CONVEYER_BACKEND").unwrap_or_else(|_| "copilot".into());
