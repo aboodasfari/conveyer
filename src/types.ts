@@ -35,6 +35,7 @@ export interface Task {
   is_self_assigned: number;
   description: string | null;
   bucket: Bucket;
+  workspace_path: string | null;
 }
 
 export interface TaskSummary extends Task {
@@ -111,6 +112,12 @@ export interface DiffSummary {
   head_sha: string;
   worktree_path: string;
   commits: CommitInfo[];
+}
+
+export interface Workspace {
+  id: number;
+  name: string;
+  path: string;
 }
 
 export type PhaseKind =

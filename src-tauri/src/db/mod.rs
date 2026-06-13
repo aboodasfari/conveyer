@@ -80,4 +80,5 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("0003_hierarchy", include_str!("migrations/0003_hierarchy.sql")),
     ("0004_buckets", include_str!("migrations/0004_buckets.sql")),
     ("0005_worktree", include_str!("migrations/0005_worktree.sql")),
+    ("0006_workspaces", include_str!("migrations/0006_workspaces.sql")),
 ];

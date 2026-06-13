@@ -13,7 +13,7 @@ const SOURCE_COLS: &str =
     "id, kind, name, config_json, pat_env, enabled, created_at, auth_kind, az_account";
 const TASK_COLS: &str =
     "id, source_id, source_ref, title, state, url, source_meta_json,
-     discovered_at, updated_at, parent_ref, is_self_assigned, description, bucket";
+     discovered_at, updated_at, parent_ref, is_self_assigned, description, bucket, workspace_path";
 
 #[derive(Debug, Serialize)]
 pub struct TaskSummary {

@@ -87,12 +87,49 @@ async function buildPrompt(phase) {
     ARTIFACT_PATH: env.CONVEYER_ARTIFACT_PATH || "",
     BRANCH: env.CONVEYER_BRANCH || "",
     WORKTREE_PATH: env.CONVEYER_WORKTREE_PATH || "",
+    WORKSPACES_HINT: renderWorkspacesHint(),
     CONTEXT_DOCUMENT: await readFileOr(env.CONVEYER_CONTEXT_DOC, "(no context document)"),
     PLAN_DOCUMENT: await readFileOr(env.CONVEYER_PLAN_DOC, "(no plan document)"),
     DIFF: "(diff capture wires up alongside the implementation phase)",
   };
 
   return renderTemplate(system, vars) + "\n\n---\n\n" + renderTemplate(phaseTpl, vars);
+}
+
+/**
+ * Build the "Workspaces" section for the system prompt. Two modes:
+ *
+ *   - Explicit: task has a workspace pinned (CONVEYER_WORKSPACE_EXPLICIT=1).
+ *     We tell the agent exactly which path to work in.
+ *
+ *   - Discovery: task has no workspace pinned. We list all configured
+ *     workspaces (name + path) and instruct the agent to pick the most
+ *     appropriate one for the task at hand.
+ */
+function renderWorkspacesHint() {
+  const cb = env.CONVEYER_CODEBASE_PATH || "";
+  const explicit = env.CONVEYER_WORKSPACE_EXPLICIT === "1";
+  const raw = env.CONVEYER_WORKSPACES || "";
+  const list = raw
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      const [name, ...rest] = l.split("\t");
+      return { name: (name || "").trim(), path: rest.join("\t").trim() };
+    })
+    .filter((w) => w.name && w.path);
+
+  if (explicit && cb) {
+    return `You are working in **${cb}**. All file reads, edits, and shell commands must operate on this workspace.`;
+  }
+  if (list.length === 0) {
+    return cb
+      ? `You are working in **${cb}**.`
+      : "No workspaces are configured. Ask the user to set one in Settings.";
+  }
+  const bullets = list.map((w) => `- **${w.name}** — \`${w.path}\``).join("\n");
+  return `Pick the workspace that best matches this task and work in it for the remainder of the run. Available workspaces:\n\n${bullets}\n\nYour starting directory is \`${cb}\` (the first workspace), but you are free to \`cd\` into any of the paths above before doing meaningful work.`;
 }
 
 /* -------------------------------------------------------------------------- */

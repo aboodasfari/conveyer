@@ -3,6 +3,7 @@ Available substitution variables (provided by sidecar/conveyer-agent.mjs):
   {{TASK_TITLE}}, {{TASK_STATE}}, {{TASK_DESCRIPTION}}
   {{PARENT_TITLE}}, {{PARENT_DESCRIPTION}}
   {{CODEBASE_PATH}}, {{ARTIFACT_PATH}}
+  {{WORKSPACES_HINT}}
   {{CONTEXT_DOCUMENT}}, {{PLAN_DOCUMENT}}, {{DIFF}}
 Conditional blocks:
   {{#PARENT_TITLE}}…{{/PARENT_TITLE}}  (rendered only when PARENT_TITLE is set)
@@ -12,9 +13,11 @@ Conditional blocks:
 
 These apply to every phase of development. Phase-specific context appends to this.
 
-## Codebase
+## Workspace
 
-You are working inside `{{CODEBASE_PATH}}`. Treat it as the only source of truth for the existing code. Don't fabricate file paths or APIs.
+{{WORKSPACES_HINT}}
+
+Treat the chosen workspace as the only source of truth for the existing code. Don't fabricate file paths or APIs.
 
 ## Working principles
 

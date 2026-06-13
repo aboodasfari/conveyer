@@ -17,6 +17,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { RichText } from "../components/RichText";
 import { RunPanel } from "../components/RunPanel";
 import { TabStrip } from "../components/TabStrip";
+import { WorkspacePicker } from "../components/WorkspacePicker";
 
 type Tab = "description" | "run";
 
@@ -137,7 +138,18 @@ export function TaskDetail() {
 
       <Box>
         {tab === "description" ? (
-          <RichText content={task.description} />
+          <Box sx={{ display: "flex", gap: 4, alignItems: "flex-start" }}>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <RichText content={task.description} />
+            </Box>
+            <Box sx={{ width: 280, flexShrink: 0 }}>
+              <WorkspacePicker
+                taskId={task.id}
+                value={task.workspace_path}
+                onChange={(v) => setTask((t) => (t ? { ...t, workspace_path: v } : t))}
+              />
+            </Box>
+          </Box>
         ) : (
           <RunPanel taskId={task.id} />
         )}

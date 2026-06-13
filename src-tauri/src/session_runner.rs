@@ -147,6 +147,14 @@ fn artifacts_root() -> AppResult<PathBuf> {
     Ok(p)
 }
 
+/// Newline-separated "name\tpath" lines, for the CONVEYER_WORKSPACES env var.
+fn encode_workspaces(ws: &[(String, String)]) -> String {
+    ws.iter()
+        .map(|(n, p)| format!("{n}\t{p}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Build the absolute artifact path for a (task, run, phase) triple.
 /// Layout: `<artifacts_root>/<task_id>/<run_number>/<phase>.md`
 /// Run number defaults to 1; in the future when we keep multiple runs per
@@ -166,15 +174,20 @@ struct PhaseContext {
     parent_title: Option<String>,
     parent_description: Option<String>,
     codebase_path: String,
+    /// All configured workspaces (name, path), in display order.
+    workspaces: Vec<(String, String)>,
+    /// True if the task has an explicit workspace pinned. False means the
+    /// prompt should present the workspaces list to the agent.
+    explicit_workspace: bool,
     model: String,
     reasoning: Option<String>,
 }
 
 async fn load_phase_context(state: &AppState, phase_id: &str) -> AppResult<(PhaseContext, String, String)> {
     // Returns (ctx, run_id, phase_kind).
-    let row: (String, String, String, String, String, Option<String>, String) = sqlx::query_as(
+    let row: (String, String, String, String, String, Option<String>, String, Option<String>) = sqlx::query_as(
         "SELECT t.id, t.title, t.state, COALESCE(t.description,''), t.source_id,
-                t.parent_ref, p.kind
+                t.parent_ref, p.kind, t.workspace_path
          FROM phases p
          JOIN runs r  ON r.id = p.run_id
          JOIN tasks t ON t.id = r.task_id
@@ -183,7 +196,7 @@ async fn load_phase_context(state: &AppState, phase_id: &str) -> AppResult<(Phas
     .bind(phase_id)
     .fetch_one(&state.db)
     .await?;
-    let (task_id, task_title, task_state, task_description, source_id, parent_ref, phase_kind) = row;
+    let (task_id, task_title, task_state, task_description, source_id, parent_ref, phase_kind, task_workspace_path) = row;
 
     // Optional parent story title + description.
     let (parent_title, parent_description) = if let Some(pr) = parent_ref {
@@ -202,9 +215,28 @@ async fn load_phase_context(state: &AppState, phase_id: &str) -> AppResult<(Phas
         (None, None)
     };
 
-    // Codebase path: env override → settings KV → default ~/code/conveyer-test-repo.
+    // Workspaces: load the full list (for the prompt) and resolve the
+    // codebase path. Precedence:
+    //   1. CONVEYER_CODEBASE_PATH env override (debugging)
+    //   2. task.workspace_path (explicit pick or freeform path)
+    //   3. first workspace in the list
+    //   4. legacy settings.codebase_path
+    //   5. default ~/code/conveyer-test-repo
+    let workspaces: Vec<(String, String)> = sqlx::query_as(
+        "SELECT name, path FROM workspaces ORDER BY name COLLATE NOCASE",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let explicit_workspace = task_workspace_path.as_deref().map(|s| !s.is_empty()).unwrap_or(false);
+
     let codebase_path = if let Ok(v) = std::env::var("CONVEYER_CODEBASE_PATH") {
         v
+    } else if let Some(wp) = task_workspace_path.clone().filter(|s| !s.is_empty()) {
+        wp
+    } else if let Some((_, p)) = workspaces.first() {
+        p.clone()
     } else {
         let row: Option<(String,)> = sqlx::query_as(
             "SELECT value FROM settings WHERE key = 'codebase_path'",
@@ -236,6 +268,8 @@ async fn load_phase_context(state: &AppState, phase_id: &str) -> AppResult<(Phas
             parent_title,
             parent_description,
             codebase_path,
+            workspaces,
+            explicit_workspace,
             model,
             reasoning,
         },
@@ -402,7 +436,9 @@ async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
         .env("CONVEYER_PROMPTS_DIR", prompts.display().to_string())
         .env("CONVEYER_ARTIFACT_PATH", artifact_path.display().to_string())
         .env("CONVEYER_COPILOT_MODEL", &ctx.model)
-        .env("CONVEYER_BACKEND", &backend);
+        .env("CONVEYER_BACKEND", &backend)
+        .env("CONVEYER_WORKSPACES", encode_workspaces(&ctx.workspaces))
+        .env("CONVEYER_WORKSPACE_EXPLICIT", if ctx.explicit_workspace { "1" } else { "0" });
     if let Some(br) = &branch_name {
         cmd.env("CONVEYER_BRANCH", br);
     }
@@ -446,7 +482,9 @@ async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
             .env("CONVEYER_TASK_DESCRIPTION", &ctx.task_description)
             .env("CONVEYER_CODEBASE_PATH", &effective_codebase)
             .env("CONVEYER_PROMPTS_DIR", prompts.display().to_string())
-            .env("CONVEYER_ARTIFACT_PATH", artifact_path.display().to_string());
+            .env("CONVEYER_ARTIFACT_PATH", artifact_path.display().to_string())
+            .env("CONVEYER_WORKSPACES", encode_workspaces(&ctx.workspaces))
+            .env("CONVEYER_WORKSPACE_EXPLICIT", if ctx.explicit_workspace { "1" } else { "0" });
         if let Some(p) = &ctx.parent_title {
             pre.env("CONVEYER_PARENT_TITLE", p);
         }

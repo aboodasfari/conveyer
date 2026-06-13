@@ -83,6 +83,10 @@ pub fn run() {
             commands::sessions::models_list,
             commands::diff::phase_diff_summary,
             commands::diff::phase_diff_text,
+            commands::workspaces::workspaces_list,
+            commands::workspaces::workspace_upsert,
+            commands::workspaces::workspace_delete,
+            commands::workspaces::task_set_workspace,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

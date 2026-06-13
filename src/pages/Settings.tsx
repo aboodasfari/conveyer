@@ -5,6 +5,7 @@ import {
   Flash,
   FormControl,
   Heading,
+  IconButton,
   Radio,
   RadioGroup,
   SegmentedControl,
@@ -21,6 +22,7 @@ import {
   Gate,
   PHASE_KINDS,
   Source,
+  Workspace,
 } from "../types";
 import { Modal } from "../components/Modal";
 import { ModelDropdown, ModelInfo } from "../components/ModelDropdown";
@@ -408,8 +410,7 @@ function ExecutionSection() {
   const [gates, setGates] = useState<Gate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [codebase, setCodebase] = useState<string>("");
-  const [codebaseSaved, setCodebaseSaved] = useState<string>("");
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelDefault, setModelDefault] = useState<string>("");
   const [modelPhase, setModelPhase] = useState<Record<string, string>>({});
@@ -418,9 +419,9 @@ function ExecutionSection() {
 
   const load = async () => {
     try {
-      const [g, cb, mList, mDef, rDef, ...rest] = await Promise.all([
+      const [g, ws, mList, mDef, rDef, ...rest] = await Promise.all([
         api.gatesList(),
-        api.settingGet("codebase_path"),
+        api.workspacesList(),
         loadModels(),
         api.settingGet("model_default"),
         api.settingGet("reasoning_default"),
@@ -430,8 +431,7 @@ function ExecutionSection() {
       const mPhaseVals = rest.slice(0, PHASE_KINDS.length);
       const rPhaseVals = rest.slice(PHASE_KINDS.length);
       setGates(g);
-      setCodebase(cb ?? "");
-      setCodebaseSaved(cb ?? "");
+      setWorkspaces(ws);
       setModels(mList);
       setModelDefault(mDef ?? "");
       setReasoningDefault(rDef ?? "");
@@ -459,14 +459,29 @@ function ExecutionSection() {
     }
   };
 
-  const commitCodebase = async () => {
-    if (codebase === codebaseSaved) return;
+  const upsertWorkspace = async (id: number | null, name: string, path: string) => {
     try {
-      await api.settingSet("codebase_path", codebase);
-      setCodebaseSaved(codebase);
+      const w = await api.workspaceUpsert(id, name, path);
+      setWorkspaces((ws) => {
+        const idx = ws.findIndex((x) => x.id === w.id);
+        if (idx >= 0) {
+          const next = ws.slice();
+          next[idx] = w;
+          return next;
+        }
+        return [...ws, w].sort((a, b) => a.name.localeCompare(b.name));
+      });
     } catch (e) {
       setError(formatError(e));
-      setCodebase(codebaseSaved);
+    }
+  };
+
+  const deleteWorkspace = async (id: number) => {
+    try {
+      await api.workspaceDelete(id);
+      setWorkspaces((ws) => ws.filter((w) => w.id !== id));
+    } catch (e) {
+      setError(formatError(e));
     }
   };
 
@@ -492,18 +507,14 @@ function ExecutionSection() {
       {error && <Flash variant="danger">{error}</Flash>}
 
       <SubSection
-        title="Codebase Path"
-        description={<>Absolute path the Copilot agent runs in. Defaults to <code>~/code/conveyer-test-repo</code>.</>}
+        title="Workspaces"
+        description={<>Named code repos Conveyer can run agents in. Each task can pin one explicitly, otherwise the prompt lists all of these so the agent picks the best match.</>}
         noBorder
       >
-        <TextInput
-          block
-          value={codebase}
-          onChange={(e) => setCodebase(e.target.value)}
-          onBlur={() => void commitCodebase()}
-          onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-          placeholder="/Users/you/code/rp"
-          sx={{ maxWidth: 480 }}
+        <WorkspaceList
+          workspaces={workspaces}
+          onUpsert={upsertWorkspace}
+          onDelete={deleteWorkspace}
         />
       </SubSection>
 
@@ -731,6 +742,128 @@ function AppearanceSection() {
           </SegmentedControl.Button>
         </SegmentedControl>
       </SubSection>
+    </Box>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*                              Workspace list                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Compact CRUD for the workspaces list. Each existing row is editable inline
+ * (commit on blur / Enter). A trailing "add row" lets the user create one.
+ */
+function WorkspaceList({
+  workspaces,
+  onUpsert,
+  onDelete,
+}: {
+  workspaces: Workspace[];
+  onUpsert: (id: number | null, name: string, path: string) => Promise<void>;
+  onDelete: (id: number) => Promise<void>;
+}) {
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 2, maxWidth: 720 }}>
+      {workspaces.map((w) => (
+        <WorkspaceRow key={w.id} workspace={w} onUpsert={onUpsert} onDelete={onDelete} />
+      ))}
+      <NewWorkspaceRow onUpsert={onUpsert} />
+    </Box>
+  );
+}
+
+function WorkspaceRow({
+  workspace,
+  onUpsert,
+  onDelete,
+}: {
+  workspace: Workspace;
+  onUpsert: (id: number | null, name: string, path: string) => Promise<void>;
+  onDelete: (id: number) => Promise<void>;
+}) {
+  const [name, setName] = useState(workspace.name);
+  const [path, setPath] = useState(workspace.path);
+
+  const commit = () => {
+    const n = name.trim();
+    const p = path.trim();
+    if (!n || !p) return;
+    if (n === workspace.name && p === workspace.path) return;
+    void onUpsert(workspace.id, n, p);
+  };
+
+  return (
+    <Box sx={{ display: "flex", gap: 2, alignItems: "center" }}>
+      <TextInput
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+        sx={{ width: 180 }}
+        aria-label="Workspace name"
+      />
+      <TextInput
+        value={path}
+        onChange={(e) => setPath(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+        sx={{ flex: 1 }}
+        aria-label="Workspace path"
+      />
+      <IconButton
+        aria-label="Delete workspace"
+        title="Delete workspace"
+        icon={TrashIcon}
+        variant="invisible"
+        size="small"
+        onClick={() => void onDelete(workspace.id)}
+      />
+    </Box>
+  );
+}
+
+function NewWorkspaceRow({
+  onUpsert,
+}: {
+  onUpsert: (id: number | null, name: string, path: string) => Promise<void>;
+}) {
+  const [name, setName] = useState("");
+  const [path, setPath] = useState("");
+  const submit = async () => {
+    const n = name.trim();
+    const p = path.trim();
+    if (!n || !p) return;
+    await onUpsert(null, n, p);
+    setName("");
+    setPath("");
+  };
+  return (
+    <Box sx={{ display: "flex", gap: 2, alignItems: "center" }}>
+      <TextInput
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") void submit(); }}
+        placeholder="Name"
+        sx={{ width: 180 }}
+        aria-label="New workspace name"
+      />
+      <TextInput
+        value={path}
+        onChange={(e) => setPath(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") void submit(); }}
+        placeholder="/Users/you/code/foo"
+        sx={{ flex: 1 }}
+        aria-label="New workspace path"
+      />
+      <Button
+        leadingVisual={PlusIcon}
+        size="small"
+        onClick={() => void submit()}
+        disabled={!name.trim() || !path.trim()}
+      >
+        Add
+      </Button>
     </Box>
   );
 }

@@ -74,6 +74,14 @@ export const api = {
   phaseDiffText: (phaseId: string, commit?: string | null) =>
     invoke<string>("phase_diff_text", { phaseId, commit: commit ?? null }),
 
+  // workspaces
+  workspacesList: () => invoke<import("./types").Workspace[]>("workspaces_list"),
+  workspaceUpsert: (id: number | null, name: string, path: string) =>
+    invoke<import("./types").Workspace>("workspace_upsert", { id, input: { name, path } }),
+  workspaceDelete: (id: number) => invoke<void>("workspace_delete", { id }),
+  taskSetWorkspace: (taskId: string, workspacePath: string | null) =>
+    invoke<void>("task_set_workspace", { taskId, workspacePath }),
+
   // gates
   gatesList: () => invoke<Gate[]>("gates_list"),
   gatesSet: (phaseKind: string, autoAdvance: boolean) =>
