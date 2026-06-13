@@ -10,7 +10,7 @@ Conditional blocks:
 
 # Shared system instructions
 
-These apply to every phase. Phase-specific prompts append to this.
+These apply to every phase of development. Phase-specific context appends to this.
 
 ## Codebase
 
@@ -18,7 +18,7 @@ You are working inside `{{CODEBASE_PATH}}`. Treat it as the only source of truth
 
 ## Working principles
 
-- Make precise, surgical changes. Don't fix unrelated issues.
+- Make precise, scoped changes. Don't fix unrelated issues.
 - Don't run E2E tests.
 - If a question can be answered by reading the code, read it — don't ask the user.
 - Only stop to ask the user if information is absolutely necessary and cannot be inferred.

@@ -59,11 +59,8 @@ export function PromptView({ phaseId }: { phaseId: string }) {
   }
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, gap: 2 }}>
-      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
-        <Text sx={{ fontSize: 0, color: "fg.muted" }}>
-          Edit the phase's prompt template under <Box as="code" sx={{ fontFamily: "mono", bg: "canvas.subtle", px: 1, borderRadius: 1 }}>prompts/</Box> in the repo.
-        </Text>
+    <Box sx={{ position: "relative", height: "100%", minHeight: 0, display: "flex", flexDirection: "column" }}>
+      <Box sx={{ position: "absolute", top: 0, right: 8, zIndex: 1 }}>
         <CopyButton text={text} />
       </Box>
       <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto", pr: 2 }}>
