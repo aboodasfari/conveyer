@@ -231,7 +231,8 @@ export function RunPanel({ taskId }: { taskId: string }) {
     <Box
       sx={fullscreen ? {
         position: "fixed",
-        top: 0, left: 0, right: 0, bottom: 0,
+        top: 48,                // leave the app's top nav visible
+        left: 0, right: 0, bottom: 0,
         zIndex: 100,
         bg: "canvas.default",
         p: 3,

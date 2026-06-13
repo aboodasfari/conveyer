@@ -117,40 +117,15 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, gap: 2 }}>
-      {/* Header: branch + worktree + open + commit selector */}
+      {/* Header: commit selector + view mode toggle */}
       <Box
         sx={{
           display: "flex",
           alignItems: "center",
-          gap: 3,
-          flexWrap: "wrap",
+          gap: 2,
           flexShrink: 0,
         }}
       >
-        <Box sx={{ display: "flex", alignItems: "baseline", gap: 2, minWidth: 0 }}>
-          <Text sx={{ fontSize: 0, color: "fg.muted" }}>Branch</Text>
-          <Text sx={{ fontFamily: "mono", fontSize: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {summary.branch || "(detached)"}
-          </Text>
-        </Box>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 0, flex: 1 }}>
-          <Text sx={{ fontSize: 0, color: "fg.muted" }}>Worktree</Text>
-          <Text
-            sx={{
-              fontFamily: "mono",
-              fontSize: 0,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              minWidth: 0,
-              color: "fg.default",
-            }}
-            title={summary.worktree_path}
-          >
-            {summary.worktree_path}
-          </Text>
-          <CopyPathButton path={summary.worktree_path} />
-        </Box>
         <ActionMenu>
           <ActionMenu.Button leadingVisual={GitCommitIcon} size="small" disabled={noCommits}>
             {commitLabel}
@@ -179,6 +154,7 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
             </ActionList>
           </ActionMenu.Overlay>
         </ActionMenu>
+        <Box sx={{ flex: 1 }} />
         <SegmentedControl aria-label="Diff view mode" size="small">
           <SegmentedControl.IconButton
             icon={DiffIcon}
@@ -227,6 +203,47 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
           }
         />
       )}
+
+      {/* Footer: branch + worktree path + copy */}
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 3,
+          flexShrink: 0,
+          borderTop: "1px solid",
+          borderTopColor: "border.muted",
+          pt: 1,
+          color: "fg.muted",
+          fontSize: 0,
+        }}
+      >
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexShrink: 0 }}>
+          <Text>Branch</Text>
+          <Text sx={{ fontFamily: "mono", color: "fg.default" }}>
+            {summary.branch || "(detached)"}
+          </Text>
+        </Box>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 0, flex: 1 }}>
+          <Text sx={{ flexShrink: 0 }}>Worktree</Text>
+          <Text
+            sx={{
+              fontFamily: "mono",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              minWidth: 0,
+              color: "fg.default",
+              direction: "rtl",
+              textAlign: "left",
+            }}
+            title={summary.worktree_path}
+          >
+            {summary.worktree_path}
+          </Text>
+          <CopyPathButton path={summary.worktree_path} />
+        </Box>
+      </Box>
     </Box>
   );
 }
@@ -552,21 +569,23 @@ function FileDiff({ file, mode }: { file: DiffFile; mode: "inline" | "split" }) 
           <ChangeCounts additions={file.additions} deletions={file.deletions} />
         </Text>
       </Box>
-      <Box sx={{ flex: 1, minHeight: 0, overflowX: "auto", overflowY: "auto", fontFamily: "mono", fontSize: 0 }}>
-        {file.hunks.length === 0 ? (
+      {file.hunks.length === 0 ? (
+        <Box sx={{ flex: 1, minHeight: 0, fontFamily: "mono", fontSize: 0 }}>
           <Text sx={{ color: "fg.muted", px: 2, py: 2, display: "block" }}>
             {file.status === "binary" ? "Binary file." : "No textual changes."}
           </Text>
-        ) : (
+        </Box>
+      ) : mode === "split" ? (
+        <SideBySideFile file={file} hideHunkHeaders={hideHunkHeaders} />
+      ) : (
+        <Box sx={{ flex: 1, minHeight: 0, overflowX: "auto", overflowY: "auto", fontFamily: "mono", fontSize: 0 }}>
           <Box sx={{ minWidth: "max-content" }}>
-            {file.hunks.map((h, i) =>
-              mode === "split"
-                ? <SideBySideHunk key={i} hunk={h} hideHeader={hideHunkHeaders} />
-                : <Hunk key={i} hunk={h} hideHeader={hideHunkHeaders} />
-            )}
+            {file.hunks.map((h, i) => (
+              <Hunk key={i} hunk={h} hideHeader={hideHunkHeaders} />
+            ))}
           </Box>
-        )}
-      </Box>
+        </Box>
+      )}
     </Box>
   );
 }
@@ -617,85 +636,219 @@ function Hunk({ hunk, hideHeader }: { hunk: DiffHunk; hideHeader?: boolean }) {
   );
 }
 
-function SideBySideHunk({ hunk, hideHeader }: { hunk: DiffHunk; hideHeader?: boolean }) {
-  // Pair consecutive runs of deletions with the following adds so they line
-  // up across the two columns. Context lines occupy both columns.
-  type Pair = { left: DiffLine | null; right: DiffLine | null };
-  const pairs: Pair[] = [];
-  let i = 0;
-  while (i < hunk.lines.length) {
-    const ln = hunk.lines[i];
-    if (ln.kind === "context") {
-      pairs.push({ left: ln, right: ln });
-      i++;
-      continue;
+/* -------------------------------------------------------------------------- */
+/*                         Side-by-side file rendering                        */
+/* -------------------------------------------------------------------------- */
+
+interface PairedLine {
+  kind: "context" | "add" | "del" | "empty";
+  oldNo?: number;
+  newNo?: number;
+  text: string;
+}
+
+/** Walk the file's hunks and produce two parallel arrays of lines, one for
+ * each side of the SBS view, padded with "empty" entries so the two columns
+ * stay row-aligned. */
+function buildSidePairs(file: DiffFile): { left: PairedLine[]; right: PairedLine[]; hunkSeparators: Set<number> } {
+  const left: PairedLine[] = [];
+  const right: PairedLine[] = [];
+  const hunkSeparators = new Set<number>();
+  let firstHunk = true;
+  for (const hunk of file.hunks) {
+    if (!firstHunk) {
+      // Mark this row as a hunk separator so the renderer can draw a divider.
+      hunkSeparators.add(left.length);
+      left.push({ kind: "empty", text: "" });
+      right.push({ kind: "empty", text: "" });
     }
-    const dels: DiffLine[] = [];
-    while (i < hunk.lines.length && hunk.lines[i].kind === "del") {
-      dels.push(hunk.lines[i]); i++;
-    }
-    const adds: DiffLine[] = [];
-    while (i < hunk.lines.length && hunk.lines[i].kind === "add") {
-      adds.push(hunk.lines[i]); i++;
-    }
-    const n = Math.max(dels.length, adds.length);
-    for (let k = 0; k < n; k++) {
-      pairs.push({ left: dels[k] ?? null, right: adds[k] ?? null });
+    firstHunk = false;
+
+    let i = 0;
+    while (i < hunk.lines.length) {
+      const ln = hunk.lines[i];
+      if (ln.kind === "context") {
+        left.push({ kind: "context", oldNo: ln.oldNo, text: ln.text });
+        right.push({ kind: "context", newNo: ln.newNo, text: ln.text });
+        i++;
+        continue;
+      }
+      const dels: DiffLine[] = [];
+      while (i < hunk.lines.length && hunk.lines[i].kind === "del") {
+        dels.push(hunk.lines[i]); i++;
+      }
+      const adds: DiffLine[] = [];
+      while (i < hunk.lines.length && hunk.lines[i].kind === "add") {
+        adds.push(hunk.lines[i]); i++;
+      }
+      const n = Math.max(dels.length, adds.length);
+      for (let k = 0; k < n; k++) {
+        const d = dels[k];
+        const a = adds[k];
+        left.push(d
+          ? { kind: "del", oldNo: d.oldNo, text: d.text }
+          : { kind: "empty", text: "" });
+        right.push(a
+          ? { kind: "add", newNo: a.newNo, text: a.text }
+          : { kind: "empty", text: "" });
+      }
     }
   }
-  const lastNewNo = (() => {
-    for (let j = hunk.lines.length - 1; j >= 0; j--) {
-      const ln = hunk.lines[j].newNo;
-      if (typeof ln === "number") return ln;
-    }
-    return hunk.newStart;
-  })();
-  const label = lastNewNo > hunk.newStart
-    ? `Lines ${hunk.newStart}–${lastNewNo}`
-    : `Line ${hunk.newStart}`;
+  return { left, right, hunkSeparators };
+}
+
+const SBS_LEFT_DEFAULT_PCT = 0.5;
+
+function SideBySideFile({ file, hideHunkHeaders }: { file: DiffFile; hideHunkHeaders: boolean }) {
+  const { left, right, hunkSeparators } = useMemo(() => buildSidePairs(file), [file]);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const leftScrollRef = useRef<HTMLDivElement | null>(null);
+  const rightScrollRef = useRef<HTMLDivElement | null>(null);
+  const syncingRef = useRef(false);
+  const draggingRef = useRef(false);
+  // Width as a fraction of container width so the split tracks resizes.
+  const [leftFrac, setLeftFrac] = useState<number>(SBS_LEFT_DEFAULT_PCT);
+
+  // Sync vertical scroll between the two panes.
+  const onScroll = (source: "left" | "right") => (e: React.UIEvent<HTMLDivElement>) => {
+    if (syncingRef.current) return;
+    const other = source === "left" ? rightScrollRef.current : leftScrollRef.current;
+    if (!other) return;
+    syncingRef.current = true;
+    other.scrollTop = e.currentTarget.scrollTop;
+    // requestAnimationFrame so the matching scroll event fires before we
+    // re-enable, preventing a feedback loop.
+    requestAnimationFrame(() => { syncingRef.current = false; });
+  };
+
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    draggingRef.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, []);
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!draggingRef.current) return;
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect || rect.width === 0) return;
+      const frac = (e.clientX - rect.left) / rect.width;
+      setLeftFrac(Math.max(0.15, Math.min(0.85, frac)));
+    };
+    const onUp = () => {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, []);
+
+  const header = !hideHunkHeaders && file.hunks.length > 0
+    ? hunkHeaderLabel(file.hunks[0])
+    : null;
+
   return (
-    <Box>
-      {!hideHeader && (
+    <Box ref={containerRef} sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+      {header && (
         <Box
           sx={{
             px: 2, py: 1,
             color: "fg.muted",
-            bg: "canvas.inset",
-            borderTop: "1px solid",
-            borderTopColor: "border.muted",
+            bg: "canvas.subtle",
             borderBottom: "1px solid",
             borderBottomColor: "border.muted",
             fontSize: 0,
+            fontFamily: "mono",
+            flexShrink: 0,
           }}
         >
-          {label}
+          {header}
         </Box>
       )}
-      {pairs.map((p, idx) => <SideBySideRow key={idx} pair={p} />)}
-    </Box>
-  );
-}
-
-function SideBySideRow({ pair }: { pair: { left: DiffLine | null; right: DiffLine | null } }) {
-  return (
-    <Box sx={{ display: "flex" }}>
-      <SideBySideCell line={pair.left} side="left" />
-      <Box sx={{ width: "1px", bg: "border.muted", flexShrink: 0 }} />
-      <SideBySideCell line={pair.right} side="right" />
-    </Box>
-  );
-}
-
-function SideBySideCell({ line, side }: { line: DiffLine | null; side: "left" | "right" }) {
-  // Empty cell when the other side has content but this side doesn't (e.g.
-  // pure add or pure delete).
-  if (!line) {
-    return (
-      <Box sx={{ flex: 1, minWidth: 0, bg: "canvas.inset" }}>
-        <Box sx={{ display: "flex" }}>
-          <Box sx={{ width: 40, flexShrink: 0 }} />
-          <Box sx={{ flex: 1 }}>&nbsp;</Box>
+      <Box sx={{ flex: 1, minHeight: 0, display: "flex" }}>
+        <Box
+          ref={leftScrollRef}
+          onScroll={onScroll("left")}
+          sx={{
+            width: `${leftFrac * 100}%`,
+            overflowX: "auto",
+            overflowY: "auto",
+            fontFamily: "mono",
+            fontSize: 0,
+          }}
+        >
+          <Box sx={{ minWidth: "max-content" }}>
+            {left.map((l, i) => (
+              <SideRow key={i} line={l} side="left" separator={hunkSeparators.has(i)} />
+            ))}
+          </Box>
         </Box>
+        <Box
+          onMouseDown={onMouseDown}
+          role="separator"
+          aria-label="Resize side-by-side"
+          sx={{
+            width: 4,
+            flexShrink: 0,
+            cursor: "col-resize",
+            bg: "border.muted",
+            "&:hover": { bg: "accent.fg" },
+            transition: "background-color 80ms",
+          }}
+        />
+        <Box
+          ref={rightScrollRef}
+          onScroll={onScroll("right")}
+          sx={{
+            flex: 1,
+            overflowX: "auto",
+            overflowY: "auto",
+            fontFamily: "mono",
+            fontSize: 0,
+          }}
+        >
+          <Box sx={{ minWidth: "max-content" }}>
+            {right.map((l, i) => (
+              <SideRow key={i} line={l} side="right" separator={hunkSeparators.has(i)} />
+            ))}
+          </Box>
+        </Box>
+      </Box>
+    </Box>
+  );
+}
+
+function SideRow({
+  line,
+  side,
+  separator,
+}: {
+  line: PairedLine;
+  side: "left" | "right";
+  separator: boolean;
+}) {
+  if (line.kind === "empty") {
+    // Diagonal-striped subtle background distinguishes "no content on this
+    // side" from a normal blank context line, without being aggressive.
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          minWidth: "max-content",
+          bg: "canvas.subtle",
+          backgroundImage: "repeating-linear-gradient(45deg, transparent 0 6px, var(--bgColor-muted, rgba(128,128,128,0.08)) 6px 7px)",
+          borderTop: separator ? "1px solid" : "none",
+          borderTopColor: "border.muted",
+        }}
+      >
+        <Box sx={{ width: 40, flexShrink: 0 }} />
+        <Box sx={{ pr: 2 }}>&nbsp;</Box>
       </Box>
     );
   }
@@ -704,17 +857,35 @@ function SideBySideCell({ line, side }: { line: DiffLine | null; side: "left" | 
     : "transparent";
   const lineNo = side === "left" ? line.oldNo : line.newNo;
   return (
-    <Box sx={{ flex: 1, minWidth: 0, bg, "&:hover": { bg: line.kind === "context" ? "canvas.subtle" : bg } }}>
-      <Box sx={{ display: "flex" }}>
-        <Box sx={{ width: 40, textAlign: "right", pr: 1, color: "fg.muted", userSelect: "none", flexShrink: 0 }}>
-          {lineNo ?? ""}
-        </Box>
-        <Box sx={{ flex: 1, whiteSpace: "pre", color: "fg.default", pl: 1, pr: 2 }}>
-          {line.text || " "}
-        </Box>
+    <Box
+      sx={{
+        display: "flex",
+        minWidth: "max-content",
+        bg,
+        borderTop: separator ? "1px solid" : "none",
+        borderTopColor: "border.muted",
+        "&:hover": { bg: line.kind === "context" ? "canvas.subtle" : bg },
+      }}
+    >
+      <Box sx={{ width: 40, textAlign: "right", pr: 1, color: "fg.muted", userSelect: "none", flexShrink: 0 }}>
+        {lineNo ?? ""}
+      </Box>
+      <Box sx={{ flex: 1, whiteSpace: "pre", color: "fg.default", pl: 1, pr: 2 }}>
+        {line.text || " "}
       </Box>
     </Box>
   );
+}
+
+function hunkHeaderLabel(hunk: DiffHunk): string {
+  let lastNewNo = hunk.newStart;
+  for (let i = hunk.lines.length - 1; i >= 0; i--) {
+    const ln = hunk.lines[i].newNo;
+    if (typeof ln === "number") { lastNewNo = ln; break; }
+  }
+  return lastNewNo > hunk.newStart
+    ? `Lines ${hunk.newStart}–${lastNewNo}`
+    : `Line ${hunk.newStart}`;
 }
 
 function DiffLineRow({ line }: { line: DiffLine }) {
