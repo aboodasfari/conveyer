@@ -665,6 +665,54 @@ async fn mark_phase_failed(state: &AppState, phase_id: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// On app startup, reconcile any rows that were left marked as `running` by a
+/// previous app session. The sidecar subprocesses are children of the Tauri
+/// process (`kill_on_drop(true)`), so they cannot survive a Conveyer restart.
+/// Anything still marked `running` is stale and must be marked failed so the
+/// UI doesn't lie about progress.
+pub async fn reconcile_orphaned_runs(state: &AppState) -> AppResult<()> {
+    let now_note = "[interrupted] Conveyer was closed while this phase was running.";
+
+    // Append a marker message to any orphaned sessions so the user sees in
+    // the chat why it stopped.
+    let orphans: Vec<(String,)> = sqlx::query_as(
+        "SELECT id FROM sessions WHERE status = 'running'",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    for (session_id,) in &orphans {
+        let _ = sqlx::query(
+            "INSERT INTO messages(session_id, role, content) VALUES(?, 'system', ?)",
+        )
+        .bind(session_id)
+        .bind(now_note)
+        .execute(&state.db)
+        .await;
+    }
+
+    sqlx::query(
+        "UPDATE sessions SET status='failed', finished_at=datetime('now') WHERE status='running'",
+    )
+    .execute(&state.db)
+    .await?;
+    sqlx::query(
+        "UPDATE phases SET status='failed', finished_at=datetime('now') WHERE status='running'",
+    )
+    .execute(&state.db)
+    .await?;
+    sqlx::query(
+        "UPDATE runs SET status='failed', finished_at=datetime('now') WHERE status='running'",
+    )
+    .execute(&state.db)
+    .await?;
+
+    if !orphans.is_empty() {
+        tracing::info!("reconciled {} orphaned running session(s)", orphans.len());
+    }
+    Ok(())
+}
+
 async fn emit_run_updated(app: &AppHandle, state: &AppState, phase_id: &str) {
     let row: Option<(String, String)> = sqlx::query_as(
         "SELECT r.id, t.id FROM phases p

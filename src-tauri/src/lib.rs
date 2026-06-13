@@ -40,7 +40,11 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 match db::init().await {
                     Ok(pool) => {
-                        handle.manage(AppState::new(pool));
+                        let state = AppState::new(pool);
+                        if let Err(e) = session_runner::reconcile_orphaned_runs(&state).await {
+                            tracing::error!("reconcile orphaned runs: {e}");
+                        }
+                        handle.manage(state);
                         tracing::info!("database ready");
                     }
                     Err(e) => tracing::error!("db init failed: {e}"),
