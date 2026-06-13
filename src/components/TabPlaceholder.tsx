@@ -21,6 +21,8 @@ export function TabPlaceholder({
         justifyContent: "center",
         gap: 1,
         py: 6,
+        flex: 1,
+        minHeight: 0,
         color: "fg.muted",
       }}
     >
