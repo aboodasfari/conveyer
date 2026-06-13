@@ -1,12 +1,13 @@
-//! Worktree metadata for the implementation/review/submit phases.
+//! Worktree management for the implementation/review/submit phases.
 //!
-//! Conveyer doesn't create the worktree itself — the agent does, per the
-//! implementation-phase prompt. What we record here is the *expected* branch
-//! name + worktree path (derived deterministically from the task title) and
-//! the base SHA at impl-phase start, so the Diff tab knows where to look and
-//! what to diff against.
+//! Conveyer creates a dedicated git worktree (and branch) per run so the agent
+//! can commit freely without disturbing the user's checkout. We follow the
+//! convention used by `wt`/worktrunk: the worktree lives next to the original
+//! checkout as `<repo>.<branch-with-slashes-dashed>`, and the branch is named
+//! `abdulasfari/<slug-of-task-title>`.
 //!
-//! Public entry point: [`record_for_run`].
+//! Public entry point: [`ensure_for_run`]. Idempotent — returns the stored
+//! worktree path if one already exists on the run row.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -40,9 +41,8 @@ pub fn slugify(title: &str) -> String {
     out.chars().take(48).collect::<String>().trim_end_matches('-').to_string()
 }
 
-/// Derive the worktree directory we tell the agent to create.
+/// Derive the worktree directory for a given codebase + branch.
 /// `/Users/x/code/repo` + `abdulasfari/foo` -> `/Users/x/code/repo.abdulasfari-foo`.
-/// Matches the worktrunk convention.
 pub fn worktree_path_for(codebase: &Path, branch: &str) -> PathBuf {
     let dashed = branch.replace('/', "-");
     let basename = codebase
@@ -55,10 +55,10 @@ pub fn worktree_path_for(codebase: &Path, branch: &str) -> PathBuf {
     p
 }
 
-/// Record the expected branch + worktree path + base SHA for this run.
-/// Idempotent: if already recorded, returns the stored values unchanged so
-/// review/submit phases see the same metadata implementation set up.
-pub async fn record_for_run(
+/// Ensure a worktree exists for this run. Returns (worktree_path, branch_name,
+/// base_sha). Idempotent: if the run row already records a worktree AND the
+/// directory still exists on disk, returns those values without touching git.
+pub async fn ensure_for_run(
     state: &AppState,
     run_id: &str,
     task_title: &str,
@@ -71,13 +71,50 @@ pub async fn record_for_run(
     .fetch_optional(&state.db)
     .await?;
     if let Some((Some(wt), Some(br), Some(sha))) = existing {
-        return Ok((PathBuf::from(wt), br, sha));
+        if Path::new(&wt).exists() {
+            return Ok((PathBuf::from(wt), br, sha));
+        }
+        // Recorded worktree was deleted — fall through and recreate.
     }
 
     let branch = format!("{BRANCH_PREFIX}{}", slugify(task_title));
     let worktree = worktree_path_for(codebase_path, &branch);
-    let base_sha = git_capture(codebase_path, &["rev-parse", "HEAD"])
-        .unwrap_or_else(|_| String::new());
+    let base_sha = git_capture(codebase_path, &["rev-parse", "HEAD"])?;
+
+    if !worktree.exists() {
+        // Try to add the worktree with a new branch. If the branch already
+        // exists (e.g. a previous run), re-attach to it instead.
+        let add_with_branch = Command::new("git")
+            .arg("-C").arg(codebase_path)
+            .args(["worktree", "add", "-b"])
+            .arg(&branch)
+            .arg(&worktree)
+            .arg(&base_sha)
+            .output()
+            .map_err(|e| AppError::Other(format!("git worktree add: {e}")))?;
+        if !add_with_branch.status.success() {
+            let stderr = String::from_utf8_lossy(&add_with_branch.stderr);
+            if stderr.contains("already exists") || stderr.contains("already used") {
+                let again = Command::new("git")
+                    .arg("-C").arg(codebase_path)
+                    .args(["worktree", "add"])
+                    .arg(&worktree)
+                    .arg(&branch)
+                    .output()
+                    .map_err(|e| AppError::Other(format!("git worktree add (retry): {e}")))?;
+                if !again.status.success() {
+                    return Err(AppError::Other(format!(
+                        "git worktree add failed: {}",
+                        String::from_utf8_lossy(&again.stderr),
+                    )));
+                }
+            } else {
+                return Err(AppError::Other(format!(
+                    "git worktree add failed: {stderr}",
+                )));
+            }
+        }
+    }
 
     sqlx::query(
         "UPDATE runs SET worktree_path = ?, branch_name = ?, base_sha = ? WHERE id = ?",

@@ -332,39 +332,29 @@ async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
 
     let (ctx, run_id, phase_kind) = load_phase_context(&state, phase_id).await?;
 
-    // For implementation/review/submit, record the *expected* worktree the
-    // agent will create on its own (per the implementation-phase prompt).
-    // We don't create it — the agent does. We just persist the branch + path
-    // so the Diff tab can compute `git diff base..HEAD` later.
-    //
-    //   - impl phase:   working dir stays in the original codebase so the
-    //                   agent can `git worktree add` / `wt switch -c` from
-    //                   there. Branch + path are passed via env for the
-    //                   prompt to reference.
-    //   - review/submit: if the worktree dir exists on disk (agent created
-    //                   it), switch the working dir to it so file ops land
-    //                   on the new branch. Otherwise fall back to codebase.
+    // For implementation/review/submit, Conveyer owns a dedicated git worktree
+    // on branch `abdulasfari/<slug>`. Created lazily on the first such phase
+    // (typically implementation), reused by the rest. The working directory
+    // for the SDK session is the worktree so all file ops naturally land on
+    // the branch and `git diff base..HEAD` is meaningful.
     let (effective_codebase, branch_name, worktree_path) = if matches!(
         phase_kind.as_str(),
         "implementation" | "review" | "submit"
     ) {
-        match crate::worktree::record_for_run(
+        match crate::worktree::ensure_for_run(
             &state,
             &run_id,
             &ctx.task_title,
             std::path::Path::new(&ctx.codebase_path),
         ).await {
             Ok((wt, br, _base)) => {
-                let use_worktree = matches!(phase_kind.as_str(), "review" | "submit") && wt.exists();
-                let cwd = if use_worktree {
-                    wt.to_string_lossy().to_string()
-                } else {
-                    ctx.codebase_path.clone()
-                };
+                let cwd = wt.to_string_lossy().to_string();
                 (cwd, Some(br), Some(wt.to_string_lossy().to_string()))
             }
             Err(e) => {
-                tracing::error!("failed to record worktree metadata for run {run_id}: {e}");
+                tracing::error!("failed to ensure worktree for run {run_id}: {e}");
+                // Fall back to the original codebase rather than blocking the
+                // phase entirely. Diff tab will surface the failure.
                 (ctx.codebase_path.clone(), None, None)
             }
         }

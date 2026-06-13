@@ -6,24 +6,14 @@
 
 Implement the plan from the previous phase.
 
-## Set up your worktree (do this FIRST)
+## Your workspace
 
-All work must happen on a dedicated branch in a dedicated worktree. Conveyer has reserved this branch + path for you — use exactly these:
+Conveyer has already created a dedicated worktree for you. You are starting in it:
 
 - **Branch:** `{{BRANCH}}`
-- **Worktree path:** `{{WORKTREE_PATH}}`
+- **Worktree:** `{{WORKTREE_PATH}}`
 
-From `{{CODEBASE_PATH}}`, create the worktree (prefer `wt`, fall back to plain git):
-
-```sh
-# Preferred (worktrunk):
-wt switch -c {{BRANCH}}
-
-# Fallback:
-git -C {{CODEBASE_PATH}} worktree add -b {{BRANCH}} {{WORKTREE_PATH}}
-```
-
-Then do **all** of the rest of your work inside `{{WORKTREE_PATH}}`.
+All your file reads, edits, and `git` commands should operate on this worktree. Do **not** create another worktree, switch branches, or touch the original checkout at `{{CODEBASE_PATH}}`.
 
 ## Relevant skills
 
@@ -41,7 +31,7 @@ Then do **all** of the rest of your work inside `{{WORKTREE_PATH}}`.
 
 - **Commit your work.** Conveyer's Diff tab reads `git diff` between the branch's base and HEAD, plus per-commit diffs.
 - **Split into logical commits.** Each commit should be one coherent change (e.g. "add helper", "wire helper into API", "test for helper"). Don't pile everything into one giant commit.
-- **Short, clear messages.** Imperative, no body unless really needed, no `Co-authored-by` trailer.
+- **Short, clear messages.** Imperative, no body unless really needed, **no `Co-authored-by` trailer**.
 - Don't push, don't open a PR — that's the submit phase.
 
 ## Don't
