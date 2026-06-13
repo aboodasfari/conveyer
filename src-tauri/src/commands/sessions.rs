@@ -72,18 +72,23 @@ pub async fn phase_artifact_get(state: State<'_, AppState>, phase_id: String) ->
 }
 
 /// Returns the rendered prompt the sidecar fed to the agent for this phase,
-/// if it has been captured. Stored as `prompt.md` next to the phase's
-/// artifact by the sidecar before the agent runs.
+/// if it has been captured. Stored as `prompt.md` in the phase's artifact
+/// directory by the sidecar's render_prompt pre-step. We derive the path
+/// from the phase's task_id + kind directly so it works *during* the run
+/// (phases.artifact_path is only set once the agent writes its artifact).
 #[tauri::command]
 pub async fn phase_prompt_get(state: State<'_, AppState>, phase_id: String) -> AppResult<Option<String>> {
-    let row: Option<(Option<String>,)> = sqlx::query_as(
-        "SELECT artifact_path FROM phases WHERE id = ?",
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT r.task_id, p.kind
+         FROM phases p JOIN runs r ON r.id = p.run_id
+         WHERE p.id = ?",
     )
     .bind(&phase_id)
     .fetch_optional(&state.db)
     .await?;
-    let Some((Some(artifact_path),)) = row else { return Ok(None) };
-    let prompt_path = std::path::Path::new(&artifact_path)
+    let Some((task_id, kind)) = row else { return Ok(None) };
+    let artifact_path = crate::session_runner::artifact_path_for(&task_id, 1, &kind)?;
+    let prompt_path = artifact_path
         .parent()
         .map(|p| p.join("prompt.md"));
     let Some(prompt_path) = prompt_path else { return Ok(None) };
