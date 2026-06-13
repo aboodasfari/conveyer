@@ -115,6 +115,26 @@ export function RunPanel({ taskId }: { taskId: string }) {
   const [contentTab, setContentTab] = useState<string>("context");
   const [fullscreen, setFullscreen] = useState(false);
 
+  // Keyboard shortcuts: 'f' toggles fullscreen, Esc exits. Skip when a
+  // text input is focused so they don't fire while the user is typing.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      const tag = t?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || t?.isContentEditable) return;
+      if (e.key === "Escape" && fullscreen) {
+        e.preventDefault();
+        setFullscreen(false);
+      } else if (e.key === "f" || e.key === "F") {
+        e.preventDefault();
+        setFullscreen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fullscreen]);
+
   const reload = useCallback(async () => {
     setError(null);
     try {
@@ -233,7 +253,7 @@ export function RunPanel({ taskId }: { taskId: string }) {
         position: "fixed",
         top: 48,                // leave the app's top nav visible
         left: 0, right: 0, bottom: 0,
-        zIndex: 100,
+        zIndex: 5,              // above page content, below Primer portals
         bg: "canvas.default",
         p: 3,
         display: "flex",
@@ -579,18 +599,32 @@ function PhaseContent({
 
   return (
     <>
-      <Box sx={{ px: 3, pt: 3, flexShrink: 0, display: "flex", alignItems: "center", gap: 2 }}>
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <TabStrip<string> tabs={tabs} active={tab} onChange={onTabChange} />
+      <Box
+        sx={{
+          px: 3,
+          pt: 3,
+          flexShrink: 0,
+          display: "flex",
+          alignItems: "flex-end",
+          gap: 2,
+          borderBottomWidth: 1,
+          borderBottomStyle: "solid",
+          borderBottomColor: "border.default",
+        }}
+      >
+        <Box sx={{ flex: 1, minWidth: 0, mb: "-1px" }}>
+          <TabStrip<string> tabs={tabs} active={tab} onChange={onTabChange} noUnderline />
         </Box>
-        <IconButton
-          aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"}
-          title={fullscreen ? "Exit fullscreen" : "Fullscreen"}
-          icon={fullscreen ? ScreenNormalIcon : ScreenFullIcon}
-          variant="invisible"
-          size="small"
-          onClick={onToggleFullscreen}
-        />
+        <Box sx={{ pb: 1 }}>
+          <IconButton
+            aria-label={fullscreen ? "Exit fullscreen (Esc)" : "Fullscreen (F)"}
+            title={fullscreen ? "Exit fullscreen (Esc)" : "Fullscreen (F)"}
+            icon={fullscreen ? ScreenNormalIcon : ScreenFullIcon}
+            variant="invisible"
+            size="small"
+            onClick={onToggleFullscreen}
+          />
+        </Box>
       </Box>
       <Box sx={{ p: 4, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         {tab === "chat" ? (

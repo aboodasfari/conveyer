@@ -15,10 +15,12 @@ export function TabStrip<T extends string>({
   tabs,
   active,
   onChange,
+  noUnderline = false,
 }: {
   tabs: { id: T; label: string; icon?: React.ComponentType<{ size?: number }> }[];
   active: T;
   onChange: (id: T) => void;
+  noUnderline?: boolean;
 }) {
   return (
     <Box
@@ -26,7 +28,7 @@ export function TabStrip<T extends string>({
       sx={{
         display: "flex",
         gap: 1,
-        borderBottomWidth: 1,
+        borderBottomWidth: noUnderline ? 0 : 1,
         borderBottomStyle: "solid",
         borderBottomColor: "border.default",
       }}

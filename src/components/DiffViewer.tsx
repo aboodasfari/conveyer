@@ -893,13 +893,13 @@ function DiffLineRow({ line }: { line: DiffLine }) {
     : line.kind === "del" ? "danger.subtle"
     : "transparent";
   const marker = line.kind === "add" ? "+" : line.kind === "del" ? "-" : " ";
+  // One line-number column: show newNo for context/add lines, oldNo for
+  // deletions. Doubling them up looked noisy.
+  const lineNo = line.kind === "del" ? line.oldNo : (line.newNo ?? line.oldNo);
   return (
     <Box sx={{ display: "flex", bg, "&:hover": { bg: line.kind === "context" ? "canvas.subtle" : bg } }}>
-      <Box sx={{ width: 40, textAlign: "right", pr: 1, color: "fg.muted", userSelect: "none", flexShrink: 0 }}>
-        {line.oldNo ?? ""}
-      </Box>
-      <Box sx={{ width: 40, textAlign: "right", pr: 2, color: "fg.muted", userSelect: "none", flexShrink: 0 }}>
-        {line.newNo ?? ""}
+      <Box sx={{ width: 48, textAlign: "right", pr: 2, color: "fg.muted", userSelect: "none", flexShrink: 0 }}>
+        {lineNo ?? ""}
       </Box>
       <Box sx={{ width: 16, color: "fg.muted", userSelect: "none", flexShrink: 0 }}>{marker}</Box>
       <Box sx={{ flex: 1, whiteSpace: "pre", color: "fg.default", pr: 2 }}>{line.text || " "}</Box>
