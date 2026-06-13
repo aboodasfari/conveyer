@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { Box, Spinner, Text } from "@primer/react";
+import { Box, Spinner } from "@primer/react";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { api } from "../api";
 import { RichText } from "./RichText";
+import { TabPlaceholder } from "./TabPlaceholder";
 
 interface RunUpdated {
   task_id: string;
@@ -53,7 +54,7 @@ export function PhaseArtifact({
 
   if (loading) return <Spinner size="small" />;
   if (!content || !content.trim()) {
-    return <Text sx={{ color: "fg.muted" }}>{emptyHint}</Text>;
+    return <TabPlaceholder title={emptyHint} />;
   }
   return (
     <Box sx={{ height: "100%", overflowY: "auto" }}>

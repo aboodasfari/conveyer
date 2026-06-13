@@ -15,6 +15,7 @@ import {
 import { api } from "../api";
 import { DiffSummary } from "../types";
 import { formatError } from "../errors";
+import { TabPlaceholder } from "./TabPlaceholder";
 
 const LEFT_PANE_DEFAULT = 260;
 const LEFT_PANE_MIN = 180;
@@ -98,9 +99,9 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
   }
   if (!summary) {
     return (
-      <Text sx={{ color: "fg.muted" }}>
-        The diff between the run's base and HEAD will show up here once the implementation phase starts.
-      </Text>
+      <TabPlaceholder
+        title="Code diffs will show up here once the implementation phase starts."
+      />
     );
   }
 
@@ -172,11 +173,12 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
       {loadingDiff ? (
         <Spinner size="small" />
       ) : noCommits && files.length === 0 ? (
-        <Text sx={{ color: "fg.muted" }}>
-          The agent's commits will show up here as they happen.
-        </Text>
+        <TabPlaceholder
+          title="No commits yet."
+          subtitle="The agent's commits will show up here as they happen."
+        />
       ) : files.length === 0 ? (
-        <Text sx={{ color: "fg.muted" }}>No file changes in this view.</Text>
+        <TabPlaceholder title="No file changes in this view." />
       ) : (
         <SplitPane
           leftWidth={leftWidth}

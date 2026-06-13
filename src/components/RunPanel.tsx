@@ -106,11 +106,11 @@ const PHASE_TABS: Record<string, ContentTab[]> = {
 };
 
 const PLACEHOLDERS: Record<string, string> = {
-  context: "The exploration session will write a context document here. Nothing yet.",
-  plan: "The planning session will produce an implementation plan here. Nothing yet.",
-  diff: "Code diffs from the implementation session will show up here.",
-  review: "Review findings (must-fix / nit / LGTM) will land here.",
-  pr: "The pull request URL and check status will appear here once Submit runs.",
+  context: "The exploration context document will show up here once the phase starts.",
+  plan: "The implementation plan will show up here once the planning phase starts.",
+  diff: "Code diffs will show up here once the implementation phase starts.",
+  review: "Review findings will show up here once the review phase starts.",
+  pr: "The pull request URL and check status will show up here once submit runs.",
 };
 
 interface RunUpdatedPayload {
