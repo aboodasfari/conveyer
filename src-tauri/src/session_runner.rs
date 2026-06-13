@@ -147,6 +147,24 @@ fn artifacts_root() -> AppResult<PathBuf> {
     Ok(p)
 }
 
+/// Expand a leading `~` or `~/` to the user's home directory. Returns the
+/// input unchanged if it doesn't start with `~`, or the home is unknown.
+/// The Copilot SDK (and `git -C`) reject non-absolute paths, so anywhere
+/// we hand a user-entered workspace path off to a subprocess we run it
+/// through this first.
+pub fn expand_path(p: impl Into<String>) -> String {
+    let s = p.into();
+    if s == "~" {
+        return std::env::var("HOME").unwrap_or(s);
+    }
+    if let Some(rest) = s.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return format!("{home}/{rest}");
+        }
+    }
+    s
+}
+
 /// Newline-separated "name\tpath" lines, for the CONVEYER_WORKSPACES env var.
 fn encode_workspaces(ws: &[(String, String)]) -> String {
     ws.iter()
@@ -231,7 +249,7 @@ async fn load_phase_context(state: &AppState, phase_id: &str) -> AppResult<(Phas
 
     let explicit_workspace = task_workspace_path.as_deref().map(|s| !s.is_empty()).unwrap_or(false);
 
-    let codebase_path = if let Ok(v) = std::env::var("CONVEYER_CODEBASE_PATH") {
+    let codebase_path = expand_path(if let Ok(v) = std::env::var("CONVEYER_CODEBASE_PATH") {
         v
     } else if let Some(wp) = task_workspace_path.clone().filter(|s| !s.is_empty()) {
         wp
@@ -247,7 +265,14 @@ async fn load_phase_context(state: &AppState, phase_id: &str) -> AppResult<(Phas
             let home = std::env::var("HOME").unwrap_or_default();
             format!("{home}/code/conveyer-test-repo")
         })
-    };
+    });
+
+    // Also expand `~` in the workspaces list we hand to the prompt so the
+    // agent gets absolute paths it can actually `cd` into.
+    let workspaces: Vec<(String, String)> = workspaces
+        .into_iter()
+        .map(|(n, p)| (n, expand_path(p)))
+        .collect();
 
     // Model: env override → settings KV per-phase → settings KV default → built-in default.
     let model = resolve_model(&state, &phase_kind).await?;
