@@ -336,6 +336,27 @@ async function main() {
     return;
   }
 
+  // Special mode: render the prompt to {artifact_dir}/prompt.md and exit.
+  // The Rust runner kicks this off before the real phase run so the Prompt
+  // tab is populated even if the main run hangs/fails.
+  if (env.CONVEYER_MODE === "render_prompt") {
+    const phase = env.CONVEYER_PHASE;
+    if (!phase) process.exit(1);
+    try {
+      const prompt = await buildPrompt(phase);
+      if (env.CONVEYER_ARTIFACT_PATH) {
+        const promptFile = path.join(path.dirname(env.CONVEYER_ARTIFACT_PATH), "prompt.md");
+        await fs.mkdir(path.dirname(promptFile), { recursive: true });
+        await fs.writeFile(promptFile, prompt, "utf8");
+      }
+      process.exit(0);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error(`render_prompt failed: ${e?.message ?? e}`);
+      process.exit(1);
+    }
+  }
+
   const phase = env.CONVEYER_PHASE;
   if (!phase) {
     emit({ type: "done", ok: false, error: "CONVEYER_PHASE not set" });

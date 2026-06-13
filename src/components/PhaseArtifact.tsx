@@ -52,7 +52,7 @@ export function PhaseArtifact({
     };
   }, [taskId, load]);
 
-  if (loading) return <Spinner size="small" />;
+  if (loading) return null;
   if (!content || !content.trim()) {
     return <TabPlaceholder title={emptyHint} />;
   }

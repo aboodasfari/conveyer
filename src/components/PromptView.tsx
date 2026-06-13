@@ -19,7 +19,10 @@ export function PromptView({ phaseId }: { phaseId: string }) {
     let cancelled = false;
     let timer: number | undefined;
     let attempts = 0;
-    const MAX_ATTEMPTS = 240;        // ~2 min at 500ms
+    // Tight cadence at first (file usually appears in <200ms), back off
+    // to a poll-every-second cap for the long tail.
+    const delayForAttempt = (n: number): number => (n < 5 ? 100 : n < 15 ? 300 : 1000);
+    const MAX_ATTEMPTS = 200; // ~3 min total
 
     const tick = async () => {
       if (cancelled) return;
@@ -37,7 +40,7 @@ export function PromptView({ phaseId }: { phaseId: string }) {
         if (!cancelled) setLoading(false);
       }
       if (attempts < MAX_ATTEMPTS) {
-        timer = window.setTimeout(tick, 500);
+        timer = window.setTimeout(tick, delayForAttempt(attempts));
       }
     };
 

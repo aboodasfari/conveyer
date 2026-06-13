@@ -431,6 +431,52 @@ async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
         cmd.env("CONVEYER_PLAN_DOC", p.display().to_string());
     }
 
+    // Pre-render the prompt to disk so the Prompt tab populates immediately,
+    // before the (slow-to-start) Copilot SDK has any chance to boot. We
+    // invoke the sidecar in CONVEYER_MODE=render_prompt — same env, just
+    // builds the prompt + writes prompt.md + exits.
+    {
+        let mut pre = Command::new("node");
+        pre.arg(&sidecar)
+            .env("CONVEYER_MODE", "render_prompt")
+            .env("CONVEYER_PHASE", &phase_kind)
+            .env("CONVEYER_TASK_ID", &ctx.task_id)
+            .env("CONVEYER_TASK_TITLE", &ctx.task_title)
+            .env("CONVEYER_TASK_STATE", &ctx.task_state)
+            .env("CONVEYER_TASK_DESCRIPTION", &ctx.task_description)
+            .env("CONVEYER_CODEBASE_PATH", &effective_codebase)
+            .env("CONVEYER_PROMPTS_DIR", prompts.display().to_string())
+            .env("CONVEYER_ARTIFACT_PATH", artifact_path.display().to_string());
+        if let Some(p) = &ctx.parent_title {
+            pre.env("CONVEYER_PARENT_TITLE", p);
+        }
+        if let Some(p) = &ctx.parent_description {
+            pre.env("CONVEYER_PARENT_DESCRIPTION", p);
+        }
+        if let Some(br) = &branch_name {
+            pre.env("CONVEYER_BRANCH", br);
+        }
+        if let Some(wp) = &worktree_path {
+            pre.env("CONVEYER_WORKTREE_PATH", wp);
+        }
+        let context_doc = artifact_path_for(&ctx.task_id, 1, "exploration").ok();
+        let plan_doc = artifact_path_for(&ctx.task_id, 1, "planning").ok();
+        if let Some(p) = context_doc.filter(|p| p.exists()) {
+            pre.env("CONVEYER_CONTEXT_DOC", p.display().to_string());
+        }
+        if let Some(p) = plan_doc.filter(|p| p.exists()) {
+            pre.env("CONVEYER_PLAN_DOC", p.display().to_string());
+        }
+        // Best-effort; don't fail the phase if the pre-render fails.
+        match pre.stdout(Stdio::null()).stderr(Stdio::null()).status().await {
+            Ok(s) if !s.success() => {
+                tracing::warn!("render_prompt sidecar exited with {s}");
+            }
+            Err(e) => tracing::warn!("render_prompt sidecar failed to spawn: {e}"),
+            _ => {}
+        }
+    }
+
     let mut child: Child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
