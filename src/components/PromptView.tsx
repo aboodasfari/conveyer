@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Box, IconButton, Spinner, Text } from "@primer/react";
 import { CheckIcon, CopyIcon } from "@primer/octicons-react";
 import { api } from "../api";
@@ -14,16 +14,40 @@ export function PromptView({ phaseId }: { phaseId: string }) {
   const [text, setText] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      setText(await api.phasePromptGet(phaseId));
-    } finally {
-      setLoading(false);
-    }
-  }, [phaseId]);
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 120; // ~2 min (1s interval)
 
-  useEffect(() => { void load(); }, [load]);
+    const tick = async () => {
+      if (cancelled) return;
+      attempts++;
+      try {
+        const s = await api.phasePromptGet(phaseId);
+        if (cancelled) return;
+        if (s) {
+          setText(s);
+          setLoading(false);
+          return; // stop polling
+        }
+        setLoading(false); // we have an answer (null) — show empty state but keep polling
+      } catch {
+        if (!cancelled) setLoading(false);
+      }
+      if (attempts < MAX_ATTEMPTS) {
+        timer = window.setTimeout(tick, 1000);
+      }
+    };
+
+    setLoading(true);
+    setText(null);
+    void tick();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [phaseId]);
 
   if (loading) {
     return (
@@ -35,9 +59,9 @@ export function PromptView({ phaseId }: { phaseId: string }) {
   if (!text) {
     return (
       <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1, py: 6, color: "fg.muted" }}>
-        <Text>No prompt captured yet.</Text>
+        <Text>Waiting for the agent to start…</Text>
         <Text sx={{ fontSize: 0 }}>
-          The Prompt tab populates once the phase has run at least once.
+          The prompt is captured the moment the sidecar renders it. Auto-refreshing.
         </Text>
       </Box>
     );
