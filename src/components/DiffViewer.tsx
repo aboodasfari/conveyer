@@ -12,6 +12,7 @@ import {
   FileBinaryIcon,
   GitCommitIcon,
 } from "@primer/octicons-react";
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { api } from "../api";
 import { DiffSummary } from "../types";
 import { formatError } from "../errors";
@@ -67,6 +68,32 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
 
   useEffect(() => { void loadSummary(); }, [loadSummary]);
   useEffect(() => { void loadDiff(selectedCommit); }, [selectedCommit, loadDiff]);
+
+  // Light poll so newly-made commits appear without waiting for the next
+  // phase transition. Cheap (one SQL + a few git commands every 3s).
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      void loadSummary();
+      void loadDiff(selectedCommit);
+    }, 3000);
+    return () => window.clearInterval(id);
+  }, [loadSummary, loadDiff, selectedCommit]);
+
+  // Re-fetch when anything about this run changes (worktree created,
+  // agent committed, phase advanced) so the Diff tab stays live without
+  // a manual refresh.
+  useEffect(() => {
+    let unlisten: UnlistenFn | null = null;
+    let cancelled = false;
+    void (async () => {
+      unlisten = await listen("run_updated", () => {
+        void loadSummary();
+        void loadDiff(selectedCommit);
+      });
+      if (cancelled) unlisten();
+    })();
+    return () => { cancelled = true; if (unlisten) unlisten(); };
+  }, [loadSummary, loadDiff, selectedCommit]);
 
   const files = useMemo(() => parseDiff(diffText), [diffText]);
 
