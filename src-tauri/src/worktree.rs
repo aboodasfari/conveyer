@@ -70,15 +70,20 @@ pub async fn ensure_for_run(
     .bind(run_id)
     .fetch_optional(&state.db)
     .await?;
+    let branch = format!("{BRANCH_PREFIX}{}", slugify(task_title));
+    let expected_worktree = worktree_path_for(codebase_path, &branch);
+
     if let Some((Some(wt), Some(br), Some(sha))) = existing {
-        if Path::new(&wt).exists() {
+        // Only reuse if the recorded worktree is the one we'd create now
+        // for this codebase + branch AND it still exists on disk. Otherwise
+        // it's stale (e.g. the task's workspace was changed since the
+        // last run) — fall through and recompute.
+        if Path::new(&wt).exists() && PathBuf::from(&wt) == expected_worktree {
             return Ok((PathBuf::from(wt), br, sha));
         }
-        // Recorded worktree was deleted — fall through and recreate.
     }
 
-    let branch = format!("{BRANCH_PREFIX}{}", slugify(task_title));
-    let worktree = worktree_path_for(codebase_path, &branch);
+    let worktree = expected_worktree;
     let base_sha = git_capture(codebase_path, &["rev-parse", "HEAD"])?;
 
     if !worktree.exists() {
