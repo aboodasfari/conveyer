@@ -4,7 +4,7 @@
 use serde::Serialize;
 use tauri::State;
 
-use crate::error::{AppError, AppResult};
+use crate::error::AppResult;
 use crate::state::AppState;
 use crate::worktree::git_capture;
 
@@ -26,7 +26,7 @@ pub struct DiffSummary {
     pub commits: Vec<CommitInfo>,
 }
 
-async fn worktree_for_phase(state: &AppState, phase_id: &str) -> AppResult<(String, String)> {
+async fn worktree_for_phase(state: &AppState, phase_id: &str) -> AppResult<Option<(String, String)>> {
     let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT r.worktree_path, r.base_sha
          FROM phases p JOIN runs r ON r.id = p.run_id
@@ -35,20 +35,20 @@ async fn worktree_for_phase(state: &AppState, phase_id: &str) -> AppResult<(Stri
     .bind(phase_id)
     .fetch_optional(&state.db)
     .await?;
-    match row {
-        Some((Some(wt), Some(base))) => Ok((wt, base)),
-        _ => Err(AppError::NotFound(
-            "No worktree recorded for this run yet (starts at implementation phase).".into(),
-        )),
-    }
+    Ok(match row {
+        Some((Some(wt), Some(base))) => Some((wt, base)),
+        _ => None,
+    })
 }
 
 #[tauri::command]
 pub async fn phase_diff_summary(
     state: State<'_, AppState>,
     phase_id: String,
-) -> AppResult<DiffSummary> {
-    let (worktree, base_sha) = worktree_for_phase(&state, &phase_id).await?;
+) -> AppResult<Option<DiffSummary>> {
+    let Some((worktree, base_sha)) = worktree_for_phase(&state, &phase_id).await? else {
+        return Ok(None);
+    };
     let wt = std::path::Path::new(&worktree);
     let head_sha = git_capture(wt, &["rev-parse", "HEAD"])?;
     let branch = git_capture(wt, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
@@ -79,13 +79,13 @@ pub async fn phase_diff_summary(
         }
     }
 
-    Ok(DiffSummary {
+    Ok(Some(DiffSummary {
         branch,
         base_sha,
         head_sha,
         worktree_path: worktree,
         commits,
-    })
+    }))
 }
 
 /// Raw unified diff text. If `commit` is `None`, returns the overall diff
@@ -97,7 +97,9 @@ pub async fn phase_diff_text(
     phase_id: String,
     commit: Option<String>,
 ) -> AppResult<String> {
-    let (worktree, base_sha) = worktree_for_phase(&state, &phase_id).await?;
+    let Some((worktree, base_sha)) = worktree_for_phase(&state, &phase_id).await? else {
+        return Ok(String::new());
+    };
     let wt = std::path::Path::new(&worktree);
 
     let out = match commit.as_deref() {

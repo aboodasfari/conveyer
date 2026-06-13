@@ -10,8 +10,8 @@ export function formatError(e: unknown): string {
   else msg = String(e);
 
   msg = msg.trim();
-  if (/^error:\s*/i.test(msg)) {
-    msg = msg.replace(/^error:\s*/i, "");
-  }
+  // Strip Rust-side prefixes so we don't end up with "Error: Not found: …".
+  msg = msg.replace(/^error:\s*/i, "");
+  msg = msg.replace(/^not found:\s*/i, "");
   return `Error: ${msg}`;
 }

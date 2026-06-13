@@ -66,7 +66,7 @@ export const api = {
 
   // diff
   phaseDiffSummary: (phaseId: string) =>
-    invoke<import("./types").DiffSummary>("phase_diff_summary", { phaseId }),
+    invoke<import("./types").DiffSummary | null>("phase_diff_summary", { phaseId }),
   phaseDiffText: (phaseId: string, commit?: string | null) =>
     invoke<string>("phase_diff_text", { phaseId, commit: commit ?? null }),
 

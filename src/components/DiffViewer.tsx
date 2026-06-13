@@ -59,9 +59,17 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
       </Box>
     );
   }
-  if (error || !summary) {
+  if (error) {
+    return <Flash variant="danger">{error}</Flash>;
+  }
+  if (!summary) {
     return (
-      <Flash variant="warning">{error ?? "No diff available yet."}</Flash>
+      <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, py: 6, color: "fg.muted" }}>
+        <Text sx={{ fontSize: 1 }}>No worktree yet.</Text>
+        <Text sx={{ fontSize: 0 }}>
+          The Diff tab populates once the implementation phase starts.
+        </Text>
+      </Box>
     );
   }
 
