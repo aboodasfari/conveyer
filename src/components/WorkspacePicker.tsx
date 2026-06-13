@@ -97,7 +97,7 @@ export function WorkspacePicker({
           borderColor: "border.muted",
           borderRadius: 2,
           color: value ? "fg.default" : "fg.muted",
-          fontSize: 0,
+          fontSize: 1,
           cursor: "pointer",
           "&:hover": { bg: "neutral.subtle" },
         }}
@@ -105,11 +105,11 @@ export function WorkspacePicker({
         aria-expanded={open}
         title={value ?? "Pick a workspace for this task"}
       >
-        <FileDirectoryIcon size={12} />
-        <Text sx={{ fontSize: 0, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <FileDirectoryIcon size={14} />
+        <Text sx={{ fontSize: 1, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {triggerLabel}
         </Text>
-        <ChevronDownIcon size={12} />
+        <ChevronDownIcon size={14} />
       </Box>
 
       {open && (
