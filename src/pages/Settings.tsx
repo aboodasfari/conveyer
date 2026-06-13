@@ -830,7 +830,6 @@ function WorkspaceRow({
         title="Delete workspace"
         icon={TrashIcon}
         variant="invisible"
-        size="small"
         onClick={() => void onDelete(workspace.id)}
       />
     </Box>
@@ -872,7 +871,6 @@ function NewWorkspaceRow({
       />
       <Button
         leadingVisual={PlusIcon}
-        size="small"
         onClick={() => void submit()}
         disabled={!name.trim() || !path.trim()}
       >
