@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { Box, IconButton, Spinner } from "@primer/react";
-import { CheckIcon, CopyIcon } from "@primer/octicons-react";
+import { Box, Spinner } from "@primer/react";
 import { api } from "../api";
 import { RichText } from "./RichText";
 import { TabPlaceholder } from "./TabPlaceholder";
@@ -59,35 +58,8 @@ export function PromptView({ phaseId }: { phaseId: string }) {
   }
 
   return (
-    <Box sx={{ position: "relative", height: "100%", minHeight: 0, display: "flex", flexDirection: "column" }}>
-      <Box sx={{ position: "absolute", top: 0, right: 8, zIndex: 1 }}>
-        <CopyButton text={text} />
-      </Box>
-      <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto", pr: 2 }}>
-        <RichText content={text} />
-      </Box>
+    <Box sx={{ height: "100%", minHeight: 0, overflowY: "auto", pr: 2 }}>
+      <RichText content={text} />
     </Box>
-  );
-}
-
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <IconButton
-      aria-label={copied ? "Copied!" : "Copy prompt"}
-      title={copied ? "Copied!" : "Copy prompt"}
-      icon={copied ? CheckIcon : CopyIcon}
-      variant="invisible"
-      size="small"
-      onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(text);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        } catch {
-          // Clipboard write can fail under restricted contexts.
-        }
-      }}
-    />
   );
 }
