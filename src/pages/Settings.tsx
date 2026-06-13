@@ -408,45 +408,60 @@ function AddSourceModal({
 
 function ExecutionSection() {
   const [gates, setGates] = useState<Gate[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [models, setModels] = useState<ModelInfo[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
   const [modelDefault, setModelDefault] = useState<string>("");
   const [modelPhase, setModelPhase] = useState<Record<string, string>>({});
   const [reasoningDefault, setReasoningDefault] = useState<string>("");
   const [reasoningPhase, setReasoningPhase] = useState<Record<string, string>>({});
 
-  const load = async () => {
-    try {
-      const [g, ws, mList, mDef, rDef, ...rest] = await Promise.all([
-        api.gatesList(),
-        api.workspacesList(),
-        loadModels(),
-        api.settingGet("model_default"),
-        api.settingGet("reasoning_default"),
-        ...PHASE_KINDS.map((k) => api.settingGet(`model_${k}`)),
-        ...PHASE_KINDS.map((k) => api.settingGet(`reasoning_${k}`)),
-      ]);
-      const mPhaseVals = rest.slice(0, PHASE_KINDS.length);
-      const rPhaseVals = rest.slice(PHASE_KINDS.length);
-      setGates(g);
-      setWorkspaces(ws);
-      setModels(mList);
-      setModelDefault(mDef ?? "");
-      setReasoningDefault(rDef ?? "");
-      const mOver: Record<string, string> = {};
-      const rOver: Record<string, string> = {};
-      PHASE_KINDS.forEach((k, i) => {
-        mOver[k] = mPhaseVals[i] ?? "";
-        rOver[k] = rPhaseVals[i] ?? "";
-      });
-      setModelPhase(mOver);
-      setReasoningPhase(rOver);
-    } catch (e) { setError(formatError(e)); } finally { setLoading(false); }
-  };
+  // Fast local-DB lookups: gates, workspaces, model/reasoning settings.
+  // These should render the section immediately rather than block on the
+  // slow Copilot SDK model listing.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const [g, ws, mDef, rDef, ...rest] = await Promise.all([
+          api.gatesList(),
+          api.workspacesList(),
+          api.settingGet("model_default"),
+          api.settingGet("reasoning_default"),
+          ...PHASE_KINDS.map((k) => api.settingGet(`model_${k}`)),
+          ...PHASE_KINDS.map((k) => api.settingGet(`reasoning_${k}`)),
+        ]);
+        const mPhaseVals = rest.slice(0, PHASE_KINDS.length);
+        const rPhaseVals = rest.slice(PHASE_KINDS.length);
+        setGates(g);
+        setWorkspaces(ws);
+        setModelDefault(mDef ?? "");
+        setReasoningDefault(rDef ?? "");
+        const mOver: Record<string, string> = {};
+        const rOver: Record<string, string> = {};
+        PHASE_KINDS.forEach((k, i) => {
+          mOver[k] = mPhaseVals[i] ?? "";
+          rOver[k] = rPhaseVals[i] ?? "";
+        });
+        setModelPhase(mOver);
+        setReasoningPhase(rOver);
+      } catch (e) { setError(formatError(e)); }
+    })();
+  }, []);
 
-  useEffect(() => { void load(); }, []);
+  // Models come from a slow SDK call. Load separately so the rest of the
+  // section renders immediately while only the Models subsection spins.
+  useEffect(() => {
+    void (async () => {
+      try {
+        setModels(await loadModels());
+      } catch (e) {
+        setError(formatError(e));
+      } finally {
+        setModelsLoading(false);
+      }
+    })();
+  }, []);
 
   const toggleGate = async (kind: string, current: number) => {
     const next = current === 0 ? 1 : 0;
@@ -493,14 +508,6 @@ function ExecutionSection() {
     }
   };
 
-  if (loading) {
-    return (
-      <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: 240 }}>
-        <Spinner />
-      </Box>
-    );
-  }
-
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <Heading as="h2" sx={{ fontSize: 2 }}>Execution</Heading>
@@ -523,10 +530,16 @@ function ExecutionSection() {
         description={
           <>
             Default model used by every phase, with optional per-phase overrides.
-            {models.length === 0 && " Could not reach the Copilot SDK to list models — make sure `copilot` is signed in."}
+            {!modelsLoading && models.length === 0 && " Could not reach the Copilot SDK to list models — make sure `copilot` is signed in."}
           </>
         }
       >
+        {modelsLoading ? (
+          <Box sx={{ display: "flex", alignItems: "center", gap: 2, color: "fg.muted" }}>
+            <Spinner size="small" />
+            <Text sx={{ fontSize: 0 }}>Loading models from Copilot…</Text>
+          </Box>
+        ) : (
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
           <ModelChooser
             label="Default"
@@ -586,6 +599,7 @@ function ExecutionSection() {
             );
           })}
         </Box>
+        )}
       </SubSection>
 
       <SubSection
