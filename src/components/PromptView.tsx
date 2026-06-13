@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Box, IconButton, Spinner, Text } from "@primer/react";
+import { Box, IconButton, Spinner } from "@primer/react";
 import { CheckIcon, CopyIcon } from "@primer/octicons-react";
 import { api } from "../api";
 import { RichText } from "./RichText";
