@@ -52,6 +52,8 @@ export const api = {
     invoke<RunDetail>("phase_approve", { phaseId }),
   phaseRewind: (phaseId: string) =>
     invoke<RunDetail>("phase_rewind", { phaseId }),
+  phaseRestart: (phaseId: string) =>
+    invoke<RunDetail>("phase_restart", { phaseId }),
 
   // sessions / messages / artifacts
   sessionsForPhase: (phaseId: string) =>

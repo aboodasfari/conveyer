@@ -74,6 +74,7 @@ pub fn run() {
             commands::runs::phase_complete,
             commands::runs::phase_approve,
             commands::runs::phase_rewind,
+            commands::runs::phase_restart,
             commands::sessions::sessions_for_phase,
             commands::sessions::messages_for_session,
             commands::sessions::phase_artifact_get,

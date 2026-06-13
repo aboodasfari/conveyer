@@ -11,6 +11,7 @@ import {
   PlayIcon,
   ReplyIcon,
   StopIcon,
+  SyncIcon,
 } from "@primer/octicons-react";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { api } from "../api";
@@ -191,6 +192,7 @@ export function RunPanel({ taskId }: { taskId: string }) {
     if (!impl) return null;
     return api.phaseRewind(impl.id);
   });
+  const restart = (id: string) => wrap(async () => api.phaseRestart(id));
 
   const selectedPhase = useMemo(() => {
     if (!detail || !selectedPhaseId) return null;
@@ -266,6 +268,7 @@ export function RunPanel({ taskId }: { taskId: string }) {
             onCancel={complete}
             onApprove={approve}
             onRewind={rewindToImplementation}
+            onRestart={restart}
           />
         )}
 
@@ -309,6 +312,7 @@ function Sidebar({
   onCancel,
   onApprove,
   onRewind,
+  onRestart,
 }: {
   detail: RunDetail;
   selectedPhaseId: string | null;
@@ -318,6 +322,7 @@ function Sidebar({
   onCancel: (id: string) => void;
   onApprove: (id: string) => void;
   onRewind: () => void;
+  onRestart: (id: string) => void;
 }) {
   return (
     <Box
@@ -371,6 +376,7 @@ function Sidebar({
             onCancel={() => onCancel(p.id)}
             onApprove={() => onApprove(p.id)}
             onRewind={onRewind}
+            onRestart={() => onRestart(p.id)}
           />
         ))}
       </Box>
@@ -388,6 +394,7 @@ function PhaseRow({
   onCancel,
   onApprove,
   onRewind,
+  onRestart,
 }: {
   phase: Phase;
   first: boolean;
@@ -398,6 +405,7 @@ function PhaseRow({
   onCancel: () => void;
   onApprove: () => void;
   onRewind: () => void;
+  onRestart: () => void;
 }) {
   const color = STATE_COLORS[phase.status] ?? "#6e7681";
   const canRewindToImpl = phase.kind === "review" &&
@@ -516,6 +524,20 @@ function PhaseRow({
                 Send Back
               </Button>
             )}
+          </Box>
+        )}
+        {(phase.status === "failed" || phase.status === "cancelled") && (
+          <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+            <Button
+              leadingVisual={SyncIcon}
+              size="small"
+              variant="primary"
+              onClick={(e) => { e.stopPropagation(); onRestart(); }}
+              disabled={busy}
+              title="Clear this phase's prior messages and start it again"
+            >
+              Restart
+            </Button>
           </Box>
         )}
       </Box>

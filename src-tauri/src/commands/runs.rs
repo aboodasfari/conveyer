@@ -282,6 +282,56 @@ async fn gate_auto_advance(state: &AppState, kind: &str) -> AppResult<bool> {
     Ok(row.map(|(v,)| v == 1).unwrap_or(false))
 }
 
+/// Re-run a failed phase from scratch. Clears the prior sessions/messages
+/// for this phase so the chat doesn't accumulate stale interrupted runs,
+/// resets the phase + run to `running`, and spawns a fresh sidecar.
+#[tauri::command]
+pub async fn phase_restart(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    phase_id: String,
+) -> AppResult<RunDetail> {
+    let target = load_phase(&state, &phase_id).await?;
+
+    if target.status != "failed" && target.status != "cancelled" {
+        return Err(AppError::Config(format!(
+            "Phase '{}' is in state '{}' — only failed/cancelled phases can be restarted.",
+            target.kind, target.status
+        )));
+    }
+
+    // Best-effort cancel of anything still alive for this phase.
+    let registry = app.state::<session_runner::RunnerRegistry>();
+    let _ = registry.cancel(&target.id);
+
+    let mut tx = state.db.begin().await?;
+    // Wipe prior session messages so the user sees a fresh run, not the
+    // stack of interrupted ones. Cascade deletes messages via FK.
+    sqlx::query("DELETE FROM sessions WHERE phase_id = ?")
+        .bind(&target.id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "UPDATE phases SET status='running', started_at=datetime('now'),
+                            finished_at=NULL WHERE id=?",
+    )
+    .bind(&target.id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "UPDATE runs SET status='running', finished_at=NULL WHERE id=?",
+    )
+    .bind(&target.run_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    let detail = run_get_inner(&state, &target.run_id).await?;
+    emit_run_updated_for_run(&app, &state, &target.run_id).await;
+    session_runner::spawn_for_phase(app.clone(), target.id.clone());
+    Ok(detail)
+}
+
 /// Start the phase after `prev_ord`. If there is no next phase, the run is
 /// complete and gets marked `done`. Returns the new phase id (if any) so
 /// the caller can kick off its session runner.
