@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActionList, ActionMenu, Box, Flash, IconButton, Spinner, Text } from "@primer/react";
 import {
+  CheckIcon,
+  CopyIcon,
   DiffAddedIcon,
   DiffModifiedIcon,
   DiffRemovedIcon,
   DiffRenamedIcon,
   FileBinaryIcon,
-  FileDirectoryOpenFillIcon,
   GitCommitIcon,
 } from "@primer/octicons-react";
-import { openPath } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
 import { DiffSummary } from "../types";
 import { formatError } from "../errors";
@@ -146,20 +146,13 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
           >
             {summary.worktree_path}
           </Text>
-          <IconButton
-            aria-label="Open worktree in Finder"
-            title="Open worktree in Finder"
-            icon={FileDirectoryOpenFillIcon}
-            variant="invisible"
-            size="small"
-            onClick={() => { void openPath(summary.worktree_path); }}
-          />
+          <CopyPathButton path={summary.worktree_path} />
         </Box>
         <ActionMenu>
           <ActionMenu.Button leadingVisual={GitCommitIcon} size="small" disabled={noCommits}>
             {commitLabel}
           </ActionMenu.Button>
-          <ActionMenu.Overlay>
+          <ActionMenu.Overlay width="xlarge">
             <ActionList selectionVariant="single">
               <ActionList.Item selected={selectedCommit === null} onSelect={() => setSelectedCommit(null)}>
                 Overall
@@ -361,9 +354,7 @@ function FileList({
               {f.path}
             </Text>
             <Text sx={{ fontFamily: "mono", fontSize: 0, flexShrink: 0 }}>
-              <Box as="span" sx={{ color: "success.fg" }}>+{f.additions}</Box>
-              {" "}
-              <Box as="span" sx={{ color: "danger.fg" }}>-{f.deletions}</Box>
+              <ChangeCounts additions={f.additions} deletions={f.deletions} />
             </Text>
           </Box>
         );
@@ -550,7 +541,11 @@ function FileDiff({ file }: { file: DiffFile }) {
             {file.status === "binary" ? "Binary file." : "No textual changes."}
           </Text>
         ) : (
-          file.hunks.map((h, i) => <Hunk key={i} hunk={h} />)
+          // Wrapper grows with the widest line so coloured row backgrounds
+          // extend the full content width when the user scrolls horizontally.
+          <Box sx={{ minWidth: "max-content" }}>
+            {file.hunks.map((h, i) => <Hunk key={i} hunk={h} />)}
+          </Box>
         )}
       </Box>
     </Box>
@@ -566,6 +561,18 @@ const STATUS_BG: Record<DiffFile["status"], string> = {
 };
 
 function Hunk({ hunk }: { hunk: DiffHunk }) {
+  // Compute the last new-file line number this hunk covers, so we can show
+  // a friendly "Lines N–M" range instead of the raw `@@ -..,.. +..,.. @@` line.
+  const lastNewNo = (() => {
+    for (let i = hunk.lines.length - 1; i >= 0; i--) {
+      const ln = hunk.lines[i].newNo;
+      if (typeof ln === "number") return ln;
+    }
+    return hunk.newStart;
+  })();
+  const label = lastNewNo > hunk.newStart
+    ? `Lines ${hunk.newStart}–${lastNewNo}`
+    : `Line ${hunk.newStart}`;
   return (
     <Box>
       <Box
@@ -577,9 +584,10 @@ function Hunk({ hunk }: { hunk: DiffHunk }) {
           borderTopColor: "border.muted",
           borderBottom: "1px solid",
           borderBottomColor: "border.muted",
+          fontSize: 0,
         }}
       >
-        {hunk.header}
+        {label}
       </Box>
       {hunk.lines.map((l, i) => (
         <DiffLineRow key={i} line={l} />
@@ -602,7 +610,60 @@ function DiffLineRow({ line }: { line: DiffLine }) {
         {line.newNo ?? ""}
       </Box>
       <Box sx={{ width: 16, color: "fg.muted", userSelect: "none", flexShrink: 0 }}>{marker}</Box>
-      <Box sx={{ flex: 1, whiteSpace: "pre", color: "fg.default" }}>{line.text || " "}</Box>
+      <Box sx={{ flex: 1, whiteSpace: "pre", color: "fg.default", pr: 2 }}>{line.text || " "}</Box>
     </Box>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                  Helpers                                   */
+/* -------------------------------------------------------------------------- */
+
+/** Render +/- counts, omitting either if its value is zero. */
+function ChangeCounts({ additions, deletions }: { additions: number; deletions: number }) {
+  const parts: React.ReactNode[] = [];
+  if (additions > 0) {
+    parts.push(
+      <Box key="add" as="span" sx={{ color: "success.fg" }}>+{additions}</Box>,
+    );
+  }
+  if (deletions > 0) {
+    parts.push(
+      <Box key="del" as="span" sx={{ color: "danger.fg" }}>-{deletions}</Box>,
+    );
+  }
+  return (
+    <>
+      {parts.map((p, i) => (
+        <span key={i}>
+          {i > 0 && " "}
+          {p}
+        </span>
+      ))}
+    </>
+  );
+}
+
+/** Copies the given path to the clipboard; shows a brief check confirmation. */
+function CopyPathButton({ path }: { path: string }) {
+  const [copied, setCopied] = useState(false);
+  const onClick = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(path);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard write can fail under restricted contexts — silently ignore.
+    }
+  }, [path]);
+  return (
+    <IconButton
+      aria-label="Copy worktree path"
+      title={copied ? "Copied!" : "Copy worktree path"}
+      icon={copied ? CheckIcon : CopyIcon}
+      variant="invisible"
+      size="small"
+      onClick={onClick}
+    />
   );
 }
