@@ -98,12 +98,9 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
   }
   if (!summary) {
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, py: 6, color: "fg.muted" }}>
-        <Text sx={{ fontSize: 1 }}>No worktree yet.</Text>
-        <Text sx={{ fontSize: 0 }}>
-          The Diff tab populates once the implementation phase starts.
-        </Text>
-      </Box>
+      <Text sx={{ color: "fg.muted" }}>
+        The diff between the run's base and HEAD will show up here once the implementation phase starts.
+      </Text>
     );
   }
 
@@ -173,14 +170,11 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
 
       {/* Resizable split */}
       {loadingDiff ? (
-        <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
-          <Spinner size="small" />
-        </Box>
+        <Spinner size="small" />
       ) : noCommits && files.length === 0 ? (
-        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1, py: 4, color: "fg.muted" }}>
-          <Text>No commits yet.</Text>
-          <Text sx={{ fontSize: 0 }}>The agent will commit logically split changes on this branch.</Text>
-        </Box>
+        <Text sx={{ color: "fg.muted" }}>
+          The agent's commits will show up here as they happen.
+        </Text>
       ) : files.length === 0 ? (
         <Text sx={{ color: "fg.muted" }}>No file changes in this view.</Text>
       ) : (

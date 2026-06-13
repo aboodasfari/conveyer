@@ -58,16 +58,12 @@ export function PromptView({ phaseId }: { phaseId: string }) {
   }, [phaseId, refreshTick]);
 
   if (loading) {
-    return (
-      <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
-        <Spinner size="small" />
-      </Box>
-    );
+    return <Spinner size="small" />;
   }
   if (error && !text) {
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, py: 6, color: "fg.muted" }}>
-        <Text>Couldn't load the prompt: {error}</Text>
+      <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
+        <Text sx={{ color: "fg.muted" }}>Couldn't load the prompt: {error}</Text>
         <Button leadingVisual={SyncIcon} size="small" onClick={() => setRefreshTick((x) => x + 1)}>
           Try again
         </Button>
@@ -76,8 +72,10 @@ export function PromptView({ phaseId }: { phaseId: string }) {
   }
   if (!text) {
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, py: 6, color: "fg.muted" }}>
-        <Text>Hold on a sec, rendering…</Text>
+      <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
+        <Text sx={{ color: "fg.muted" }}>
+          The prompt sent to the agent will show up here once the phase starts.
+        </Text>
         <Button leadingVisual={SyncIcon} size="small" onClick={() => setRefreshTick((x) => x + 1)}>
           Refresh
         </Button>
