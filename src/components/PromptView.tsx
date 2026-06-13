@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Box, IconButton, Spinner, Text } from "@primer/react";
-import { CheckIcon, CopyIcon } from "@primer/octicons-react";
+import { Box, Button, IconButton, Spinner, Text } from "@primer/react";
+import { CheckIcon, CopyIcon, SyncIcon } from "@primer/octicons-react";
 import { api } from "../api";
+import { formatError } from "../errors";
 import { RichText } from "./RichText";
 
 /**
@@ -13,12 +14,14 @@ import { RichText } from "./RichText";
 export function PromptView({ phaseId }: { phaseId: string }) {
   const [text, setText] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
     let attempts = 0;
-    const MAX_ATTEMPTS = 120; // ~2 min (1s interval)
+    const MAX_ATTEMPTS = 240;        // ~2 min at 500ms
 
     const tick = async () => {
       if (cancelled) return;
@@ -26,28 +29,33 @@ export function PromptView({ phaseId }: { phaseId: string }) {
       try {
         const s = await api.phasePromptGet(phaseId);
         if (cancelled) return;
+        setError(null);
         if (s) {
           setText(s);
           setLoading(false);
           return; // stop polling
         }
-        setLoading(false); // we have an answer (null) — show empty state but keep polling
-      } catch {
-        if (!cancelled) setLoading(false);
+        setLoading(false);
+      } catch (e) {
+        if (!cancelled) {
+          setError(formatError(e));
+          setLoading(false);
+        }
       }
       if (attempts < MAX_ATTEMPTS) {
-        timer = window.setTimeout(tick, 1000);
+        timer = window.setTimeout(tick, 500);
       }
     };
 
     setLoading(true);
     setText(null);
+    setError(null);
     void tick();
     return () => {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [phaseId]);
+  }, [phaseId, refreshTick]);
 
   if (loading) {
     return (
@@ -56,13 +64,23 @@ export function PromptView({ phaseId }: { phaseId: string }) {
       </Box>
     );
   }
+  if (error && !text) {
+    return (
+      <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, py: 6, color: "fg.muted" }}>
+        <Text>Couldn't load the prompt: {error}</Text>
+        <Button leadingVisual={SyncIcon} size="small" onClick={() => setRefreshTick((x) => x + 1)}>
+          Try again
+        </Button>
+      </Box>
+    );
+  }
   if (!text) {
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1, py: 6, color: "fg.muted" }}>
-        <Text>Waiting for the agent to start…</Text>
-        <Text sx={{ fontSize: 0 }}>
-          The prompt is captured the moment the sidecar renders it. Auto-refreshing.
-        </Text>
+      <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, py: 6, color: "fg.muted" }}>
+        <Text>Hold on a sec, rendering…</Text>
+        <Button leadingVisual={SyncIcon} size="small" onClick={() => setRefreshTick((x) => x + 1)}>
+          Refresh
+        </Button>
       </Box>
     );
   }
