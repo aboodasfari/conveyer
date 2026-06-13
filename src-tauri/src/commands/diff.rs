@@ -103,10 +103,10 @@ pub async fn phase_diff_text(
     let wt = std::path::Path::new(&worktree);
 
     let out = match commit.as_deref() {
-        Some(sha) => git_capture(wt, &["show", "--no-color", "--patch-with-stat", sha])?,
+        Some(sha) => git_capture(wt, &["show", "--no-color", "-U99999", "--patch-with-stat", sha])?,
         None => {
             let range = format!("{base_sha}..HEAD");
-            git_capture(wt, &["diff", "--no-color", "--patch-with-stat", &range])?
+            git_capture(wt, &["diff", "--no-color", "-U99999", "--patch-with-stat", &range])?
         }
     };
 

@@ -10,6 +10,8 @@ import {
   GitPullRequestIcon,
   PlayIcon,
   ReplyIcon,
+  ScreenFullIcon,
+  ScreenNormalIcon,
   StopIcon,
   SyncIcon,
 } from "@primer/octicons-react";
@@ -111,6 +113,7 @@ export function RunPanel({ taskId }: { taskId: string }) {
   const [collapsed, setCollapsed] = useState(false);
   const [selectedPhaseId, setSelectedPhaseId] = useState<string | null>(null);
   const [contentTab, setContentTab] = useState<string>("context");
+  const [fullscreen, setFullscreen] = useState(false);
 
   const reload = useCallback(async () => {
     setError(null);
@@ -226,7 +229,16 @@ export function RunPanel({ taskId }: { taskId: string }) {
     // above it. Subtracted: 48 header + 64 main padding + ~80 title block
     // + ~40 tabs + ~28 back button + ~80 gap = ~340.
     <Box
-      sx={{
+      sx={fullscreen ? {
+        position: "fixed",
+        top: 0, left: 0, right: 0, bottom: 0,
+        zIndex: 100,
+        bg: "canvas.default",
+        p: 3,
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+      } : {
         display: "flex",
         flexDirection: "column",
         gap: 2,
@@ -239,7 +251,7 @@ export function RunPanel({ taskId }: { taskId: string }) {
       <Box
         sx={{
           display: "grid",
-          gridTemplateColumns: collapsed ? "40px 1fr" : "300px 1fr",
+          gridTemplateColumns: fullscreen ? "1fr" : (collapsed ? "40px 1fr" : "300px 1fr"),
           gridTemplateRows: "1fr",
           gap: 3,
           alignItems: "stretch",
@@ -248,7 +260,7 @@ export function RunPanel({ taskId }: { taskId: string }) {
           transition: "grid-template-columns 200ms ease",
         }}
       >
-        {collapsed ? (
+        {!fullscreen && (collapsed ? (
           <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "center", pt: 1 }}>
             <IconButton
               aria-label="Expand phases"
@@ -270,7 +282,7 @@ export function RunPanel({ taskId }: { taskId: string }) {
             onRewind={rewindToImplementation}
             onRestart={restart}
           />
-        )}
+        ))}
 
         <Box
           sx={{
@@ -291,6 +303,8 @@ export function RunPanel({ taskId }: { taskId: string }) {
               taskId={taskId}
               tab={contentTab}
               onTabChange={setContentTab}
+              fullscreen={fullscreen}
+              onToggleFullscreen={() => setFullscreen((f) => !f)}
             />
           ) : (
             <Box sx={{ p: 4, color: "fg.muted" }}>
@@ -550,18 +564,32 @@ function PhaseContent({
   taskId,
   tab,
   onTabChange,
+  fullscreen,
+  onToggleFullscreen,
 }: {
   phase: Phase;
   taskId: string;
   tab: string;
   onTabChange: (t: string) => void;
+  fullscreen: boolean;
+  onToggleFullscreen: () => void;
 }) {
   const tabs = PHASE_TABS[phase.kind] ?? [CHAT_TAB];
 
   return (
     <>
-      <Box sx={{ px: 3, pt: 3, flexShrink: 0 }}>
-        <TabStrip<string> tabs={tabs} active={tab} onChange={onTabChange} />
+      <Box sx={{ px: 3, pt: 3, flexShrink: 0, display: "flex", alignItems: "center", gap: 2 }}>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <TabStrip<string> tabs={tabs} active={tab} onChange={onTabChange} />
+        </Box>
+        <IconButton
+          aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"}
+          title={fullscreen ? "Exit fullscreen" : "Fullscreen"}
+          icon={fullscreen ? ScreenNormalIcon : ScreenFullIcon}
+          variant="invisible"
+          size="small"
+          onClick={onToggleFullscreen}
+        />
       </Box>
       <Box sx={{ p: 4, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         {tab === "chat" ? (

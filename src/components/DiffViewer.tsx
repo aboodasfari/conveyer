@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActionList, ActionMenu, Box, Flash, IconButton, Spinner, Text } from "@primer/react";
+import { ActionList, ActionMenu, Box, Flash, IconButton, SegmentedControl, Spinner, Text } from "@primer/react";
 import {
   CheckIcon,
+  ColumnsIcon,
   CopyIcon,
   DiffAddedIcon,
+  DiffIcon,
   DiffModifiedIcon,
   DiffRemovedIcon,
   DiffRenamedIcon,
@@ -33,6 +35,7 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [loadingDiff, setLoadingDiff] = useState(false);
   const [leftWidth, setLeftWidth] = useState<number>(LEFT_PANE_DEFAULT);
+  const [viewMode, setViewMode] = useState<"inline" | "split">("inline");
 
   const loadSummary = useCallback(async () => {
     setLoading(true);
@@ -176,6 +179,20 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
             </ActionList>
           </ActionMenu.Overlay>
         </ActionMenu>
+        <SegmentedControl aria-label="Diff view mode" size="small">
+          <SegmentedControl.IconButton
+            icon={DiffIcon}
+            aria-label="Inline view"
+            selected={viewMode === "inline"}
+            onClick={() => setViewMode("inline")}
+          />
+          <SegmentedControl.IconButton
+            icon={ColumnsIcon}
+            aria-label="Side-by-side view"
+            selected={viewMode === "split"}
+            onClick={() => setViewMode("split")}
+          />
+        </SegmentedControl>
       </Box>
 
       {/* Resizable split */}
@@ -203,7 +220,7 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
           }
           right={
             activeFile ? (
-              <FileDiff file={activeFile} />
+              <FileDiff file={activeFile} mode={viewMode} />
             ) : (
               <Text sx={{ color: "fg.muted" }}>Select a file to view its diff.</Text>
             )
@@ -494,8 +511,12 @@ function parseFileSection(section: string): DiffFile | null {
 /*                              File rendering                                */
 /* -------------------------------------------------------------------------- */
 
-function FileDiff({ file }: { file: DiffFile }) {
+function FileDiff({ file, mode }: { file: DiffFile; mode: "inline" | "split" }) {
   const statusBg = STATUS_BG[file.status];
+  // With full-context diffs (-U99999) the common case is a single hunk
+  // starting at line 1, which is just "the whole file" — don't bother
+  // showing a hunk header for that.
+  const hideHunkHeaders = file.hunks.length === 1 && file.hunks[0].newStart === 1;
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <Box
@@ -527,13 +548,9 @@ function FileDiff({ file }: { file: DiffFile }) {
         >
           {file.status}
         </Text>
-        {(file.additions > 0 || file.deletions > 0) && (
-          <Text sx={{ fontFamily: "mono", fontSize: 0 }}>
-            <Box as="span" sx={{ color: "success.fg" }}>+{file.additions}</Box>
-            {" "}
-            <Box as="span" sx={{ color: "danger.fg" }}>-{file.deletions}</Box>
-          </Text>
-        )}
+        <Text sx={{ fontFamily: "mono", fontSize: 0 }}>
+          <ChangeCounts additions={file.additions} deletions={file.deletions} />
+        </Text>
       </Box>
       <Box sx={{ flex: 1, minHeight: 0, overflowX: "auto", overflowY: "auto", fontFamily: "mono", fontSize: 0 }}>
         {file.hunks.length === 0 ? (
@@ -541,10 +558,12 @@ function FileDiff({ file }: { file: DiffFile }) {
             {file.status === "binary" ? "Binary file." : "No textual changes."}
           </Text>
         ) : (
-          // Wrapper grows with the widest line so coloured row backgrounds
-          // extend the full content width when the user scrolls horizontally.
           <Box sx={{ minWidth: "max-content" }}>
-            {file.hunks.map((h, i) => <Hunk key={i} hunk={h} />)}
+            {file.hunks.map((h, i) =>
+              mode === "split"
+                ? <SideBySideHunk key={i} hunk={h} hideHeader={hideHunkHeaders} />
+                : <Hunk key={i} hunk={h} hideHeader={hideHunkHeaders} />
+            )}
           </Box>
         )}
       </Box>
@@ -560,7 +579,7 @@ const STATUS_BG: Record<DiffFile["status"], string> = {
   binary: "neutral.subtle",
 };
 
-function Hunk({ hunk }: { hunk: DiffHunk }) {
+function Hunk({ hunk, hideHeader }: { hunk: DiffHunk; hideHeader?: boolean }) {
   // Compute the last new-file line number this hunk covers, so we can show
   // a friendly "Lines N–M" range instead of the raw `@@ -..,.. +..,.. @@` line.
   const lastNewNo = (() => {
@@ -575,23 +594,125 @@ function Hunk({ hunk }: { hunk: DiffHunk }) {
     : `Line ${hunk.newStart}`;
   return (
     <Box>
-      <Box
-        sx={{
-          px: 2, py: 1,
-          color: "fg.muted",
-          bg: "canvas.inset",
-          borderTop: "1px solid",
-          borderTopColor: "border.muted",
-          borderBottom: "1px solid",
-          borderBottomColor: "border.muted",
-          fontSize: 0,
-        }}
-      >
-        {label}
-      </Box>
+      {!hideHeader && (
+        <Box
+          sx={{
+            px: 2, py: 1,
+            color: "fg.muted",
+            bg: "canvas.inset",
+            borderTop: "1px solid",
+            borderTopColor: "border.muted",
+            borderBottom: "1px solid",
+            borderBottomColor: "border.muted",
+            fontSize: 0,
+          }}
+        >
+          {label}
+        </Box>
+      )}
       {hunk.lines.map((l, i) => (
         <DiffLineRow key={i} line={l} />
       ))}
+    </Box>
+  );
+}
+
+function SideBySideHunk({ hunk, hideHeader }: { hunk: DiffHunk; hideHeader?: boolean }) {
+  // Pair consecutive runs of deletions with the following adds so they line
+  // up across the two columns. Context lines occupy both columns.
+  type Pair = { left: DiffLine | null; right: DiffLine | null };
+  const pairs: Pair[] = [];
+  let i = 0;
+  while (i < hunk.lines.length) {
+    const ln = hunk.lines[i];
+    if (ln.kind === "context") {
+      pairs.push({ left: ln, right: ln });
+      i++;
+      continue;
+    }
+    const dels: DiffLine[] = [];
+    while (i < hunk.lines.length && hunk.lines[i].kind === "del") {
+      dels.push(hunk.lines[i]); i++;
+    }
+    const adds: DiffLine[] = [];
+    while (i < hunk.lines.length && hunk.lines[i].kind === "add") {
+      adds.push(hunk.lines[i]); i++;
+    }
+    const n = Math.max(dels.length, adds.length);
+    for (let k = 0; k < n; k++) {
+      pairs.push({ left: dels[k] ?? null, right: adds[k] ?? null });
+    }
+  }
+  const lastNewNo = (() => {
+    for (let j = hunk.lines.length - 1; j >= 0; j--) {
+      const ln = hunk.lines[j].newNo;
+      if (typeof ln === "number") return ln;
+    }
+    return hunk.newStart;
+  })();
+  const label = lastNewNo > hunk.newStart
+    ? `Lines ${hunk.newStart}–${lastNewNo}`
+    : `Line ${hunk.newStart}`;
+  return (
+    <Box>
+      {!hideHeader && (
+        <Box
+          sx={{
+            px: 2, py: 1,
+            color: "fg.muted",
+            bg: "canvas.inset",
+            borderTop: "1px solid",
+            borderTopColor: "border.muted",
+            borderBottom: "1px solid",
+            borderBottomColor: "border.muted",
+            fontSize: 0,
+          }}
+        >
+          {label}
+        </Box>
+      )}
+      {pairs.map((p, idx) => <SideBySideRow key={idx} pair={p} />)}
+    </Box>
+  );
+}
+
+function SideBySideRow({ pair }: { pair: { left: DiffLine | null; right: DiffLine | null } }) {
+  return (
+    <Box sx={{ display: "flex" }}>
+      <SideBySideCell line={pair.left} side="left" />
+      <Box sx={{ width: "1px", bg: "border.muted", flexShrink: 0 }} />
+      <SideBySideCell line={pair.right} side="right" />
+    </Box>
+  );
+}
+
+function SideBySideCell({ line, side }: { line: DiffLine | null; side: "left" | "right" }) {
+  // Empty cell when the other side has content but this side doesn't (e.g.
+  // pure add or pure delete).
+  if (!line) {
+    return (
+      <Box sx={{ flex: 1, minWidth: 0, bg: "canvas.inset" }}>
+        <Box sx={{ display: "flex" }}>
+          <Box sx={{ width: 40, flexShrink: 0 }} />
+          <Box sx={{ flex: 1 }}>&nbsp;</Box>
+        </Box>
+      </Box>
+    );
+  }
+  const bg = line.kind === "add" ? "success.subtle"
+    : line.kind === "del" ? "danger.subtle"
+    : "transparent";
+  const lineNo = side === "left" ? line.oldNo : line.newNo;
+  return (
+    <Box sx={{ flex: 1, minWidth: 0, bg, "&:hover": { bg: line.kind === "context" ? "canvas.subtle" : bg } }}>
+      <Box sx={{ display: "flex" }}>
+        <Box sx={{ width: 40, textAlign: "right", pr: 1, color: "fg.muted", userSelect: "none", flexShrink: 0 }}>
+          {lineNo ?? ""}
+        </Box>
+        <Box sx={{ flex: 1, whiteSpace: "pre", color: "fg.default", pl: 1, pr: 2 }}>
+          {line.text || " "}
+        </Box>
+      </Box>
     </Box>
   );
 }
