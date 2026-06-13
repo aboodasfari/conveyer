@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Box, Flash, Spinner, Text } from "@primer/react";
-import { ChevronDownIcon, ChevronRightIcon, FileIcon } from "@primer/octicons-react";
+import { Box, Flash, IconButton, Spinner, Text } from "@primer/react";
+import { ChevronDownIcon, ChevronRightIcon, FileDirectoryOpenFillIcon, FileIcon } from "@primer/octicons-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
 import { DiffSummary } from "../types";
 import { formatError } from "../errors";
@@ -85,6 +86,32 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
           </Text>
           <Text sx={{ fontFamily: "mono", fontSize: 0, display: "block", wordBreak: "break-all" }}>
             {summary.branch || "(detached)"}
+          </Text>
+        </Box>
+        <Box sx={{ mb: 3 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <Text sx={{ fontSize: 0, color: "fg.muted", display: "block", flex: 1 }}>
+              Worktree
+            </Text>
+            <IconButton
+              aria-label="Open worktree in Finder"
+              title="Open worktree in Finder"
+              icon={FileDirectoryOpenFillIcon}
+              variant="invisible"
+              size="small"
+              onClick={() => { void openUrl(summary.worktree_path); }}
+            />
+          </Box>
+          <Text
+            sx={{
+              fontFamily: "mono",
+              fontSize: 0,
+              display: "block",
+              wordBreak: "break-all",
+              color: "fg.default",
+            }}
+          >
+            {summary.worktree_path}
           </Text>
         </Box>
         <CommitRow
