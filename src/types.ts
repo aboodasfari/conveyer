@@ -97,6 +97,22 @@ export interface Gate {
   auto_advance: number;
 }
 
+export interface CommitInfo {
+  sha: string;
+  short_sha: string;
+  subject: string;
+  author: string;
+  ts: string;
+}
+
+export interface DiffSummary {
+  branch: string;
+  base_sha: string;
+  head_sha: string;
+  worktree_path: string;
+  commits: CommitInfo[];
+}
+
 export type PhaseKind =
   | "exploration"
   | "planning"

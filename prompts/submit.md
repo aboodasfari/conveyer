@@ -3,7 +3,7 @@
 
 # Submit phase
 
-Open a draft pull request for the work in this branch.
+Open a draft pull request for the work on branch `{{BRANCH}}` (worktree: `{{WORKTREE_PATH}}`).
 
 ## Relevant skills
 

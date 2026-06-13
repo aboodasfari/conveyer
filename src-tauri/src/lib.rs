@@ -6,6 +6,7 @@ mod macos;
 mod models;
 mod session_runner;
 mod state;
+mod worktree;
 
 use session_runner::RunnerRegistry;
 use state::AppState;
@@ -74,6 +75,8 @@ pub fn run() {
             commands::sessions::phase_artifact_get,
             commands::sessions::session_cancel,
             commands::sessions::models_list,
+            commands::diff::phase_diff_summary,
+            commands::diff::phase_diff_text,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

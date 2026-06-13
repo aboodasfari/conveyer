@@ -332,6 +332,46 @@ async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
 
     let (ctx, run_id, phase_kind) = load_phase_context(&state, phase_id).await?;
 
+    // For implementation/review/submit, record the *expected* worktree the
+    // agent will create on its own (per the implementation-phase prompt).
+    // We don't create it — the agent does. We just persist the branch + path
+    // so the Diff tab can compute `git diff base..HEAD` later.
+    //
+    //   - impl phase:   working dir stays in the original codebase so the
+    //                   agent can `git worktree add` / `wt switch -c` from
+    //                   there. Branch + path are passed via env for the
+    //                   prompt to reference.
+    //   - review/submit: if the worktree dir exists on disk (agent created
+    //                   it), switch the working dir to it so file ops land
+    //                   on the new branch. Otherwise fall back to codebase.
+    let (effective_codebase, branch_name, worktree_path) = if matches!(
+        phase_kind.as_str(),
+        "implementation" | "review" | "submit"
+    ) {
+        match crate::worktree::record_for_run(
+            &state,
+            &run_id,
+            &ctx.task_title,
+            std::path::Path::new(&ctx.codebase_path),
+        ).await {
+            Ok((wt, br, _base)) => {
+                let use_worktree = matches!(phase_kind.as_str(), "review" | "submit") && wt.exists();
+                let cwd = if use_worktree {
+                    wt.to_string_lossy().to_string()
+                } else {
+                    ctx.codebase_path.clone()
+                };
+                (cwd, Some(br), Some(wt.to_string_lossy().to_string()))
+            }
+            Err(e) => {
+                tracing::error!("failed to record worktree metadata for run {run_id}: {e}");
+                (ctx.codebase_path.clone(), None, None)
+            }
+        }
+    } else {
+        (ctx.codebase_path.clone(), None, None)
+    };
+
     // Locate sidecar + prompts.
     let Some(sidecar) = sidecar_path() else {
         tracing::error!("sidecar/conveyer-agent.mjs not found. set CONVEYER_SIDECAR to its path");
@@ -368,12 +408,18 @@ async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
         .env("CONVEYER_TASK_STATE", &ctx.task_state)
         .env("CONVEYER_TASK_DESCRIPTION", &ctx.task_description)
         .env("CONVEYER_RUN_ID", &run_id)
-        .env("CONVEYER_CODEBASE_PATH", &ctx.codebase_path)
+        .env("CONVEYER_CODEBASE_PATH", &effective_codebase)
         .env("CONVEYER_PROMPTS_DIR", prompts.display().to_string())
         .env("CONVEYER_ARTIFACT_PATH", artifact_path.display().to_string())
         .env("CONVEYER_COPILOT_MODEL", &ctx.model)
-        .env("CONVEYER_BACKEND", &backend)
-        .stdout(Stdio::piped())
+        .env("CONVEYER_BACKEND", &backend);
+    if let Some(br) = &branch_name {
+        cmd.env("CONVEYER_BRANCH", br);
+    }
+    if let Some(wp) = &worktree_path {
+        cmd.env("CONVEYER_WORKTREE_PATH", wp);
+    }
+    cmd.stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     if let Some(p) = &ctx.parent_title {

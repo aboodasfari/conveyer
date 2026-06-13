@@ -19,6 +19,7 @@ import { formatError } from "../errors";
 import { TabStrip } from "./TabStrip";
 import { PhaseChat } from "./PhaseChat";
 import { PhaseArtifact } from "./PhaseArtifact";
+import { DiffViewer } from "./DiffViewer";
 
 const RING_PULSE_KEYFRAMES = `
 @keyframes conveyerRingPulse {
@@ -543,6 +544,8 @@ function PhaseContent({
       <Box sx={{ p: 4, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         {tab === "chat" ? (
           <PhaseChat phaseId={phase.id} />
+        ) : tab === "diff" ? (
+          <DiffViewer phaseId={phase.id} />
         ) : (
           <PhaseArtifact
             phaseId={phase.id}

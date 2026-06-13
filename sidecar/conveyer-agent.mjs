@@ -85,6 +85,8 @@ async function buildPrompt(phase) {
     PARENT_DESCRIPTION: env.CONVEYER_PARENT_DESCRIPTION || "",
     CODEBASE_PATH: env.CONVEYER_CODEBASE_PATH || "",
     ARTIFACT_PATH: env.CONVEYER_ARTIFACT_PATH || "",
+    BRANCH: env.CONVEYER_BRANCH || "",
+    WORKTREE_PATH: env.CONVEYER_WORKTREE_PATH || "",
     CONTEXT_DOCUMENT: await readFileOr(env.CONVEYER_CONTEXT_DOC, "(no context document)"),
     PLAN_DOCUMENT: await readFileOr(env.CONVEYER_PLAN_DOC, "(no plan document)"),
     DIFF: "(diff capture wires up alongside the implementation phase)",

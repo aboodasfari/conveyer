@@ -5,6 +5,8 @@
 
 Perform a thorough review of the implementation against the original task and plan. You may read any file in the codebase to verify behaviour; you are not limited to the diff.
 
+You are working inside the worktree `{{WORKTREE_PATH}}` on branch `{{BRANCH}}`. The implementation phase's commits are visible via `git log` and the rendered Diff tab in Conveyer.
+
 ## Relevant skills
 
 - `requesting-code-review` — the canonical checklist of what to look for in a review.

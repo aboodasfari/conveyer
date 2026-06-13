@@ -64,6 +64,12 @@ export const api = {
     invoke<boolean>("session_cancel", { phaseId }),
   modelsList: () => invoke<import("./types").ModelInfo[]>("models_list"),
 
+  // diff
+  phaseDiffSummary: (phaseId: string) =>
+    invoke<import("./types").DiffSummary>("phase_diff_summary", { phaseId }),
+  phaseDiffText: (phaseId: string, commit?: string | null) =>
+    invoke<string>("phase_diff_text", { phaseId, commit: commit ?? null }),
+
   // gates
   gatesList: () => invoke<Gate[]>("gates_list"),
   gatesSet: (phaseKind: string, autoAdvance: boolean) =>
