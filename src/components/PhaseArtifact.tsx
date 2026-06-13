@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Box, Spinner } from "@primer/react";
+import { Box } from "@primer/react";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { api } from "../api";
 import { RichText } from "./RichText";
