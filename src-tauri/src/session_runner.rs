@@ -85,6 +85,7 @@ enum SidecarEvent {
         error: Option<String>,
     },
     Artifact { path: String },
+    PickWorkspace { path: String },
     NeedsInput {
         prompt: String,
         #[serde(default)]
@@ -390,35 +391,6 @@ async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
     }
 
     let (ctx, run_id, phase_kind) = load_phase_context(&state, phase_id).await?;
-
-    // Implementation onwards needs to commit to a real branch in a real
-    // workspace — refuse to start (and tell the user) rather than silently
-    // pick the "first workspace" and create a worktree in the wrong place.
-    if matches!(phase_kind.as_str(), "implementation" | "review" | "submit")
-        && !ctx.explicit_workspace
-    {
-        let msg = "No workspace pinned for this task. Pick one (the chip in the task header) and restart the phase.";
-        // Persist a system message into a one-off session row so the user
-        // sees the reason in the Chat tab.
-        let session_id = Uuid::new_v4().to_string();
-        let _ = sqlx::query(
-            "INSERT INTO sessions(id, phase_id, role, status, started_at, finished_at)
-             VALUES(?, ?, 'main', 'failed', datetime('now'), datetime('now'))",
-        )
-        .bind(&session_id)
-        .bind(phase_id)
-        .execute(&state.db)
-        .await;
-        let _ = persist_message(&state, &session_id, "system", msg).await;
-        let _ = app.emit("message_appended", serde_json::json!({
-            "session_id": session_id,
-            "role": "system",
-            "content": msg,
-        }));
-        mark_phase_failed(&state, phase_id).await?;
-        emit_run_updated(app, &state, phase_id).await;
-        return Ok(());
-    }
 
     // For implementation/review/submit, Conveyer owns a dedicated git worktree
     // on branch `abdulasfari/<slug>`. Created lazily on the first such phase
@@ -728,6 +700,38 @@ async fn handle_line(
                 .await;
             // Mirror the run_updated event so the right pane refreshes.
             emit_run_updated(app, state, phase_id).await;
+        }
+        SidecarEvent::PickWorkspace { path } => {
+            // Persist the agent-chosen workspace onto the task, so the
+            // header chip updates and all subsequent phases use this path.
+            let expanded = expand_path(path);
+            let row: Option<(String,)> = sqlx::query_as(
+                "SELECT r.task_id FROM phases p JOIN runs r ON r.id = p.run_id WHERE p.id = ?",
+            )
+            .bind(phase_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+            if let Some((task_id,)) = row {
+                let _ = sqlx::query("UPDATE tasks SET workspace_path = ? WHERE id = ?")
+                    .bind(&expanded)
+                    .bind(&task_id)
+                    .execute(&state.db)
+                    .await;
+                let _ = persist_message(
+                    state,
+                    session_id,
+                    "system",
+                    &format!("[workspace] pinned to {expanded}"),
+                ).await;
+                let _ = app.emit("message_appended", serde_json::json!({
+                    "session_id": session_id,
+                    "role": "system",
+                    "content": format!("[workspace] pinned to {expanded}"),
+                }));
+                emit_run_updated(app, state, phase_id).await;
+            }
         }
         SidecarEvent::NeedsInput { prompt, kind, choices } => {
             let payload = serde_json::json!({

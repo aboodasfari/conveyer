@@ -129,7 +129,13 @@ function renderWorkspacesHint() {
       : "No workspaces are configured. Ask the user to set one in Settings.";
   }
   const bullets = list.map((w) => `- **${w.name}** — \`${w.path}\``).join("\n");
-  return `Pick the workspace that best matches this task and work in it for the remainder of the run. Available workspaces:\n\n${bullets}\n\nYour starting directory is \`${cb}\` (the first workspace), but you are free to \`cd\` into any of the paths above before doing meaningful work.`;
+  return `No workspace is pinned for this task yet. Available workspaces:
+
+${bullets}
+
+**Pick the one that best matches this task** and call the \`pick_workspace\` tool with its absolute path. That pins the workspace on the task so the planning, implementation, review, and submit phases all run in the right place. If none of the listed paths fits, you may pass an absolute freeform path.
+
+Your starting directory is \`${cb}\` (the first workspace) — feel free to \`cd\` or read files from any of the paths above before calling \`pick_workspace\`.`;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -216,6 +222,36 @@ async function runCopilot(phase, prompt) {
       onPermissionRequest: approveAll ?? (() => ({ decision: "approve_once" })),
       enableSkills: true,
       pluginDirectories: await discoverPluginDirs(),
+      tools: [
+        {
+          name: "pick_workspace",
+          description:
+            "Pin the absolute workspace path this task should run in for the rest of the run. " +
+            "Call this once during exploration if the task does not already have a workspace pinned. " +
+            "Pass an absolute filesystem path (e.g. /Users/abdul/code/rp). Conveyer will save the " +
+            "pin to the task so all subsequent phases (planning, implementation, review, submit) " +
+            "operate in this workspace and create the worktree from it.",
+          parameters: {
+            type: "object",
+            properties: {
+              path: {
+                type: "string",
+                description: "Absolute path to the workspace directory.",
+              },
+            },
+            required: ["path"],
+          },
+          skipPermission: true,
+          handler: async (args) => {
+            const p = String(args?.path ?? "").trim();
+            if (!p) {
+              return { ok: false, error: "path is required" };
+            }
+            emit({ type: "pick_workspace", path: p });
+            return { ok: true, pinned: p };
+          },
+        },
+      ],
     };
     if (env.CONVEYER_COPILOT_REASONING) {
       sessionConfig.reasoningEffort = env.CONVEYER_COPILOT_REASONING;
