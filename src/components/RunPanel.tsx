@@ -5,6 +5,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   CommentDiscussionIcon,
+  CopilotIcon,
   FileDiffIcon,
   FileIcon,
   GitPullRequestIcon,
@@ -22,6 +23,7 @@ import { formatError } from "../errors";
 import { TabStrip } from "./TabStrip";
 import { PhaseChat } from "./PhaseChat";
 import { PhaseArtifact } from "./PhaseArtifact";
+import { PromptView } from "./PromptView";
 import { DiffViewer } from "./DiffViewer";
 
 const RING_PULSE_KEYFRAMES = `
@@ -85,16 +87,22 @@ const CHAT_TAB: ContentTab = {
   icon: CommentDiscussionIcon,
 };
 
+const PROMPT_TAB: ContentTab = {
+  id: "prompt",
+  label: "Prompt",
+  icon: CopilotIcon,
+};
+
 /**
  * Each phase has its own dedicated content tab(s) plus a Chat tab where
  * the session thinking will surface in M4.
  */
 const PHASE_TABS: Record<string, ContentTab[]> = {
-  exploration: [{ id: "context", label: "Context", icon: FileIcon }, CHAT_TAB],
-  planning: [{ id: "plan", label: "Plan", icon: FileIcon }, CHAT_TAB],
-  implementation: [{ id: "diff", label: "Diff", icon: FileDiffIcon }, CHAT_TAB],
-  review: [{ id: "review", label: "Review", icon: FileIcon }, CHAT_TAB],
-  submit: [{ id: "pr", label: "Pull Request", icon: GitPullRequestIcon }, CHAT_TAB],
+  exploration: [{ id: "context", label: "Context", icon: FileIcon }, CHAT_TAB, PROMPT_TAB],
+  planning: [{ id: "plan", label: "Plan", icon: FileIcon }, CHAT_TAB, PROMPT_TAB],
+  implementation: [{ id: "diff", label: "Diff", icon: FileDiffIcon }, CHAT_TAB, PROMPT_TAB],
+  review: [{ id: "review", label: "Review", icon: FileIcon }, CHAT_TAB, PROMPT_TAB],
+  submit: [{ id: "pr", label: "Pull Request", icon: GitPullRequestIcon }, CHAT_TAB, PROMPT_TAB],
 };
 
 const PLACEHOLDERS: Record<string, string> = {
@@ -639,6 +647,8 @@ function PhaseContent({
           <PhaseChat phaseId={phase.id} />
         ) : tab === "diff" ? (
           <DiffViewer phaseId={phase.id} />
+        ) : tab === "prompt" ? (
+          <PromptView phaseId={phase.id} />
         ) : (
           <PhaseArtifact
             phaseId={phase.id}

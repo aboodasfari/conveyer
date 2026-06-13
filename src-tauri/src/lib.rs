@@ -78,6 +78,7 @@ pub fn run() {
             commands::sessions::sessions_for_phase,
             commands::sessions::messages_for_session,
             commands::sessions::phase_artifact_get,
+            commands::sessions::phase_prompt_get,
             commands::sessions::session_cancel,
             commands::sessions::models_list,
             commands::diff::phase_diff_summary,

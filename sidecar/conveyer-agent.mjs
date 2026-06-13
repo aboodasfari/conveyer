@@ -349,6 +349,18 @@ async function main() {
     process.exit(1);
   }
 
+  // Persist the rendered prompt next to the phase artifact so the UI's
+  // "Prompt" tab can display exactly what the agent saw.
+  if (env.CONVEYER_ARTIFACT_PATH) {
+    try {
+      const promptFile = path.join(path.dirname(env.CONVEYER_ARTIFACT_PATH), "prompt.md");
+      await fs.mkdir(path.dirname(promptFile), { recursive: true });
+      await fs.writeFile(promptFile, prompt, "utf8");
+    } catch {
+      // Non-fatal — the phase can still run without the prompt file.
+    }
+  }
+
   const backend = env.CONVEYER_BACKEND || "copilot";
   try {
     if (backend === "copilot") {

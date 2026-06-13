@@ -62,6 +62,8 @@ export const api = {
     invoke<Message[]>("messages_for_session", { sessionId }),
   phaseArtifactGet: (phaseId: string) =>
     invoke<string | null>("phase_artifact_get", { phaseId }),
+  phasePromptGet: (phaseId: string) =>
+    invoke<string | null>("phase_prompt_get", { phaseId }),
   sessionCancel: (phaseId: string) =>
     invoke<boolean>("session_cancel", { phaseId }),
   modelsList: () => invoke<import("./types").ModelInfo[]>("models_list"),

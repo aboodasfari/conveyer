@@ -71,6 +71,28 @@ pub async fn phase_artifact_get(state: State<'_, AppState>, phase_id: String) ->
     }
 }
 
+/// Returns the rendered prompt the sidecar fed to the agent for this phase,
+/// if it has been captured. Stored as `prompt.md` next to the phase's
+/// artifact by the sidecar before the agent runs.
+#[tauri::command]
+pub async fn phase_prompt_get(state: State<'_, AppState>, phase_id: String) -> AppResult<Option<String>> {
+    let row: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT artifact_path FROM phases WHERE id = ?",
+    )
+    .bind(&phase_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((Some(artifact_path),)) = row else { return Ok(None) };
+    let prompt_path = std::path::Path::new(&artifact_path)
+        .parent()
+        .map(|p| p.join("prompt.md"));
+    let Some(prompt_path) = prompt_path else { return Ok(None) };
+    match tokio::fs::read_to_string(&prompt_path).await {
+        Ok(s) => Ok(Some(s)),
+        Err(_) => Ok(None),
+    }
+}
+
 /// Cancel any live sidecar attached to this phase. Returns true if there
 /// was one to cancel.
 #[tauri::command]
