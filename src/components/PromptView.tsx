@@ -13,6 +13,7 @@ import { TabPlaceholder } from "./TabPlaceholder";
 export function PromptView({ phaseId }: { phaseId: string }) {
   const [text, setText] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [lastError, setLastError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -29,14 +30,19 @@ export function PromptView({ phaseId }: { phaseId: string }) {
       try {
         const s = await api.phasePromptGet(phaseId);
         if (cancelled) return;
+        setLastError(null);
         if (s) {
           setText(s);
           setLoading(false);
           return; // stop polling
         }
         setLoading(false);
-      } catch {
-        if (!cancelled) setLoading(false);
+      } catch (e) {
+        if (cancelled) return;
+        // eslint-disable-next-line no-console
+        console.error("phase_prompt_get failed:", e);
+        setLastError(String((e as Error)?.message ?? e));
+        setLoading(false);
       }
       if (attempts < MAX_ATTEMPTS) {
         timer = window.setTimeout(tick, delayForAttempt(attempts));
@@ -45,6 +51,7 @@ export function PromptView({ phaseId }: { phaseId: string }) {
 
     setLoading(true);
     setText(null);
+    setLastError(null);
     void tick();
     return () => {
       cancelled = true;
@@ -53,6 +60,14 @@ export function PromptView({ phaseId }: { phaseId: string }) {
   }, [phaseId]);
 
   if (loading) return <Spinner size="small" />;
+  if (lastError && !text) {
+    return (
+      <TabPlaceholder
+        title="Couldn't load the prompt."
+        subtitle={lastError}
+      />
+    );
+  }
   if (!text) {
     return <TabPlaceholder title="The prompt sent to the agent will show up here once the phase starts." />;
   }
