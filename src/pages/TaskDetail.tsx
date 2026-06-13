@@ -101,11 +101,17 @@ export function TaskDetail() {
       </Button>
 
       <Box>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
           <Text sx={{ color: "fg.muted", fontSize: 0 }}>#{task.source_ref}</Text>
           <Text sx={{ color: "fg.muted", fontSize: 0 }}>·</Text>
           <Text sx={{ color: "fg.muted", fontSize: 0 }}>{task.state}</Text>
           <StatusBadge status={task.run_status} phase={task.current_phase} />
+          <Box sx={{ flex: 1 }} />
+          <WorkspacePicker
+            taskId={task.id}
+            value={task.workspace_path}
+            onChange={(v) => setTask((t) => (t ? { ...t, workspace_path: v } : t))}
+          />
         </Box>
         <Box sx={{ mt: 1, display: "flex", alignItems: "center", gap: 2 }}>
           <Heading as="h1" sx={{ fontSize: 4 }}>{task.title}</Heading>
@@ -138,18 +144,7 @@ export function TaskDetail() {
 
       <Box>
         {tab === "description" ? (
-          <Box sx={{ display: "flex", gap: 4, alignItems: "flex-start" }}>
-            <Box sx={{ flex: 1, minWidth: 0 }}>
-              <RichText content={task.description} />
-            </Box>
-            <Box sx={{ width: 280, flexShrink: 0 }}>
-              <WorkspacePicker
-                taskId={task.id}
-                value={task.workspace_path}
-                onChange={(v) => setTask((t) => (t ? { ...t, workspace_path: v } : t))}
-              />
-            </Box>
-          </Box>
+          <RichText content={task.description} />
         ) : (
           <RunPanel taskId={task.id} />
         )}
