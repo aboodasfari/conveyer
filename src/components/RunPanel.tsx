@@ -223,7 +223,6 @@ export function RunPanel({ taskId }: { taskId: string }) {
   };
 
   const start = () => wrap(async () => api.runsStart(taskId));
-  const complete = (id: string) => wrap(async () => api.phaseComplete(id));
   // "Stop Agent" cancels the sidecar without advancing the pipeline.
   // The runner's exit path will then mark the phase failed (because the
   // sidecar didn't emit {ok:true}), and any gate auto-advance is skipped.

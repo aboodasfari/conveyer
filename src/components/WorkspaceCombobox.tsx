@@ -1,5 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Box, IconButton, Text, TextInput } from "@primer/react";
 import { CheckIcon, FileDirectoryIcon } from "@primer/octicons-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
