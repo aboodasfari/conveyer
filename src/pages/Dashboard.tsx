@@ -271,7 +271,15 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
           </>
         }
       >
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
+        <Box
+          sx={{ display: "flex", flexDirection: "column", gap: 3 }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              void createLocal();
+            }
+          }}
+        >
           <FormControl required>
             <FormControl.Label>Title</FormControl.Label>
             <TextInput
@@ -279,7 +287,6 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
               autoFocus
               value={newTitle}
               onChange={(e) => setNewTitle(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void createLocal(); }}
             />
           </FormControl>
           <FormControl>
