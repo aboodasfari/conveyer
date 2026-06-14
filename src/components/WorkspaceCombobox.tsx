@@ -1,6 +1,14 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Box, IconButton, Text, TextInput } from "@primer/react";
+import {
+  BaseStyles,
+  Box,
+  IconButton,
+  Text,
+  TextInput,
+  ThemeProvider,
+  useTheme,
+} from "@primer/react";
 import { CheckIcon, FileDirectoryIcon } from "@primer/octicons-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api } from "../api";
@@ -23,6 +31,11 @@ export function WorkspaceCombobox({
   placeholder?: string;
   autoFocus?: boolean;
 }) {
+  // The portal-rendered popover escapes Primer's ThemeProvider, so we
+  // grab the current color mode here and re-wrap the popover in a fresh
+  // ThemeProvider + BaseStyles so it inherits the same fonts/colors.
+  const { colorMode, resolvedColorMode } = useTheme();
+  const mode = (resolvedColorMode ?? colorMode ?? "day") as "day" | "night" | "auto";
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
@@ -90,38 +103,40 @@ export function WorkspaceCombobox({
   };
 
   return (
-    <Box ref={containerRef} sx={{ display: "flex", flexDirection: "column", gap: 0 }}>
-      <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
-        <TextInput
-          ref={inputRef as React.Ref<HTMLInputElement>}
-          block
-          sx={{ flex: 1 }}
-          autoFocus={autoFocus}
-          value={value}
-          onFocus={() => setOpen(true)}
-          onChange={(e) => { onChange(e.target.value); setOpen(true); setHighlight(0); }}
-          onKeyDown={(e) => {
-            if (e.key === "ArrowDown") {
-              e.preventDefault();
-              setOpen(true);
-              setHighlight((h) => Math.min(filtered.length - 1, h + 1));
-            } else if (e.key === "ArrowUp") {
-              e.preventDefault();
-              setHighlight((h) => Math.max(0, h - 1));
-            } else if (e.key === "Enter") {
-              if (open && filtered[highlight]) {
+    <Box ref={containerRef} sx={{ width: "100%", display: "flex", flexDirection: "column", gap: 0 }}>
+      <Box sx={{ display: "flex", gap: 1, alignItems: "center", width: "100%" }}>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <TextInput
+            ref={inputRef as React.Ref<HTMLInputElement>}
+            block
+            sx={{ width: "100%" }}
+            autoFocus={autoFocus}
+            value={value}
+            onFocus={() => setOpen(true)}
+            onChange={(e) => { onChange(e.target.value); setOpen(true); setHighlight(0); }}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowDown") {
                 e.preventDefault();
-                onChange(filtered[highlight].path);
+                setOpen(true);
+                setHighlight((h) => Math.min(filtered.length - 1, h + 1));
+              } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setHighlight((h) => Math.max(0, h - 1));
+              } else if (e.key === "Enter") {
+                if (open && filtered[highlight]) {
+                  e.preventDefault();
+                  onChange(filtered[highlight].path);
+                  setOpen(false);
+                }
+              } else if (e.key === "Escape") {
                 setOpen(false);
               }
-            } else if (e.key === "Escape") {
-              setOpen(false);
-            }
-          }}
-          placeholder={placeholder}
-          aria-controls={open ? listId : undefined}
-          aria-expanded={open}
-        />
+            }}
+            placeholder={placeholder}
+            aria-controls={open ? listId : undefined}
+            aria-expanded={open}
+          />
+        </Box>
         <IconButton
           aria-label="Browse for folder"
           title="Browse for folder"
@@ -130,71 +145,78 @@ export function WorkspaceCombobox({
         />
       </Box>
       {open && filtered.length > 0 && anchor && createPortal(
-        <Box
-          id={listId}
-          role="listbox"
-          onMouseDown={(e) => e.stopPropagation()}
-          sx={{
-            position: "fixed",
-            top: anchor.top,
-            left: anchor.left,
-            width: anchor.width,
-            maxHeight: 240,
-            overflowY: "auto",
-            bg: "canvas.overlay",
-            border: "1px solid",
-            borderColor: "border.default",
-            borderRadius: 2,
-            boxShadow: "shadow.large",
-            zIndex: 1100,
-            py: 1,
-          }}
-        >
-          {filtered.map((w, i) => {
-            const active = w.path === value;
-            const highlighted = i === highlight;
-            return (
-              <Box
-                key={w.id}
-                role="option"
-                aria-selected={active}
-                onMouseEnter={() => setHighlight(i)}
-                onMouseDown={(e) => { e.preventDefault(); onChange(w.path); setOpen(false); }}
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 2,
-                  px: 2,
-                  py: 1,
-                  cursor: "pointer",
-                  bg: highlighted ? "neutral.subtle" : "transparent",
-                }}
-              >
-                <Box sx={{ width: 14, color: "accent.fg", flexShrink: 0 }}>
-                  {active && <CheckIcon size={14} />}
-                </Box>
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Text sx={{ display: "block", fontSize: 1, fontWeight: 600 }}>
-                    {w.name}
-                  </Text>
-                  <Text
+        <ThemeProvider colorMode={mode}>
+          <BaseStyles
+            style={{
+              position: "fixed",
+              top: anchor.top,
+              left: anchor.left,
+              width: anchor.width,
+              zIndex: 1100,
+            }}
+          >
+            <Box
+              id={listId}
+              role="listbox"
+              onMouseDown={(e) => e.stopPropagation()}
+              sx={{
+                maxHeight: 240,
+                overflowY: "auto",
+                bg: "canvas.overlay",
+                border: "1px solid",
+                borderColor: "border.default",
+                borderRadius: 2,
+                boxShadow: "shadow.large",
+                py: 1,
+              }}
+            >
+              {filtered.map((w, i) => {
+                const active = w.path === value;
+                const highlighted = i === highlight;
+                return (
+                  <Box
+                    key={w.id}
+                    role="option"
+                    aria-selected={active}
+                    onMouseEnter={() => setHighlight(i)}
+                    onMouseDown={(e) => { e.preventDefault(); onChange(w.path); setOpen(false); }}
                     sx={{
-                      display: "block",
-                      fontSize: 0,
-                      color: "fg.muted",
-                      fontFamily: "mono",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 2,
+                      px: 2,
+                      py: 1,
+                      cursor: "pointer",
+                      bg: highlighted ? "neutral.subtle" : "transparent",
                     }}
                   >
-                    {w.path}
-                  </Text>
-                </Box>
-              </Box>
-            );
-          })}
-        </Box>,
+                    <Box sx={{ width: 14, color: "accent.fg", flexShrink: 0 }}>
+                      {active && <CheckIcon size={14} />}
+                    </Box>
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Text sx={{ display: "block", fontSize: 1, fontWeight: 600 }}>
+                        {w.name}
+                      </Text>
+                      <Text
+                        sx={{
+                          display: "block",
+                          fontSize: 0,
+                          color: "fg.muted",
+                          fontFamily: "mono",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {w.path}
+                      </Text>
+                    </Box>
+                  </Box>
+                );
+              })}
+            </Box>
+          </BaseStyles>
+        </ThemeProvider>,
         document.body,
       )}
     </Box>
