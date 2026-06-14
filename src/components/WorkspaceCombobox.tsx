@@ -1,4 +1,5 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Box, IconButton, Text, TextInput } from "@primer/react";
 import { CheckIcon, FileDirectoryIcon } from "@primer/octicons-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -26,6 +27,8 @@ export function WorkspaceCombobox({
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [anchor, setAnchor] = useState<{ top: number; left: number; width: number } | null>(null);
   const listId = useId();
 
   useEffect(() => {
@@ -41,6 +44,26 @@ export function WorkspaceCombobox({
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  // Re-anchor the floating popover under the input on every open + scroll
+  // + resize. position:fixed dodges any overflow:auto ancestor (modal body)
+  // that would otherwise clip or scroll the dropdown into oblivion.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const reposition = () => {
+      const el = inputRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      setAnchor({ top: r.bottom + 4, left: r.left, width: r.width });
+    };
+    reposition();
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => {
+      window.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+    };
   }, [open]);
 
   const filtered = useMemo(() => {
@@ -67,9 +90,10 @@ export function WorkspaceCombobox({
   };
 
   return (
-    <Box ref={containerRef} sx={{ position: "relative", display: "flex", flexDirection: "column", gap: 0 }}>
+    <Box ref={containerRef} sx={{ display: "flex", flexDirection: "column", gap: 0 }}>
       <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
         <TextInput
+          ref={inputRef as React.Ref<HTMLInputElement>}
           block
           sx={{ flex: 1 }}
           autoFocus={autoFocus}
@@ -105,15 +129,16 @@ export function WorkspaceCombobox({
           onClick={() => void pickFolder()}
         />
       </Box>
-      {open && filtered.length > 0 && (
+      {open && filtered.length > 0 && anchor && createPortal(
         <Box
           id={listId}
           role="listbox"
+          onMouseDown={(e) => e.stopPropagation()}
           sx={{
-            position: "absolute",
-            top: "calc(100% + 4px)",
-            left: 0,
-            right: 0,
+            position: "fixed",
+            top: anchor.top,
+            left: anchor.left,
+            width: anchor.width,
             maxHeight: 240,
             overflowY: "auto",
             bg: "canvas.overlay",
@@ -121,7 +146,7 @@ export function WorkspaceCombobox({
             borderColor: "border.default",
             borderRadius: 2,
             boxShadow: "shadow.large",
-            zIndex: 50,
+            zIndex: 1100,
             py: 1,
           }}
         >
@@ -169,7 +194,8 @@ export function WorkspaceCombobox({
               </Box>
             );
           })}
-        </Box>
+        </Box>,
+        document.body,
       )}
     </Box>
   );
