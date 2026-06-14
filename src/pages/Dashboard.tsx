@@ -255,6 +255,7 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
       <Modal
         open={newOpen}
         title="New task"
+        width={640}
         error={newError}
         onClose={() => closeNew()}
         footer={
@@ -311,6 +312,7 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
       <Modal
         open={deleting !== null}
         title="Delete task?"
+        width={420}
         error={deleteError}
         onClose={() => { setDeleting(null); setDeleteError(null); }}
         footer={

@@ -10,9 +10,11 @@ export interface ModalProps {
   footer?: ReactNode;
   /** Optional error string shown inline at the top of the body. */
   error?: string | null;
+  /** Optional width override. Defaults to 480px min, expands with content. */
+  width?: number | string;
 }
 
-export function Modal({ open, title, onClose, children, footer, error }: ModalProps) {
+export function Modal({ open, title, onClose, children, footer, error, width }: ModalProps) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -47,7 +49,8 @@ export function Modal({ open, title, onClose, children, footer, error }: ModalPr
           borderStyle: "solid",
           borderColor: "border.default",
           borderRadius: 2,
-          minWidth: 480,
+          width: width,
+          minWidth: width ? undefined : 480,
           maxWidth: "calc(100vw - 48px)",
           maxHeight: "calc(100vh - 48px)",
           display: "flex",

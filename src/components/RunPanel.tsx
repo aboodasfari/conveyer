@@ -224,6 +224,13 @@ export function RunPanel({ taskId }: { taskId: string }) {
 
   const start = () => wrap(async () => api.runsStart(taskId));
   const complete = (id: string) => wrap(async () => api.phaseComplete(id));
+  // "Stop Agent" cancels the sidecar without advancing the pipeline.
+  // The runner's exit path will then mark the phase failed (because the
+  // sidecar didn't emit {ok:true}), and any gate auto-advance is skipped.
+  const stopAgent = (id: string) => wrap(async () => {
+    await api.sessionCancel(id);
+    return null;
+  });
   const approve = (id: string) => wrap(async () => api.phaseApprove(id));
   const rewindToImplementation = () => wrap(async () => {
     if (!detail) return null;
@@ -314,7 +321,7 @@ export function RunPanel({ taskId }: { taskId: string }) {
             busy={busy}
             onCollapse={() => setCollapsed(true)}
             onSelect={setSelectedPhaseId}
-            onCancel={complete}
+            onCancel={stopAgent}
             onApprove={approve}
             onRewind={rewindToImplementation}
             onRestart={restart}
