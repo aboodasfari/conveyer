@@ -40,6 +40,8 @@ export const api = {
   tasksSeedDemo: () => invoke<void>("tasks_seed_demo"),
   tasksCreateLocal: (title: string, description: string | null, workspacePath: string | null) =>
     invoke<string>("tasks_create_local", { title, description, workspacePath }),
+  tasksDelete: (taskId: string) =>
+    invoke<void>("tasks_delete", { taskId }),
 
   // runs
   runsStart: (taskId: string) =>

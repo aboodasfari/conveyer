@@ -12,6 +12,7 @@ import {
   ChevronRightIcon,
   KebabHorizontalIcon,
   PlayIcon,
+  TrashIcon,
 } from "@primer/octicons-react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
@@ -44,9 +45,11 @@ const stop = (e: MouseEvent) => e.stopPropagation();
 export function TaskTree({
   tasks,
   onMove,
+  onDelete,
 }: {
   tasks: TaskSummary[];
   onMove?: (taskId: string, to: Bucket) => void;
+  onDelete?: (task: TaskSummary) => void;
 }) {
   const nodes = useMemo<Node[]>(() => {
     const bySourceRef = new Map<string, TaskSummary>();
@@ -72,7 +75,7 @@ export function TaskTree({
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
       {nodes.map((n) => (
-        <StoryCard key={n.task.id} node={n} onMove={onMove} />
+        <StoryCard key={n.task.id} node={n} onMove={onMove} onDelete={onDelete} />
       ))}
     </Box>
   );
@@ -81,9 +84,11 @@ export function TaskTree({
 function StoryCard({
   node,
   onMove,
+  onDelete,
 }: {
   node: Node;
   onMove?: (taskId: string, to: Bucket) => void;
+  onDelete?: (task: TaskSummary) => void;
 }) {
   const [open, setOpen] = useState(true);
   const hasChildren = node.children.length > 0;
@@ -118,15 +123,15 @@ function StoryCard({
         ) : (
           <Box sx={{ width: 28 }} />
         )}
-        menu={onMove ? (
+        menu={onMove || onDelete ? (
           <Box onClick={stop}>
             <ActionMenu>
               <ActionMenu.Anchor>
-                <IconButton aria-label="Move" icon={KebabHorizontalIcon} variant="invisible" />
+                <IconButton aria-label="More" icon={KebabHorizontalIcon} variant="invisible" />
               </ActionMenu.Anchor>
               <ActionMenu.Overlay align="end">
                 <ActionList>
-                  {MOVE_TARGETS.filter((m) => m.value !== node.task.bucket).map((m) => (
+                  {onMove && MOVE_TARGETS.filter((m) => m.value !== node.task.bucket).map((m) => (
                     <ActionList.Item
                       key={m.value}
                       onSelect={() => onMove(node.task.id, m.value)}
@@ -134,6 +139,20 @@ function StoryCard({
                       {m.label}
                     </ActionList.Item>
                   ))}
+                  {onDelete && node.task.source_id === "local" && (
+                    <>
+                      <ActionList.Divider />
+                      <ActionList.Item
+                        variant="danger"
+                        onSelect={() => onDelete(node.task)}
+                      >
+                        <ActionList.LeadingVisual>
+                          <TrashIcon />
+                        </ActionList.LeadingVisual>
+                        Delete task
+                      </ActionList.Item>
+                    </>
+                  )}
                 </ActionList>
               </ActionMenu.Overlay>
             </ActionMenu>

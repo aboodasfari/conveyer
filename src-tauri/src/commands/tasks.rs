@@ -459,6 +459,36 @@ pub async fn tasks_create_local(
     Ok(id)
 }
 
+/// Delete a task and everything FK-cascaded from it (runs/phases/sessions/
+/// messages). Best-effort wipes the on-disk artifact directory too.
+/// Refuses to delete tasks under a non-local source — those re-appear on
+/// next refresh, so the user almost certainly meant Archive instead.
+#[tauri::command]
+pub async fn tasks_delete(state: State<'_, AppState>, task_id: String) -> AppResult<()> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT source_id FROM tasks WHERE id = ?",
+    )
+    .bind(&task_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((source_id,)) = row else {
+        return Err(AppError::NotFound(format!("task {task_id}")));
+    };
+    if source_id != "local" {
+        return Err(AppError::Config(
+            "Only local tasks can be deleted. Move this task to Archive instead.".into(),
+        ));
+    }
+    sqlx::query("DELETE FROM tasks WHERE id = ?")
+        .bind(&task_id)
+        .execute(&state.db)
+        .await?;
+    if let Ok(root) = artifacts_root_for_task(&task_id) {
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+    Ok(())
+}
+
 async fn upsert_demo_task(
     state: &AppState,
     source_id: &str,

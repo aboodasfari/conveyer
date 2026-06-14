@@ -68,6 +68,7 @@ pub fn run() {
             commands::tasks::tasks_set_bucket,
             commands::tasks::tasks_seed_demo,
             commands::tasks::tasks_create_local,
+            commands::tasks::tasks_delete,
             commands::gates::gates_list,
             commands::gates::gates_set,
             commands::runs::runs_start,

@@ -18,7 +18,7 @@ import { Bucket, Source, TaskSummary } from "../types";
 import { EmptyState } from "../components/EmptyState";
 import { Modal } from "../components/Modal";
 import { TaskTree } from "../components/TaskTree";
-import { WorkspacePathInput } from "../components/WorkspacePathInput";
+import { WorkspaceCombobox } from "../components/WorkspaceCombobox";
 import { formatError } from "../errors";
 
 const TITLES: Record<Bucket, string> = {
@@ -50,6 +50,9 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
   const [newWorkspace, setNewWorkspace] = useState("");
   const [creating, setCreating] = useState(false);
   const [newError, setNewError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<TaskSummary | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deletingBusy, setDeletingBusy] = useState(false);
   const nav = useNavigate();
 
   const load = useCallback(async () => {
@@ -130,6 +133,21 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
     }
   };
 
+  const confirmDelete = async () => {
+    if (!deleting) return;
+    setDeletingBusy(true);
+    setDeleteError(null);
+    try {
+      await api.tasksDelete(deleting.id);
+      setDeleting(null);
+      await load();
+    } catch (e) {
+      setDeleteError(formatError(e));
+    } finally {
+      setDeletingBusy(false);
+    }
+  };
+
   const move = async (taskId: string, to: Bucket) => {
     try {
       await api.tasksSetBucket(taskId, to);
@@ -203,7 +221,7 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
           }
         />
       ) : (
-        <TaskTree tasks={visible} onMove={move} />
+        <TaskTree tasks={visible} onMove={move} onDelete={(t) => setDeleting(t)} />
       )}
 
       <Modal
@@ -282,12 +300,37 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
             <FormControl.Caption>
               Pin to a specific workspace, or leave blank and let the agent pick during exploration.
             </FormControl.Caption>
-            <WorkspacePathInput value={newWorkspace} onChange={setNewWorkspace} />
+            <WorkspaceCombobox value={newWorkspace} onChange={setNewWorkspace} />
           </FormControl>
           <Text sx={{ fontSize: 0, color: "fg.muted" }}>
             Tip: ⌘+Enter to create.
           </Text>
         </Box>
+      </Modal>
+
+      <Modal
+        open={deleting !== null}
+        title="Delete task?"
+        error={deleteError}
+        onClose={() => { setDeleting(null); setDeleteError(null); }}
+        footer={
+          <>
+            <Button onClick={() => { setDeleting(null); setDeleteError(null); }}>Cancel</Button>
+            <Button
+              variant="danger"
+              onClick={() => void confirmDelete()}
+              disabled={deletingBusy}
+            >
+              {deletingBusy ? "Deleting…" : "Delete"}
+            </Button>
+          </>
+        }
+      >
+        <Text>
+          This will permanently delete <Box as="strong" sx={{ fontWeight: 600 }}>{deleting?.title}</Box>{" "}
+          along with its runs, phases, sessions, chat history, and artifacts.{" "}
+          <Text sx={{ color: "fg.muted" }}>This can't be undone.</Text>
+        </Text>
       </Modal>
     </Box>
   );

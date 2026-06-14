@@ -618,34 +618,37 @@ function ExecutionSection() {
       </SubSection>
 
       <SubSection
+        title="Phases"
+        description="Toggle phases on or off for new runs."
+      >
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            py: 2,
+          }}
+        >
+          <Text>
+            Submit phase{" "}
+            <Text sx={{ color: "fg.muted", fontSize: 0 }}>
+              · {submitEnabled ? "runs end with opening a PR" : "runs end after review"}
+            </Text>
+          </Text>
+          <ToggleSwitch
+            checked={submitEnabled}
+            onClick={toggleSubmit}
+            aria-label="Enable submit phase"
+            size="small"
+          />
+        </Box>
+      </SubSection>
+
+      <SubSection
         title="Phase Gates"
         description="After a phase finishes, auto-advance to the next phase. Turn off to pause for your approval before continuing."
       >
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <Box
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              py: 2,
-              borderBottom: "1px solid",
-              borderBottomColor: "border.muted",
-              mb: 1,
-            }}
-          >
-            <Text>
-              Enable submit phase{" "}
-              <Text sx={{ color: "fg.muted", fontSize: 0 }}>
-                · {submitEnabled ? "runs end with opening a PR" : "runs end after review"}
-              </Text>
-            </Text>
-            <ToggleSwitch
-              checked={submitEnabled}
-              onClick={toggleSubmit}
-              aria-label="Enable submit phase"
-              size="small"
-            />
-          </Box>
           {PHASE_KINDS
             .filter((k) => submitEnabled || k !== "submit")
             .map((k) => {
