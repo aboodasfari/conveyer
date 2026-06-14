@@ -39,8 +39,8 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
   const [leftWidth, setLeftWidth] = useState<number>(LEFT_PANE_DEFAULT);
   const [viewMode, setViewMode] = useState<"inline" | "split">("inline");
 
-  const loadSummary = useCallback(async () => {
-    setLoading(true);
+  const loadSummary = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     setError(null);
     try {
       const s = await api.phaseDiffSummary(phaseId);
@@ -49,12 +49,12 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
       setError(formatError(e));
       setSummary(null);
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, [phaseId]);
 
-  const loadDiff = useCallback(async (commit: string | null) => {
-    setLoadingDiff(true);
+  const loadDiff = useCallback(async (commit: string | null, opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoadingDiff(true);
     try {
       const text = await api.phaseDiffText(phaseId, commit);
       setDiffText(text);
@@ -62,7 +62,7 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
       setError(formatError(e));
       setDiffText("");
     } finally {
-      setLoadingDiff(false);
+      if (!opts?.silent) setLoadingDiff(false);
     }
   }, [phaseId]);
 
@@ -70,25 +70,25 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
   useEffect(() => { void loadDiff(selectedCommit); }, [selectedCommit, loadDiff]);
 
   // Light poll so newly-made commits appear without waiting for the next
-  // phase transition. Cheap (one SQL + a few git commands every 3s).
+  // phase transition. Silent: doesn't flash the loading spinner.
   useEffect(() => {
     const id = window.setInterval(() => {
-      void loadSummary();
-      void loadDiff(selectedCommit);
+      void loadSummary({ silent: true });
+      void loadDiff(selectedCommit, { silent: true });
     }, 3000);
     return () => window.clearInterval(id);
   }, [loadSummary, loadDiff, selectedCommit]);
 
   // Re-fetch when anything about this run changes (worktree created,
   // agent committed, phase advanced) so the Diff tab stays live without
-  // a manual refresh.
+  // a manual refresh. Also silent — the visible content barely shifts.
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
     let cancelled = false;
     void (async () => {
       unlisten = await listen("run_updated", () => {
-        void loadSummary();
-        void loadDiff(selectedCommit);
+        void loadSummary({ silent: true });
+        void loadDiff(selectedCommit, { silent: true });
       });
       if (cancelled) unlisten();
     })();
