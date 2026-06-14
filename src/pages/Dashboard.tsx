@@ -335,11 +335,13 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
           </>
         }
       >
-        <Text>
-          This will permanently delete <Box as="strong" sx={{ fontWeight: 600 }}>{deleting?.title}</Box>{" "}
-          along with its runs, phases, sessions, chat history, and artifacts.{" "}
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <Text>
+            This will permanently delete <Box as="strong" sx={{ fontWeight: 600 }}>{deleting?.title}</Box>{" "}
+            along with its runs, phases, sessions, chat history, and artifacts.
+          </Text>
           <Text sx={{ color: "fg.muted" }}>This can't be undone.</Text>
-        </Text>
+        </Box>
       </Modal>
     </Box>
   );
