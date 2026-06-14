@@ -38,6 +38,8 @@ export const api = {
   tasksSetBucket: (taskId: string, bucket: string) =>
     invoke<void>("tasks_set_bucket", { taskId, bucket }),
   tasksSeedDemo: () => invoke<void>("tasks_seed_demo"),
+  tasksCreateLocal: (title: string, description: string | null, workspacePath: string | null) =>
+    invoke<string>("tasks_create_local", { title, description, workspacePath }),
 
   // runs
   runsStart: (taskId: string) =>

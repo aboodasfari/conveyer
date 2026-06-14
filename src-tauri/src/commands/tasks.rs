@@ -415,6 +415,50 @@ fn artifacts_root_for_task(task_id: &str) -> AppResult<std::path::PathBuf> {
     Ok(base.join("conveyer").join("artifacts").join(task_id))
 }
 
+/// Create a free-form task that isn't tied to any external tracker.
+/// Lives under the singleton `local` source. Returns the created task id.
+#[tauri::command]
+pub async fn tasks_create_local(
+    state: State<'_, AppState>,
+    title: String,
+    description: Option<String>,
+    workspace_path: Option<String>,
+) -> AppResult<String> {
+    let title = title.trim().to_string();
+    if title.is_empty() {
+        return Err(AppError::Config("Title is required.".into()));
+    }
+    let desc = description.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let wp = workspace_path.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+
+    // Allocate a stable, monotonically-increasing source_ref so the task
+    // shows up in lists in a friendly order.
+    let next_n: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(CAST(source_ref AS INTEGER)), 0) + 1
+         FROM tasks WHERE source_id = 'local'",
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(1);
+    let source_ref = next_n.to_string();
+    let id = Uuid::new_v4().to_string();
+
+    sqlx::query(
+        "INSERT INTO tasks(id, source_id, source_ref, title, state, url,
+                           source_meta_json, parent_ref, is_self_assigned,
+                           description, updated_at, workspace_path)
+         VALUES(?, 'local', ?, ?, 'Active', '', '{}', NULL, 1, ?, datetime('now'), ?)",
+    )
+    .bind(&id)
+    .bind(&source_ref)
+    .bind(&title)
+    .bind(&desc)
+    .bind(&wp)
+    .execute(&state.db)
+    .await?;
+    Ok(id)
+}
+
 async fn upsert_demo_task(
     state: &AppState,
     source_id: &str,

@@ -23,6 +23,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(RunnerRegistry::new())
         .setup(|app| {
             // In `tauri dev` we run the bare binary, not a proper .app
@@ -66,6 +67,7 @@ pub fn run() {
             commands::tasks::tasks_add_by_url,
             commands::tasks::tasks_set_bucket,
             commands::tasks::tasks_seed_demo,
+            commands::tasks::tasks_create_local,
             commands::gates::gates_list,
             commands::gates::gates_set,
             commands::runs::runs_start,

@@ -28,6 +28,7 @@ import { Modal } from "../components/Modal";
 import { ModelDropdown, ModelInfo } from "../components/ModelDropdown";
 import { ReasoningDropdown, REASONING_LABEL } from "../components/ReasoningDropdown";
 import { SubSection } from "../components/SubSection";
+import { WorkspacePathInput } from "../components/WorkspacePathInput";
 import { useColorMode } from "../theme";
 import { loadRefreshInterval, saveRefreshInterval } from "../autoRefresh";
 import { loadModels } from "../modelsCache";
@@ -416,6 +417,7 @@ function ExecutionSection() {
   const [modelPhase, setModelPhase] = useState<Record<string, string>>({});
   const [reasoningDefault, setReasoningDefault] = useState<string>("");
   const [reasoningPhase, setReasoningPhase] = useState<Record<string, string>>({});
+  const [submitEnabled, setSubmitEnabled] = useState<boolean>(true);
 
   // Fast local-DB lookups: gates, workspaces, model/reasoning settings.
   // These should render the section immediately rather than block on the
@@ -423,11 +425,12 @@ function ExecutionSection() {
   useEffect(() => {
     void (async () => {
       try {
-        const [g, ws, mDef, rDef, ...rest] = await Promise.all([
+        const [g, ws, mDef, rDef, submitV, ...rest] = await Promise.all([
           api.gatesList(),
           api.workspacesList(),
           api.settingGet("model_default"),
           api.settingGet("reasoning_default"),
+          api.settingGet("phase_submit_enabled"),
           ...PHASE_KINDS.map((k) => api.settingGet(`model_${k}`)),
           ...PHASE_KINDS.map((k) => api.settingGet(`reasoning_${k}`)),
         ]);
@@ -437,6 +440,7 @@ function ExecutionSection() {
         setWorkspaces(ws);
         setModelDefault(mDef ?? "");
         setReasoningDefault(rDef ?? "");
+        setSubmitEnabled(submitV !== "0" && submitV?.toLowerCase() !== "false");
         const mOver: Record<string, string> = {};
         const rOver: Record<string, string> = {};
         PHASE_KINDS.forEach((k, i) => {
@@ -497,6 +501,17 @@ function ExecutionSection() {
       setWorkspaces((ws) => ws.filter((w) => w.id !== id));
     } catch (e) {
       setError(formatError(e));
+    }
+  };
+
+  const toggleSubmit = async () => {
+    const next = !submitEnabled;
+    setSubmitEnabled(next);
+    try {
+      await api.settingSet("phase_submit_enabled", next ? "1" : "0");
+    } catch (e) {
+      setError(formatError(e));
+      setSubmitEnabled(!next);
     }
   };
 
@@ -607,7 +622,33 @@ function ExecutionSection() {
         description="After a phase finishes, auto-advance to the next phase. Turn off to pause for your approval before continuing."
       >
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          {PHASE_KINDS.map((k) => {
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              py: 2,
+              borderBottom: "1px solid",
+              borderBottomColor: "border.muted",
+              mb: 1,
+            }}
+          >
+            <Text>
+              Enable submit phase{" "}
+              <Text sx={{ color: "fg.muted", fontSize: 0 }}>
+                · {submitEnabled ? "runs end with opening a PR" : "runs end after review"}
+              </Text>
+            </Text>
+            <ToggleSwitch
+              checked={submitEnabled}
+              onClick={toggleSubmit}
+              aria-label="Enable submit phase"
+              size="small"
+            />
+          </Box>
+          {PHASE_KINDS
+            .filter((k) => submitEnabled || k !== "submit")
+            .map((k) => {
             const g = gates.find((x) => x.phase_kind === k) ?? { phase_kind: k, auto_advance: 0 };
             const on = g.auto_advance === 1;
             const labelId = `gate-${k}`;
@@ -817,14 +858,14 @@ function WorkspaceRow({
         sx={{ width: 180 }}
         aria-label="Workspace name"
       />
-      <TextInput
-        value={path}
-        onChange={(e) => setPath(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-        sx={{ flex: 1 }}
-        aria-label="Workspace path"
-      />
+      <Box sx={{ flex: 1 }}>
+        <WorkspacePathInput
+          value={path}
+          onChange={setPath}
+          onBlur={commit}
+          onEnter={commit}
+        />
+      </Box>
       <IconButton
         aria-label="Delete workspace"
         title="Delete workspace"
@@ -861,14 +902,9 @@ function NewWorkspaceRow({
         sx={{ width: 180 }}
         aria-label="New workspace name"
       />
-      <TextInput
-        value={path}
-        onChange={(e) => setPath(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter") void submit(); }}
-        placeholder="/Users/you/code/foo"
-        sx={{ flex: 1 }}
-        aria-label="New workspace path"
-      />
+      <Box sx={{ flex: 1 }}>
+        <WorkspacePathInput value={path} onChange={setPath} onEnter={() => void submit()} />
+      </Box>
       <Button
         leadingVisual={PlusIcon}
         onClick={() => void submit()}

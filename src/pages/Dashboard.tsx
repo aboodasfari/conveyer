@@ -3,18 +3,22 @@ import {
   Box,
   Button,
   Flash,
+  FormControl,
   Heading,
   Spinner,
+  Text,
+  Textarea,
   TextInput,
 } from "@primer/react";
 import { PlusIcon, SyncIcon } from "@primer/octicons-react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAutoRefresh } from "../autoRefresh";
 import { Bucket, Source, TaskSummary } from "../types";
 import { EmptyState } from "../components/EmptyState";
 import { Modal } from "../components/Modal";
 import { TaskTree } from "../components/TaskTree";
+import { WorkspacePathInput } from "../components/WorkspacePathInput";
 import { formatError } from "../errors";
 
 const TITLES: Record<Bucket, string> = {
@@ -40,12 +44,23 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
+  const [newOpen, setNewOpen] = useState(false);
+  const [newTitle, setNewTitle] = useState("");
+  const [newDesc, setNewDesc] = useState("");
+  const [newWorkspace, setNewWorkspace] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [newError, setNewError] = useState<string | null>(null);
+  const nav = useNavigate();
+
   const load = useCallback(async () => {
     setError(null);
     try {
       const [t, s] = await Promise.all([api.tasksList(), api.sourcesList()]);
       setTasks(t);
-      setSources(s.filter((x) => x.enabled));
+      // `local` is the always-on built-in source for ad-hoc tasks — it
+      // doesn't pull from anywhere, so exclude it from the "external
+      // sources" list used by Refresh / Add by URL.
+      setSources(s.filter((x) => x.enabled && x.kind !== "local"));
     } catch (e) {
       setError(formatError(e));
     } finally {
@@ -86,6 +101,35 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
     }
   };
 
+  const closeNew = () => {
+    setNewOpen(false);
+    setNewTitle("");
+    setNewDesc("");
+    setNewWorkspace("");
+    setNewError(null);
+  };
+
+  const createLocal = async () => {
+    const title = newTitle.trim();
+    if (!title) return;
+    setCreating(true);
+    setNewError(null);
+    try {
+      const id = await api.tasksCreateLocal(
+        title,
+        newDesc.trim() || null,
+        newWorkspace.trim() || null,
+      );
+      closeNew();
+      await load();
+      nav(`/tasks/${id}`);
+    } catch (e) {
+      setNewError(formatError(e));
+    } finally {
+      setCreating(false);
+    }
+  };
+
   const move = async (taskId: string, to: Bucket) => {
     try {
       await api.tasksSetBucket(taskId, to);
@@ -120,17 +164,25 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
         <Heading as="h1" sx={{ fontSize: 4 }}>{TITLES[bucket]}</Heading>
         <Box sx={{ display: "flex", gap: 2 }}>
           {bucket === "active" && (
-            <Button
-              leadingVisual={PlusIcon}
-              onClick={() => setAddOpen(true)}
-              disabled={sources.length === 0}
-            >
-              Add by URL
-            </Button>
+            <>
+              <Button
+                leadingVisual={PlusIcon}
+                variant="primary"
+                onClick={() => setNewOpen(true)}
+              >
+                New task
+              </Button>
+              <Button
+                leadingVisual={PlusIcon}
+                onClick={() => setAddOpen(true)}
+                disabled={sources.length === 0}
+              >
+                Add by URL
+              </Button>
+            </>
           )}
           <Button
             leadingVisual={SyncIcon}
-            variant="primary"
             onClick={refresh}
             disabled={sources.length === 0 || refreshing}
           >
@@ -141,20 +193,14 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
 
       {error && <Flash variant="danger">{error}</Flash>}
 
-      {sources.length === 0 ? (
-        <EmptyState
-          title="No source configured"
-          body="Add an Azure DevOps source in Settings to start discovering tasks."
-          action={
-            <Button as={Link} to="/settings" variant="primary">
-              Open Settings
-            </Button>
-          }
-        />
-      ) : visible.length === 0 ? (
+      {visible.length === 0 ? (
         <EmptyState
           title={`Nothing in ${TITLES[bucket]}`}
-          body={EMPTY_BODY[bucket]}
+          body={
+            bucket === "active"
+              ? "Create a local task with the New task button, or add one from an external source."
+              : EMPTY_BODY[bucket]
+          }
         />
       ) : (
         <TaskTree tasks={visible} onMove={move} />
@@ -186,6 +232,62 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
           onChange={(e) => setAddUrl(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") void addByUrl(); }}
         />
+      </Modal>
+
+      <Modal
+        open={newOpen}
+        title="New task"
+        error={newError}
+        onClose={() => closeNew()}
+        footer={
+          <>
+            <Button onClick={() => closeNew()}>Cancel</Button>
+            <Button
+              variant="primary"
+              onClick={createLocal}
+              disabled={!newTitle.trim() || creating}
+            >
+              {creating ? "Creating…" : "Create"}
+            </Button>
+          </>
+        }
+      >
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          <FormControl required>
+            <FormControl.Label>Title</FormControl.Label>
+            <TextInput
+              block
+              autoFocus
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void createLocal(); }}
+            />
+          </FormControl>
+          <FormControl>
+            <FormControl.Label>Description</FormControl.Label>
+            <FormControl.Caption>
+              What needs to happen. The agent reads this in the exploration phase.
+            </FormControl.Caption>
+            <Textarea
+              block
+              rows={6}
+              value={newDesc}
+              onChange={(e) => setNewDesc(e.target.value)}
+              resize="vertical"
+              sx={{ fontFamily: "mono", fontSize: 1 }}
+            />
+          </FormControl>
+          <FormControl>
+            <FormControl.Label>Workspace (optional)</FormControl.Label>
+            <FormControl.Caption>
+              Pin to a specific workspace, or leave blank and let the agent pick during exploration.
+            </FormControl.Caption>
+            <WorkspacePathInput value={newWorkspace} onChange={setNewWorkspace} />
+          </FormControl>
+          <Text sx={{ fontSize: 0, color: "fg.muted" }}>
+            Tip: ⌘+Enter to create.
+          </Text>
+        </Box>
       </Modal>
     </Box>
   );

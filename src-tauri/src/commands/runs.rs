@@ -55,7 +55,25 @@ pub async fn runs_start(
         .execute(&state.db)
         .await?;
 
-    for (ord, kind) in PHASE_KINDS.iter().enumerate() {
+    // Honor the "disable submit phase" setting — when false, skip the
+    // submit phase entirely so the run finishes after review.
+    let submit_enabled: bool = sqlx::query_scalar::<_, String>(
+        "SELECT value FROM settings WHERE key = 'phase_submit_enabled'",
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .map(|v| v != "0" && v.to_ascii_lowercase() != "false")
+    .unwrap_or(true);
+
+    let phases: Vec<&str> = PHASE_KINDS
+        .iter()
+        .copied()
+        .filter(|k| submit_enabled || *k != "submit")
+        .collect();
+
+    for (ord, kind) in phases.iter().enumerate() {
         let phase_id = Uuid::new_v4().to_string();
         sqlx::query(
             "INSERT INTO phases(id, run_id, kind, ord, status) VALUES(?, ?, ?, ?, 'pending')",

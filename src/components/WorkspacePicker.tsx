@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Box, Text, TextInput } from "@primer/react";
+import { Box, IconButton, Text, TextInput } from "@primer/react";
 import { CheckIcon, ChevronDownIcon, FileDirectoryIcon, XIcon } from "@primer/octicons-react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api } from "../api";
 import { Workspace } from "../types";
 
@@ -131,43 +132,65 @@ export function WorkspacePicker({
             gap: 2,
           }}
         >
-          <TextInput
-            ref={inputRef as React.Ref<HTMLInputElement>}
-            block
-            value={draft}
-            onChange={(e) => { setDraft(e.target.value); setHighlight(0); }}
-            onKeyDown={(e) => {
-              if (e.key === "ArrowDown") {
-                e.preventDefault();
-                setHighlight((h) => Math.min(filtered.length - 1, h + 1));
-              } else if (e.key === "ArrowUp") {
-                e.preventDefault();
-                setHighlight((h) => Math.max(0, h - 1));
-              } else if (e.key === "Enter") {
-                e.preventDefault();
-                if (filtered[highlight]) {
-                  void commit(filtered[highlight].path);
-                } else {
-                  void commit(draft);
+          <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
+            <TextInput
+              ref={inputRef as React.Ref<HTMLInputElement>}
+              block
+              sx={{ flex: 1 }}
+              value={draft}
+              onChange={(e) => { setDraft(e.target.value); setHighlight(0); }}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setHighlight((h) => Math.min(filtered.length - 1, h + 1));
+                } else if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setHighlight((h) => Math.max(0, h - 1));
+                } else if (e.key === "Enter") {
+                  e.preventDefault();
+                  if (filtered[highlight]) {
+                    void commit(filtered[highlight].path);
+                  } else {
+                    void commit(draft);
+                  }
+                } else if (e.key === "Escape") {
+                  setOpen(false);
                 }
-              } else if (e.key === "Escape") {
-                setOpen(false);
+              }}
+              placeholder="Search or paste a path…"
+              aria-label="Workspace path"
+              aria-controls={listId}
+              trailingAction={
+                value ? (
+                  <TextInput.Action
+                    onClick={() => { setDraft(""); void commit(""); }}
+                    icon={XIcon}
+                    aria-label="Clear workspace"
+                    sx={{ color: "fg.muted" }}
+                  />
+                ) : undefined
               }
-            }}
-            placeholder="Search or paste a path…"
-            aria-label="Workspace path"
-            aria-controls={listId}
-            trailingAction={
-              value ? (
-                <TextInput.Action
-                  onClick={() => { setDraft(""); void commit(""); }}
-                  icon={XIcon}
-                  aria-label="Clear workspace"
-                  sx={{ color: "fg.muted" }}
-                />
-              ) : undefined
-            }
-          />
+            />
+            <IconButton
+              aria-label="Browse for folder"
+              title="Browse for folder"
+              icon={FileDirectoryIcon}
+              onClick={async () => {
+                try {
+                  const result = await openDialog({
+                    directory: true,
+                    multiple: false,
+                    title: "Choose workspace",
+                    defaultPath: draft || value || undefined,
+                  });
+                  if (typeof result === "string" && result) {
+                    setDraft(result);
+                    void commit(result);
+                  }
+                } catch { /* cancelled */ }
+              }}
+            />
+          </Box>
           <Box id={listId} role="listbox" sx={{ maxHeight: 240, overflowY: "auto", mx: -2, mb: -2, borderTop: "1px solid", borderTopColor: "border.muted" }}>
             {filtered.length === 0 ? (
               <Text sx={{ display: "block", color: "fg.muted", fontSize: 0, p: 2 }}>
