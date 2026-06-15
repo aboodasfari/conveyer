@@ -92,6 +92,7 @@ pub fn run() {
             commands::sessions::phase_prompt_get,
             commands::sessions::session_cancel,
             commands::sessions::chat_reply,
+            commands::sessions::chat_heartbeat,
             commands::sessions::models_list,
             commands::diff::phase_diff_summary,
             commands::diff::phase_diff_text,

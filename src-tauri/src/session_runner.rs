@@ -587,7 +587,10 @@ async fn spawn_chat_and_send(
         .env("CONVEYER_COPILOT_MODEL", &ctx.model)
         .env("CONVEYER_BACKEND", &backend)
         .env("CONVEYER_RESUME_SDK_SESSION", &sdk_session_id)
-        .env("CONVEYER_CHAT_IDLE_MS", "300000"); // 5min
+        // Heartbeat-driven idle: the UI pings every 30s while the
+        // chat tab is mounted. 75s leaves 2.5 missed pings of slack
+        // before shutdown.
+        .env("CONVEYER_CHAT_IDLE_MS", "75000");
     if let Some(br) = &branch_name { cmd.env("CONVEYER_BRANCH", br); }
     if let Some(wp) = &worktree_path { cmd.env("CONVEYER_WORKTREE_PATH", wp); }
     if let Some(r) = &ctx.reasoning { cmd.env("CONVEYER_COPILOT_REASONING", r); }
@@ -674,6 +677,16 @@ async fn chat_stdin_writer(mut stdin: ChildStdin, mut rx: mpsc::Receiver<String>
         if stdin.write_all(b"\n").await.is_err() { break; }
         if stdin.flush().await.is_err() { break; }
     }
+}
+
+/// Push a heartbeat ping to the warm chat sidecar, if any. No-op when
+/// no sidecar is alive for the phase — callers can fire-and-forget
+/// without checking. The sidecar resets its idle timer on each ping
+/// so as long as the UI keeps pinging the process stays warm.
+pub async fn chat_heartbeat(app: &AppHandle, phase_id: &str) {
+    let registry = app.state::<RunnerRegistry>();
+    let Some((_sid, tx)) = registry.get_chat(phase_id) else { return };
+    let _ = tx.send("{\"type\":\"ping\"}".to_string()).await;
 }
 
 /// Long-running reader for a warm chat sidecar. Forwards regular

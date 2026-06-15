@@ -72,6 +72,8 @@ export const api = {
     invoke<boolean>("session_cancel", { phaseId }),
   chatReply: (phaseId: string, content: string) =>
     invoke<void>("chat_reply", { phaseId, content }),
+  chatHeartbeat: (phaseId: string) =>
+    invoke<void>("chat_heartbeat", { phaseId }),
   modelsList: () => invoke<import("./types").ModelInfo[]>("models_list"),
 
   // diff

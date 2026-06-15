@@ -382,32 +382,42 @@ async function runCopilotChatRepl(sessionId, idleMs) {
   // Ready for commands.
   emit({ type: "ready" });
 
-  // Idle watchdog. Reset before/after each turn; if it fires the
-  // process exits cleanly and the next user reply will spawn a fresh
-  // one.
-  let idleTimer = setTimeout(shutdownIdle, idleMs);
-  function shutdownIdle() {
-    msg("system", `[chat] idle for ${(idleMs / 1000) | 0}s, shutting down warm sidecar.`);
-    emit({ type: "done", ok: true });
-    // Give stdout a tick to flush.
-    setTimeout(() => process.exit(0), 50);
-  }
-  function resetIdle() {
-    clearTimeout(idleTimer);
-    idleTimer = setTimeout(shutdownIdle, idleMs);
-  }
-
   // Read stdin line-by-line. Node's readline is the simplest way.
   const { default: readline } = await import("node:readline");
   const rl = readline.createInterface({ input: process.stdin });
   const TURN_TIMEOUT_MS = 30 * 60 * 1000;
   let busy = false;
 
+  // Idle watchdog. Reset before/after each turn; if it fires the
+  // process exits cleanly and the next user reply will spawn a fresh
+  // one. While `busy` is true we never arm the timer — sendAndWait
+  // can take minutes and we don't want a ping or stale schedule to
+  // kill the process mid-turn. `resetIdle()` is called both on ping
+  // and on turn completion; both safely no-op while busy.
+  let idleTimer = setTimeout(shutdownIdle, idleMs);
+  function shutdownIdle() {
+    msg("system", `[chat] idle for ${(idleMs / 1000) | 0}s, shutting down warm sidecar.`);
+    emit({ type: "done", ok: true });
+    setTimeout(() => process.exit(0), 50);
+  }
+  function resetIdle() {
+    clearTimeout(idleTimer);
+    if (busy) return;
+    idleTimer = setTimeout(shutdownIdle, idleMs);
+  }
+
   for await (const line of rl) {
     if (!line.trim()) continue;
     let cmd;
     try { cmd = JSON.parse(line); } catch { continue; }
     if (cmd.type === "shutdown") break;
+    if (cmd.type === "ping") {
+      // Heartbeat from the UI saying the chat tab is still mounted.
+      // Pings keep the warm sidecar alive; absence of pings + replies
+      // for `idleMs` causes shutdown.
+      resetIdle();
+      continue;
+    }
     if (cmd.type !== "reply") continue;
     if (busy) {
       emit({ type: "turn_done", ok: false, error: "Previous reply still running." });

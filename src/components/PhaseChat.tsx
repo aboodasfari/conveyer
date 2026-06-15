@@ -258,6 +258,21 @@ export function PhaseChat({
 
   const bubbles = useMemo(() => buildBubbles(runs), [runs]);
 
+  // Heartbeat the warm chat sidecar (if one exists) every 30s while
+  // this chat view is mounted, so the process stays alive as long as
+  // the user is looking at it. The backend command is a no-op when
+  // no warm sidecar exists, so we can fire-and-forget.
+  useEffect(() => {
+    let cancelled = false;
+    const ping = () => { if (!cancelled) void api.chatHeartbeat(phaseId); };
+    ping();
+    const id = window.setInterval(ping, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [phaseId]);
+
   // Auto-scroll on new bubbles.
   useEffect(() => {
     const el = scrollerRef.current;

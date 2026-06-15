@@ -138,6 +138,16 @@ pub async fn chat_reply(
     session_runner::chat_send_reply(app.clone(), phase_id, trimmed).await
 }
 
+/// Heartbeat ping from the UI while a chat tab is mounted. Resets the
+/// warm chat sidecar's idle timer so it stays alive while the user is
+/// looking at the chat (even if they don't type for a while). No-op
+/// when there's no warm sidecar — first reply will spawn one.
+#[tauri::command]
+pub async fn chat_heartbeat(app: AppHandle, phase_id: String) -> AppResult<()> {
+    session_runner::chat_heartbeat(&app, &phase_id).await;
+    Ok(())
+}
+
 #[derive(Debug, Serialize)]
 pub struct ModelInfo {
     pub id: String,
