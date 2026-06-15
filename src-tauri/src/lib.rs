@@ -21,6 +21,13 @@ pub fn run() {
         )
         .try_init();
 
+    // GUI apps launched from the macOS Dock / Launchpad inherit a minimal
+    // PATH that doesn't include the user's shell additions, so subprocess
+    // lookups for tools like `az`, `gh`, `node`, `git` (when installed via
+    // Homebrew or rustup) fail with "No such file or directory". Augment
+    // PATH at startup so every subsequent Command::new finds them.
+    augment_path();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -94,4 +101,30 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Augment the process PATH with common user-local tool locations that
+/// macOS GUI apps don't inherit. Idempotent: skips any prefix already in
+/// PATH. Falls back to a sane default if PATH isn't set at all.
+fn augment_path() {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let candidates = [
+        "/opt/homebrew/bin",            // Apple Silicon Homebrew
+        "/opt/homebrew/sbin",
+        "/usr/local/bin",               // Intel Homebrew + manual installs
+        "/usr/local/sbin",
+        &format!("{home}/.cargo/bin"),  // rustup
+        &format!("{home}/.local/bin"),
+        &format!("{home}/.nvm/versions/node/current/bin"),
+        "/Library/Apple/usr/bin",       // Xcode tools
+    ];
+    let current = std::env::var("PATH").unwrap_or_default();
+    let mut parts: Vec<String> = current.split(':').map(|s| s.to_string()).collect();
+    for c in candidates.iter() {
+        let c = c.to_string();
+        if !c.is_empty() && !parts.iter().any(|p| p == &c) {
+            parts.insert(0, c);
+        }
+    }
+    std::env::set_var("PATH", parts.join(":"));
 }
