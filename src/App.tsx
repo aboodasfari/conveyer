@@ -6,10 +6,16 @@ import { Settings } from "./pages/Settings";
 import { TaskDetail } from "./pages/TaskDetail";
 import { useScrollRestoration } from "./scrollRestoration";
 import { useRunNotifications } from "./runNotifications";
+import { useAutoRefresh } from "./autoRefresh";
 
 function ScrollAwareLayout() {
   useScrollRestoration();
   useRunNotifications();
+  // Polling lives at the shell so source-refresh keeps running while
+  // the user is on any page (task detail, settings…), not only the
+  // dashboard. macOS still throttles setInterval when the window is
+  // minimized, but it runs fine when the app is just unfocused.
+  useAutoRefresh();
   return <Layout />;
 }
 

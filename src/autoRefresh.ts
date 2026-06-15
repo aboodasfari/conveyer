@@ -25,6 +25,10 @@ export async function saveRefreshInterval(min: number): Promise<void> {
  * Polls all enabled sources every `intervalMin` minutes by calling
  * tasks_refresh. Reads the interval from settings; reacts to a custom event
  * fired by `saveRefreshInterval` so updates take effect immediately.
+ *
+ * After each refresh, dispatches a `conveyer:sources-refreshed` window
+ * event so other components (e.g. the dashboard) can re-render in
+ * response without each one running its own setInterval.
  */
 export function useAutoRefresh(onRefreshed?: () => void) {
   const [interval, setInterval] = useState<number>(DEFAULT);
@@ -44,7 +48,26 @@ export function useAutoRefresh(onRefreshed?: () => void) {
     };
   }, []);
 
+  // Subscribe to refresh events. Components that just want to re-render
+  // when a poll completes can pass an onRefreshed callback without
+  // running their own setInterval — only the shell-level call below
+  // actually fires the poll.
   useEffect(() => {
+    if (!onRefreshed) return;
+    const handler = () => onRefreshed();
+    window.addEventListener("conveyer:sources-refreshed", handler);
+    return () => window.removeEventListener("conveyer:sources-refreshed", handler);
+  }, [onRefreshed]);
+
+  // The actual poller. Hoisted to the app shell so it runs regardless of
+  // which route the user is on. Tracked via a window-global ref so even
+  // if a second call to useAutoRefresh sneaks in we don't double-poll.
+  useEffect(() => {
+    if ((window as unknown as { __conveyerPollerOwner?: number }).__conveyerPollerOwner) {
+      return;
+    }
+    const owner = Math.random();
+    (window as unknown as { __conveyerPollerOwner?: number }).__conveyerPollerOwner = owner;
     let stopped = false;
     const tick = async () => {
       if (stopped) return;
@@ -53,7 +76,7 @@ export function useAutoRefresh(onRefreshed?: () => void) {
         for (const s of sources) {
           if (s.enabled) await api.tasksRefresh(s.id);
         }
-        if (onRefreshed) onRefreshed();
+        window.dispatchEvent(new CustomEvent("conveyer:sources-refreshed"));
       } catch {
         // swallow — the dashboard will still surface manual-refresh errors
       }
@@ -62,6 +85,8 @@ export function useAutoRefresh(onRefreshed?: () => void) {
     return () => {
       stopped = true;
       window.clearInterval(id);
+      const w = window as unknown as { __conveyerPollerOwner?: number };
+      if (w.__conveyerPollerOwner === owner) w.__conveyerPollerOwner = undefined;
     };
-  }, [interval, onRefreshed]);
+  }, [interval]);
 }
