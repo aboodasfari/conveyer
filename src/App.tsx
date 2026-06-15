@@ -5,9 +5,11 @@ import { Dashboard } from "./pages/Dashboard";
 import { Settings } from "./pages/Settings";
 import { TaskDetail } from "./pages/TaskDetail";
 import { useScrollRestoration } from "./scrollRestoration";
+import { useRunNotifications } from "./runNotifications";
 
 function ScrollAwareLayout() {
   useScrollRestoration();
+  useRunNotifications();
   return <Layout />;
 }
 

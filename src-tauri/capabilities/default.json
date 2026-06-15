@@ -5,10 +5,17 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:window:allow-set-focus",
+    "core:window:allow-unminimize",
+    "core:window:allow-show",
     "opener:default",
     "opener:allow-open-path",
     "opener:allow-reveal-item-in-dir",
     "dialog:default",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "notification:default",
+    "notification:allow-notify",
+    "notification:allow-is-permission-granted",
+    "notification:allow-request-permission"
   ]
 }
