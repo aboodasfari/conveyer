@@ -166,7 +166,7 @@ export function useRunNotifications() {
                 : t.source_id === "local"
                   ? "Created locally."
                   : "Newly discovered.";
-              void maybeNotify("newTask", `New task: ${t.title}`, fromClause);
+              void maybeNotify("newTask", `New Task: ${t.title}`, fromClause);
             }
           }
         }
