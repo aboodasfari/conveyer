@@ -80,6 +80,9 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
     setError(null);
     try {
       for (const s of sources) await api.tasksRefresh(s.id);
+      // Same signal the auto-poller uses so other listeners (e.g. the
+      // notification hook) see new tasks discovered by a manual refresh.
+      window.dispatchEvent(new CustomEvent("conveyer:sources-refreshed"));
       await load();
     } catch (e) {
       setError(formatError(e));
