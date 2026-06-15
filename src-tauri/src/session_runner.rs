@@ -20,14 +20,15 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Child, Command};
-use tokio::sync::oneshot;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStdin, Command};
+use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 /// Tracks the active session per phase so callers can cancel.
 pub struct RunnerRegistry {
     inner: Mutex<HashMap<String, RunnerHandle>>,
+    chats: Mutex<HashMap<String, ChatHandle>>,
 }
 
 struct RunnerHandle {
@@ -39,9 +40,23 @@ struct RunnerHandle {
     review_send_back: Option<String>,
 }
 
+/// A warm chat REPL sidecar bound to a phase. Replies are written to
+/// `stdin_tx` which the writer task forwards to the child's stdin. When
+/// the sidecar exits (idle timeout, EOF, or kill), the entry is dropped
+/// by the reader task's cleanup.
+struct ChatHandle {
+    /// Our Conveyer sessions row id — all turns from this REPL belong
+    /// to this single row.
+    session_id: String,
+    stdin_tx: mpsc::Sender<String>,
+}
+
 impl RunnerRegistry {
     pub fn new() -> Self {
-        Self { inner: Mutex::new(HashMap::new()) }
+        Self {
+            inner: Mutex::new(HashMap::new()),
+            chats: Mutex::new(HashMap::new()),
+        }
     }
 
     fn register(&self, phase_id: String, session_id: String, cancel: oneshot::Sender<()>) {
@@ -87,6 +102,20 @@ impl RunnerRegistry {
         self.inner.lock().unwrap().get_mut(phase_id)
             .and_then(|h| h.review_send_back.take())
     }
+
+    /// Look up the warm chat sidecar for a phase. Cloned so the caller
+    /// doesn't hold the lock while awaiting an async send.
+    fn get_chat(&self, phase_id: &str) -> Option<(String, mpsc::Sender<String>)> {
+        self.chats.lock().unwrap().get(phase_id).map(|h| (h.session_id.clone(), h.stdin_tx.clone()))
+    }
+
+    fn register_chat(&self, phase_id: String, session_id: String, stdin_tx: mpsc::Sender<String>) {
+        self.chats.lock().unwrap().insert(phase_id, ChatHandle { session_id, stdin_tx });
+    }
+
+    fn unregister_chat(&self, phase_id: &str) -> Option<String> {
+        self.chats.lock().unwrap().remove(phase_id).map(|h| h.session_id)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -113,6 +142,16 @@ enum SidecarEvent {
     /// Emitted by the sidecar once it has a SDK session id, so we can
     /// later call `client.resumeSession(id)` for user chat replies.
     SessionStarted { sdk_session_id: String },
+    /// Emitted by the chat REPL sidecar once it has resumed the SDK
+    /// session and is listening on stdin for `{type:"reply",...}` cmds.
+    Ready,
+    /// Emitted by the chat REPL sidecar after each turn finishes.
+    TurnDone {
+        #[serde(default)]
+        ok: bool,
+        #[serde(default)]
+        error: Option<String>,
+    },
     NeedsInput {
         prompt: String,
         #[serde(default)]
@@ -413,44 +452,82 @@ pub fn spawn_for_phase(app: AppHandle, phase_id: String) {
 /// message, streams the agent's response into a fresh `sessions` row
 /// attached to the same phase. Does NOT advance the pipeline — the
 /// phase status stays where it was (waiting / failed / done).
-pub fn spawn_reply(
+/// Send a user reply through the warm chat sidecar for `phase_id`,
+/// spawning the sidecar if it isn't running yet. Returns once the
+/// reply is queued (the agent's response streams in asynchronously
+/// via `message_appended` events).
+pub async fn chat_send_reply(
     app: AppHandle,
     phase_id: String,
-    sdk_session_id: String,
-    user_message: String,
-) {
-    tauri::async_runtime::spawn(async move {
-        if let Err(e) = run_reply(&app, &phase_id, &sdk_session_id, &user_message).await {
-            tracing::error!("chat-reply runner for phase {phase_id} failed: {e}");
-        }
-    });
-}
-
-/// Reply-mode runner: resume an existing SDK session, stream the
-/// agent's continuation as a new Conveyer session attached to the same
-/// phase. Skips worktree creation (reuses the run's existing worktree)
-/// and skips the auto-advance / fail-phase exit branches.
-async fn run_reply(
-    app: &AppHandle,
-    phase_id: &str,
-    sdk_session_id: &str,
-    user_message: &str,
+    content: String,
 ) -> AppResult<()> {
     let state = app.state::<AppState>();
     let registry = app.state::<RunnerRegistry>();
 
-    if registry.active_session(phase_id).is_some() {
-        return Err(AppError::Config(
-            "Another agent is already running for this phase. Wait for it to finish.".to_string(),
-        ));
+    // First try a warm sidecar. If the channel send fails the sidecar
+    // died between lookup and write — drop it and fall through to spawn.
+    if let Some((session_id, tx)) = registry.get_chat(&phase_id) {
+        persist_message(&state, &session_id, "user", &content).await?;
+        let _ = app.emit("message_appended", serde_json::json!({
+            "session_id": &session_id,
+            "role": "user",
+            "content": &content,
+        }));
+        let cmd_line = serde_json::to_string(&serde_json::json!({
+            "type": "reply", "content": content,
+        })).unwrap_or_default();
+        match tx.send(cmd_line).await {
+            Ok(_) => {
+                emit_run_updated(&app, &state, &phase_id).await;
+                return Ok(());
+            }
+            Err(_) => {
+                registry.unregister_chat(&phase_id);
+                // fall through to spawn fresh
+            }
+        }
     }
 
-    let (ctx, run_id, phase_kind) = load_phase_context(&state, phase_id).await?;
+    spawn_chat_and_send(&app, phase_id, content).await
+}
 
-    // Use the run's recorded worktree (if any) so commands keep landing
-    // on the same branch. Falls back to the configured codebase if the
-    // run never had one.
-    let (effective_codebase, branch_name, worktree_path): (String, Option<String>, Option<String>) = {
+/// Spawn a fresh warm chat sidecar and send it the user's first
+/// reply. The sidecar resumes the SDK session, emits `ready` once
+/// it's listening on stdin, then runs the reply. Subsequent calls to
+/// `chat_send_reply` reuse the same process via the registry.
+async fn spawn_chat_and_send(
+    app: &AppHandle,
+    phase_id: String,
+    content: String,
+) -> AppResult<()> {
+    let state = app.state::<AppState>();
+    let registry = app.state::<RunnerRegistry>();
+
+    // Look up the SDK session id to resume.
+    let row: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT sdk_session_id FROM sessions
+         WHERE phase_id = ? AND sdk_session_id IS NOT NULL
+         ORDER BY started_at DESC LIMIT 1",
+    )
+    .bind(&phase_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let sdk_session_id = match row {
+        Some((Some(id),)) => id,
+        _ => {
+            return Err(AppError::Config(
+                "No resumable SDK session on this phase. The original agent run \
+                 may have started before chat-reply support; try Send Back or \
+                 Restart instead.".into(),
+            ));
+        }
+    };
+
+    let (ctx, run_id, phase_kind) = load_phase_context(&state, &phase_id).await?;
+
+    // Reuse the run's worktree so the agent keeps landing on the same
+    // branch. Fall back to the configured codebase if there isn't one.
+    let (effective_codebase, branch_name, worktree_path) = {
         let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
             "SELECT worktree_path, branch_name FROM runs WHERE id = ?",
         )
@@ -472,35 +549,33 @@ async fn run_reply(
         return Err(AppError::Other("prompts dir not found".into()));
     };
 
-    // New session row for this reply turn.
+    // Create the Conveyer sessions row that this REPL lifetime owns.
+    // All turns from this warm sidecar append messages to this row;
+    // when the sidecar exits (idle / EOF / kill) the row is marked done.
     let session_id = Uuid::new_v4().to_string();
     sqlx::query(
         "INSERT INTO sessions(id, phase_id, role, status, started_at, sdk_session_id)
-         VALUES(?, ?, 'reply', 'running', datetime('now'), ?)",
+         VALUES(?, ?, 'chat', 'running', datetime('now'), ?)",
     )
     .bind(&session_id)
-    .bind(phase_id)
-    .bind(sdk_session_id)
+    .bind(&phase_id)
+    .bind(&sdk_session_id)
     .execute(&state.db)
     .await?;
 
-    // Persist the user's message into chat history immediately so the
-    // UI shows it before the agent has produced anything.
-    persist_message(&state, &session_id, "user", user_message).await?;
+    // Persist the user message immediately so the UI shows it before
+    // the agent has produced anything.
+    persist_message(&state, &session_id, "user", &content).await?;
     let _ = app.emit("message_appended", serde_json::json!({
         "session_id": &session_id,
         "role": "user",
-        "content": user_message,
+        "content": &content,
     }));
-    emit_run_updated(app, &state, phase_id).await;
-
-    let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
-    registry.register(phase_id.to_string(), session_id.clone(), cancel_tx);
 
     let backend = std::env::var("CONVEYER_BACKEND").unwrap_or_else(|_| "copilot".into());
     let mut cmd = Command::new("node");
     cmd.arg(&sidecar)
-        .env("CONVEYER_MODE", "reply")
+        .env("CONVEYER_MODE", "chat_repl")
         .env("CONVEYER_PHASE", &phase_kind)
         .env("CONVEYER_TASK_ID", &ctx.task_id)
         .env("CONVEYER_TASK_TITLE", &ctx.task_title)
@@ -511,33 +586,19 @@ async fn run_reply(
         .env("CONVEYER_PROMPTS_DIR", prompts.display().to_string())
         .env("CONVEYER_COPILOT_MODEL", &ctx.model)
         .env("CONVEYER_BACKEND", &backend)
-        .env("CONVEYER_RESUME_SDK_SESSION", sdk_session_id)
-        .env("CONVEYER_USER_MESSAGE", user_message);
-    if let Some(br) = &branch_name {
-        cmd.env("CONVEYER_BRANCH", br);
-    }
-    if let Some(wp) = &worktree_path {
-        cmd.env("CONVEYER_WORKTREE_PATH", wp);
-    }
-    if let Some(r) = &ctx.reasoning {
-        cmd.env("CONVEYER_COPILOT_REASONING", r);
-    }
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+        .env("CONVEYER_RESUME_SDK_SESSION", &sdk_session_id)
+        .env("CONVEYER_CHAT_IDLE_MS", "300000"); // 5min
+    if let Some(br) = &branch_name { cmd.env("CONVEYER_BRANCH", br); }
+    if let Some(wp) = &worktree_path { cmd.env("CONVEYER_WORKTREE_PATH", wp); }
+    if let Some(r) = &ctx.reasoning { cmd.env("CONVEYER_COPILOT_REASONING", r); }
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
 
-    let mut child: Child = match cmd.spawn() {
-        Ok(c) => c,
-        Err(e) => {
-            let msg = format!("Failed to spawn sidecar (reply): {e}");
-            persist_message(&state, &session_id, "system", &msg).await?;
-            sqlx::query("UPDATE sessions SET status='failed', finished_at=datetime('now') WHERE id=?")
-                .bind(&session_id)
-                .execute(&state.db)
-                .await?;
-            registry.unregister(phase_id);
-            emit_run_updated(app, &state, phase_id).await;
-            return Ok(());
-        }
-    };
+    let mut child: Child = cmd
+        .spawn()
+        .map_err(|e| AppError::Other(format!("Failed to spawn chat sidecar: {e}")))?;
 
     let pid = child.id();
     sqlx::query("UPDATE sessions SET pid = ? WHERE id = ?")
@@ -546,72 +607,134 @@ async fn run_reply(
         .execute(&state.db)
         .await?;
 
+    let stdin = child.stdin.take().expect("stdin piped");
     let stdout = child.stdout.take().expect("stdout piped");
     let stderr = child.stderr.take().expect("stderr piped");
-    let mut reader = BufReader::new(stdout).lines();
-    let mut stderr_reader = BufReader::new(stderr).lines();
 
-    let app_clone = app.clone();
-    let sid_clone = session_id.clone();
+    let (stdin_tx, stdin_rx) = mpsc::channel::<String>(8);
+    let (ready_tx, ready_rx) = oneshot::channel::<()>();
+
+    // stdin writer task — drains the mpsc into the child's stdin.
+    tauri::async_runtime::spawn(chat_stdin_writer(stdin, stdin_rx));
+
+    // stderr drain.
+    let app_err = app.clone();
+    let sid_err = session_id.clone();
     tauri::async_runtime::spawn(async move {
-        let state = app_clone.state::<AppState>();
-        while let Ok(Some(line)) = stderr_reader.next_line().await {
-            let _ = persist_message(&state, &sid_clone, "system", &line).await;
-            let _ = app_clone.emit("message_appended", serde_json::json!({
-                "session_id": &sid_clone,
+        let state = app_err.state::<AppState>();
+        let mut reader = BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = reader.next_line().await {
+            let _ = persist_message(&state, &sid_err, "system", &line).await;
+            let _ = app_err.emit("message_appended", serde_json::json!({
+                "session_id": &sid_err,
                 "role": "system",
                 "content": &line,
             }));
         }
     });
 
-    let mut ok = false;
-    let mut error_msg: Option<String> = None;
-    loop {
-        tokio::select! {
-            _ = &mut cancel_rx => {
-                let _ = child.kill().await;
-                error_msg = Some("Cancelled by user".to_string());
-                break;
-            }
-            line = reader.next_line() => {
-                match line {
-                    Ok(Some(line)) => {
-                        if !handle_line(app, &state, &session_id, phase_id, &line, &mut ok, &mut error_msg).await {
-                            break;
-                        }
-                    }
-                    Ok(None) => break,
-                    Err(e) => { error_msg = Some(format!("Read error: {e}")); break; }
-                }
-            }
+    // stdout reader task — the long-running one. Owns the Child so it
+    // can wait on exit + cleanup the registry entry.
+    let app_clone = app.clone();
+    let sid_clone = session_id.clone();
+    let phase_clone = phase_id.clone();
+    tauri::async_runtime::spawn(async move {
+        chat_reader_loop(app_clone, sid_clone, phase_clone, child, stdout, ready_tx).await;
+    });
+
+    // Wait for the sidecar to be ready before we register + send. If it
+    // never sends `ready`, the spawn task will clean up on its own.
+    let ready_timeout = std::time::Duration::from_secs(60);
+    match tokio::time::timeout(ready_timeout, ready_rx).await {
+        Ok(Ok(())) => {}
+        _ => {
+            return Err(AppError::Other(
+                "Chat sidecar did not become ready within 60s.".into(),
+            ));
         }
     }
 
-    let status = child.wait().await;
-    let exit_ok = matches!(status, Ok(s) if s.success());
-    let final_ok = ok && exit_ok;
+    registry.register_chat(phase_id.clone(), session_id.clone(), stdin_tx.clone());
 
-    sqlx::query(
-        "UPDATE sessions SET status = ?, finished_at = datetime('now') WHERE id = ?",
-    )
-    .bind(if final_ok { "done" } else { "failed" })
-    .bind(&session_id)
-    .execute(&state.db)
-    .await?;
+    let cmd_line = serde_json::to_string(&serde_json::json!({
+        "type": "reply", "content": content,
+    })).unwrap_or_default();
+    stdin_tx
+        .send(cmd_line)
+        .await
+        .map_err(|_| AppError::Other("Chat sidecar closed before first reply could be sent.".into()))?;
 
-    // Reply mode never advances the pipeline. The phase status the user
-    // was on (waiting / failed / done) stays. Drop any send-back intent
-    // a renegade tool call might have stashed — review send-back should
-    // only flow from the original review run, not from chat replies.
-    let _ = registry.take_send_back(phase_id);
-    registry.unregister(phase_id);
-    if !final_ok {
-        let final_msg = error_msg.unwrap_or_else(|| "Chat reply ended without success".to_string());
-        let _ = persist_message(&state, &session_id, "system", &format!("[error] {final_msg}")).await;
-    }
-    emit_run_updated(app, &state, phase_id).await;
+    emit_run_updated(app, &state, &phase_id).await;
     Ok(())
+}
+
+async fn chat_stdin_writer(mut stdin: ChildStdin, mut rx: mpsc::Receiver<String>) {
+    while let Some(line) = rx.recv().await {
+        if stdin.write_all(line.as_bytes()).await.is_err() { break; }
+        if stdin.write_all(b"\n").await.is_err() { break; }
+        if stdin.flush().await.is_err() { break; }
+    }
+}
+
+/// Long-running reader for a warm chat sidecar. Forwards regular
+/// events through `handle_line` and watches for the chat-specific
+/// `ready` / `turn_done` events. Owns the Child so it can clean up
+/// once the sidecar exits (idle timeout, EOF, or kill).
+async fn chat_reader_loop(
+    app: AppHandle,
+    session_id: String,
+    phase_id: String,
+    mut child: Child,
+    stdout: tokio::process::ChildStdout,
+    ready_tx: oneshot::Sender<()>,
+) {
+    let state = app.state::<AppState>();
+    let mut reader = BufReader::new(stdout).lines();
+    let mut ready_tx_opt = Some(ready_tx);
+    let mut ok = false;
+    let mut error_msg: Option<String> = None;
+
+    loop {
+        match reader.next_line().await {
+            Ok(Some(line)) => {
+                if line.trim().is_empty() { continue; }
+                // Peek for chat-specific events before delegating.
+                if let Ok(ev) = serde_json::from_str::<SidecarEvent>(&line) {
+                    match &ev {
+                        SidecarEvent::Ready => {
+                            if let Some(tx) = ready_tx_opt.take() {
+                                let _ = tx.send(());
+                            }
+                            continue;
+                        }
+                        SidecarEvent::TurnDone { .. } => {
+                            emit_run_updated(&app, &state, &phase_id).await;
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+                if !handle_line(&app, &state, &session_id, &phase_id, &line, &mut ok, &mut error_msg).await {
+                    // `done` event = sidecar is shutting down (idle or
+                    // command). Reader continues to drain until EOF.
+                    continue;
+                }
+            }
+            Ok(None) => break,
+            Err(_) => break,
+        }
+    }
+
+    let _ = child.wait().await;
+
+    // Mark the session row done and remove from the chat registry.
+    let _ = sqlx::query("UPDATE sessions SET status='done', finished_at=datetime('now') WHERE id=?")
+        .bind(&session_id)
+        .execute(&state.db)
+        .await;
+    let registry = app.state::<RunnerRegistry>();
+    registry.unregister_chat(&phase_id);
+    emit_run_updated(&app, &state, &phase_id).await;
 }
 
 
@@ -1047,6 +1170,11 @@ async fn handle_line(
             .bind(phase_id)
             .execute(&state.db)
             .await;
+        }
+        SidecarEvent::Ready | SidecarEvent::TurnDone { .. } => {
+            // Chat-REPL-only events; the chat reader loop intercepts
+            // them before delegating here. If they reach this dispatcher
+            // (e.g. emitted in the wrong mode) just ignore.
         }
         SidecarEvent::Done { ok: done_ok, error } => {
             *ok = done_ok;

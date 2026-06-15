@@ -133,26 +133,9 @@ pub async fn chat_reply(
         ));
     }
 
-    // Find the most recent session row for this phase that has a SDK
-    // session id we can resume.
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT sdk_session_id FROM sessions
-         WHERE phase_id = ? AND sdk_session_id IS NOT NULL
-         ORDER BY started_at DESC LIMIT 1",
-    )
-    .bind(&phase_id)
-    .fetch_optional(&state.db)
-    .await?;
-    let Some((sdk_session_id,)) = row else {
-        return Err(crate::error::AppError::Config(
-            "No resumable SDK session on this phase. The agent may have started \
-             before chat-reply support; try Send Back or Restart instead."
-                .to_string(),
-        ));
-    };
-
-    session_runner::spawn_reply(app.clone(), phase_id, sdk_session_id, trimmed);
-    Ok(())
+    // Hand off to the warm chat sidecar (which spawns lazily on first
+    // use and stays warm for ~5 min so subsequent replies are instant).
+    session_runner::chat_send_reply(app.clone(), phase_id, trimmed).await
 }
 
 #[derive(Debug, Serialize)]

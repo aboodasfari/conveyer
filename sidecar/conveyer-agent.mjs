@@ -288,6 +288,159 @@ async function runCopilotReply(phase, userMessage, sessionId) {
   });
 }
 
+/**
+ * Long-lived chat REPL. Boots the SDK + resumeSession once, then
+ * loops on stdin reading NDJSON commands like {"type":"reply", "content":"..."}
+ * and runs sendAndWait for each. Emits {"type":"ready"} once the
+ * session is resumed, {"type":"turn_done", "ok":bool} after each turn.
+ * Exits cleanly on stdin EOF, an idle timeout, or a {"type":"shutdown"}
+ * command. Lets the Rust runner keep a warm process per phase so
+ * subsequent replies skip the SDK boot cost.
+ */
+async function runCopilotChatRepl(sessionId, idleMs) {
+  let CopilotClient, approveAll;
+  try {
+    ({ CopilotClient, approveAll } = await import("@github/copilot-sdk"));
+  } catch (e) {
+    msg("system", `@github/copilot-sdk not installed: ${e?.message ?? e}`);
+    emit({ type: "done", ok: false, error: "Install @github/copilot-sdk in the conveyer package." });
+    return;
+  }
+
+  const client = new CopilotClient();
+  let session;
+  try {
+    await client.start?.();
+    const baseConfig = {
+      model: env.CONVEYER_COPILOT_MODEL || "gpt-5.1",
+      streaming: true,
+      workingDirectory: env.CONVEYER_CODEBASE_PATH || process.cwd(),
+      onPermissionRequest: approveAll ?? (() => ({ decision: "approve_once" })),
+      enableSkills: true,
+      pluginDirectories: await discoverPluginDirs(),
+      tools: phaseTools(),
+    };
+    if (env.CONVEYER_COPILOT_REASONING) {
+      baseConfig.reasoningEffort = env.CONVEYER_COPILOT_REASONING;
+    }
+    session = await client.resumeSession(sessionId, baseConfig);
+    msg("system", `[chat] resumed SDK session ${sessionId.slice(0, 8)}…`);
+  } catch (e) {
+    msg("system", `Failed to start Copilot SDK: ${e?.message ?? e}`);
+    try { await client.stop?.(); } catch { /* noop */ }
+    emit({ type: "done", ok: false, error: e?.message ?? String(e) });
+    return;
+  }
+
+  // Shared streaming buffer + event subscription, identical to the
+  // one-shot path; we just don't tear it down between turns.
+  let buffer = "";
+  const flush = () => {
+    if (buffer.length === 0) return;
+    msg("assistant", buffer);
+    buffer = "";
+  };
+  const unsubscribe = session.on((event) => {
+    switch (event.type) {
+      case "assistant.message_delta":
+        if (event.data?.deltaContent) buffer += event.data.deltaContent;
+        break;
+      case "assistant.message":
+        flush();
+        break;
+      case "assistant.reasoning":
+        if (event.data?.content) msg("system", `[thinking] ${event.data.content}`);
+        break;
+      case "tool.execution_start":
+        emit({
+          type: "tool_call",
+          phase: "start",
+          tool_call_id: event.data?.toolCallId ?? null,
+          tool: event.data?.toolName ?? event.data?.mcpToolName ?? "tool",
+          arguments: event.data?.arguments ?? null,
+        });
+        break;
+      case "tool.execution_complete":
+        emit({
+          type: "tool_call",
+          phase: "complete",
+          tool_call_id: event.data?.toolCallId ?? null,
+          tool: event.data?.toolName ?? event.data?.mcpToolName ?? "tool",
+          success: event.data?.success ?? false,
+          result: event.data?.result?.detailedContent ?? event.data?.result?.content ?? null,
+          error: event.data?.error?.message ?? null,
+        });
+        break;
+      case "session.error":
+        msg("system", `[error] ${event.data?.message ?? JSON.stringify(event.data)}`);
+        break;
+      default:
+        break;
+    }
+  });
+
+  // Ready for commands.
+  emit({ type: "ready" });
+
+  // Idle watchdog. Reset before/after each turn; if it fires the
+  // process exits cleanly and the next user reply will spawn a fresh
+  // one.
+  let idleTimer = setTimeout(shutdownIdle, idleMs);
+  function shutdownIdle() {
+    msg("system", `[chat] idle for ${(idleMs / 1000) | 0}s, shutting down warm sidecar.`);
+    emit({ type: "done", ok: true });
+    // Give stdout a tick to flush.
+    setTimeout(() => process.exit(0), 50);
+  }
+  function resetIdle() {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(shutdownIdle, idleMs);
+  }
+
+  // Read stdin line-by-line. Node's readline is the simplest way.
+  const { default: readline } = await import("node:readline");
+  const rl = readline.createInterface({ input: process.stdin });
+  const TURN_TIMEOUT_MS = 30 * 60 * 1000;
+  let busy = false;
+
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+    let cmd;
+    try { cmd = JSON.parse(line); } catch { continue; }
+    if (cmd.type === "shutdown") break;
+    if (cmd.type !== "reply") continue;
+    if (busy) {
+      emit({ type: "turn_done", ok: false, error: "Previous reply still running." });
+      continue;
+    }
+    const content = String(cmd.content ?? "").trim();
+    if (!content) {
+      emit({ type: "turn_done", ok: false, error: "empty reply" });
+      continue;
+    }
+    busy = true;
+    clearTimeout(idleTimer);
+    try {
+      await session.sendAndWait({ prompt: content }, TURN_TIMEOUT_MS);
+      flush();
+      emit({ type: "turn_done", ok: true });
+    } catch (e) {
+      flush();
+      msg("system", `Session failed: ${e?.message ?? e}`);
+      emit({ type: "turn_done", ok: false, error: e?.message ?? String(e) });
+    } finally {
+      busy = false;
+      resetIdle();
+    }
+  }
+
+  // EOF or shutdown command — clean up.
+  clearTimeout(idleTimer);
+  try { unsubscribe?.(); } catch { /* noop */ }
+  try { await client.stop?.(); } catch { /* noop */ }
+  emit({ type: "done", ok: true });
+}
+
 async function runCopilotSession({ phase, prompt, resume }) {
   let CopilotClient, approveAll;
   try {
@@ -494,6 +647,28 @@ async function main() {
       console.error(`render_prompt failed: ${e?.message ?? e}`);
       process.exit(1);
     }
+  }
+
+  // Special mode: long-lived chat REPL. Resumes the SDK session once
+  // and then loops on stdin for {"type":"reply",...} commands. Used
+  // by the Rust runner to keep a warm sidecar per phase so subsequent
+  // chat replies skip the SDK boot cost. Idle timeout (default 5min)
+  // kills the process so we don't hold resources indefinitely.
+  if (env.CONVEYER_MODE === "chat_repl") {
+    const sessionId = env.CONVEYER_RESUME_SDK_SESSION;
+    if (!sessionId) {
+      emit({ type: "done", ok: false, error: "CONVEYER_RESUME_SDK_SESSION not set" });
+      process.exit(1);
+    }
+    const idleMs = parseInt(env.CONVEYER_CHAT_IDLE_MS || "", 10);
+    const idle = Number.isFinite(idleMs) && idleMs > 0 ? idleMs : 5 * 60 * 1000;
+    try {
+      await runCopilotChatRepl(sessionId, idle);
+    } catch (e) {
+      emit({ type: "done", ok: false, error: e?.message ?? String(e) });
+      process.exit(1);
+    }
+    return;
   }
 
   // Special mode: reply to an existing SDK session with a fresh user
