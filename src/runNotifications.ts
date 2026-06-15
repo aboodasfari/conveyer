@@ -7,9 +7,7 @@ import {
 } from "@tauri-apps/plugin-notification";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api } from "./api";
-import { Phase, TaskSummary } from "./types";
-
-const PREF_KEYS = {
+import { Phase, TaskSummary } from "./types";const PREF_KEYS = {
   enabled: "notif_enabled",
   waiting: "notif_waiting",
   failed: "notif_failed",
@@ -68,8 +66,15 @@ export function useRunNotifications() {
   const lastStatusByPhase = useRef<Map<string, string>>(new Map());
   const knownTaskIds = useRef<Set<string>>(new Set());
   const permission = useRef<boolean | null>(null);
+  // Tauri's window.isFocused is the source of truth on macOS; the DOM's
+  // document.hasFocus() can lie when the WebView keeps internal focus
+  // while the window itself is backgrounded.
+  const windowFocused = useRef<boolean>(true);
 
   useEffect(() => {
+    let unlistenFocus: UnlistenFn | null = null;
+    let unlistenBlur: UnlistenFn | null = null;
+    let cancelled = false;
     void (async () => {
       try {
         let granted = await isPermissionGranted();
@@ -78,10 +83,35 @@ export function useRunNotifications() {
           granted = res === "granted";
         }
         permission.current = granted;
-      } catch {
+        // eslint-disable-next-line no-console
+        console.info(`[notif] permission: ${granted ? "granted" : "denied"}`);
+      } catch (e) {
         permission.current = false;
+        // eslint-disable-next-line no-console
+        console.warn("[notif] permission check failed:", e);
+      }
+
+      try {
+        const win = getCurrentWindow();
+        windowFocused.current = await win.isFocused();
+        unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
+          windowFocused.current = focused;
+        });
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn("[notif] focus tracking unavailable:", e);
+      }
+
+      if (cancelled) {
+        unlistenFocus?.();
+        unlistenBlur?.();
       }
     })();
+    return () => {
+      cancelled = true;
+      unlistenFocus?.();
+      unlistenBlur?.();
+    };
   }, []);
 
   useEffect(() => {
@@ -90,12 +120,35 @@ export function useRunNotifications() {
     let cancelled = false;
 
     const maybeNotify = async (kind: NotifKind, title: string, body: string) => {
-      if (!permission.current) return;
-      if (document.hasFocus()) return;
+      if (!permission.current) {
+        // eslint-disable-next-line no-console
+        console.info(`[notif] skipped (${kind}): permission not granted`);
+        return;
+      }
+      if (windowFocused.current) {
+        // eslint-disable-next-line no-console
+        console.info(`[notif] skipped (${kind}): window focused`);
+        return;
+      }
       const prefs = await loadNotifPrefs();
-      if (!prefs.enabled) return;
-      if (!prefs[kind]) return;
-      try { sendNotification({ title, body }); } catch { /* noop */ }
+      if (!prefs.enabled) {
+        // eslint-disable-next-line no-console
+        console.info(`[notif] skipped (${kind}): master toggle off`);
+        return;
+      }
+      if (!prefs[kind]) {
+        // eslint-disable-next-line no-console
+        console.info(`[notif] skipped (${kind}): ${kind} toggle off`);
+        return;
+      }
+      try {
+        sendNotification({ title, body });
+        // eslint-disable-next-line no-console
+        console.info(`[notif] fired (${kind}): ${title}`);
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn(`[notif] send failed (${kind}):`, e);
+      }
     };
 
     const refresh = async (announce: boolean) => {
