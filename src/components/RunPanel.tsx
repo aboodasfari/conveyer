@@ -556,11 +556,6 @@ function PhaseRow({
                 ? "Reviewer requested changes"
                 : "Reviewer approved"}
             </Text>
-            {phase.review_reason && (
-              <Text sx={{ fontSize: 0, color: "fg.muted", display: "block", mt: 1, whiteSpace: "pre-wrap" }}>
-                {phase.review_reason}
-              </Text>
-            )}
           </Box>
         )}
         {phase.status === "running" && (
