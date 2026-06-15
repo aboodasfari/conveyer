@@ -337,19 +337,16 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
       >
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
           <Text>
-            This will permanently delete <Box as="strong" sx={{ fontWeight: 600 }}>{deleting?.title}</Box>{" "}
-            along with its runs, phases, sessions, chat history, and artifacts.
+            Permanently delete <Box as="strong" sx={{ fontWeight: 600 }}>{deleting?.title}</Box>,
+            its runs, chat, and artifacts.
           </Text>
           {deleting?.source_id && deleting.source_id !== "local" && (
             <Text sx={{ fontSize: 0, color: "attention.fg" }}>
-              This task came from <Box as="code" sx={{ fontFamily: "mono" }}>{deleting.source_id}</Box>.
-              If the upstream still has it, the next source refresh will recreate it. Use Archive
-              instead if you just want to hide it.
+              From an external source — the next refresh may bring it back. Archive to hide instead.
             </Text>
           )}
           <Text sx={{ fontSize: 0, color: "fg.muted" }}>
-            Any worktrees created for this task will also be removed. Branches and commits are left
-            intact in your workspace so you can keep, push, or clean them up manually.
+            Worktrees are removed; branches stay.
           </Text>
           <Text sx={{ color: "fg.muted" }}>This can't be undone.</Text>
         </Box>
