@@ -998,25 +998,26 @@ function NotificationsSection() {
               on={prefs.enabled}
               onToggle={() => void toggle("enabled")}
             />
-            {prefs.enabled && (
-              <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pl: 4 }}>
-                <NotifToggle
-                  label="Waiting for approval"
-                  on={prefs.waiting}
-                  onToggle={() => void toggle("waiting")}
-                />
-                <NotifToggle
-                  label="Phase failed"
-                  on={prefs.failed}
-                  onToggle={() => void toggle("failed")}
-                />
-                <NotifToggle
-                  label="New task discovered"
-                  on={prefs.newTask}
-                  onToggle={() => void toggle("newTask")}
-                />
-              </Box>
-            )}
+            <Box sx={{ borderTop: "1px solid", borderTopColor: "border.muted", mt: 1, pt: 2, display: "flex", flexDirection: "column", gap: 2 }}>
+              <NotifToggle
+                label="Waiting for approval"
+                on={prefs.waiting}
+                onToggle={() => void toggle("waiting")}
+                disabled={!prefs.enabled}
+              />
+              <NotifToggle
+                label="Phase failed"
+                on={prefs.failed}
+                onToggle={() => void toggle("failed")}
+                disabled={!prefs.enabled}
+              />
+              <NotifToggle
+                label="New task discovered"
+                on={prefs.newTask}
+                onToggle={() => void toggle("newTask")}
+                disabled={!prefs.enabled}
+              />
+            </Box>
           </Box>
         </SubSection>
       )}
@@ -1024,11 +1025,34 @@ function NotificationsSection() {
   );
 }
 
-function NotifToggle({ label, on, onToggle }: { label: string; on: boolean; onToggle: () => void }) {
+function NotifToggle({
+  label,
+  on,
+  onToggle,
+  disabled = false,
+}: {
+  label: string;
+  on: boolean;
+  onToggle: () => void;
+  disabled?: boolean;
+}) {
   return (
-    <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+    <Box
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        opacity: disabled ? 0.5 : 1,
+      }}
+    >
       <Text>{label}</Text>
-      <ToggleSwitch checked={on} onClick={onToggle} aria-label={label} size="small" />
+      <ToggleSwitch
+        checked={on}
+        onClick={disabled ? undefined : onToggle}
+        disabled={disabled}
+        aria-label={label}
+        size="small"
+      />
     </Box>
   );
 }
