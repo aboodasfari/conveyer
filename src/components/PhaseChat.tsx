@@ -274,16 +274,13 @@ export function PhaseChat({
 
   // Eagerly spawn the warm chat sidecar when the chat would actually
   // be usable, so the user's first message hits a hot SDK instead of
-  // paying ~5s of cold-start. Skipped while the phase is still
-  // running (to avoid spawning a duplicate chat sidecar that would
-  // race the main runner for the same SDK session) and for terminal
+  // paying ~5s of cold-start. Skipped for failed / cancelled phases
+  // (no chat allowed — Restart is the path forward) and for terminal
   // 'done' phases in the middle of a pipeline. Best-effort: backend
   // silently no-ops if there's no resumable SDK session.
   useEffect(() => {
     const canWarm =
       phaseStatus === "waiting" ||
-      phaseStatus === "failed" ||
-      phaseStatus === "cancelled" ||
       (phaseStatus === "done" && runStatus === "done");
     if (!canWarm) return;
     void api.chatWarm(phaseId);
@@ -550,8 +547,8 @@ function computeChatMode(
     case "failed":
     case "cancelled":
       return {
-        kind: "enabled",
-        placeholder: "Chat with the agent to debug or steer past the error.",
+        kind: "disabled-hint",
+        hint: "This phase ended in failure. Restart it to talk to the agent again.",
       };
     case "done":
       if (runStatus === "done") {
