@@ -9,23 +9,64 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api } from "./api";
 import { Phase, TaskSummary } from "./types";
 
+const PREF_KEYS = {
+  enabled: "notif_enabled",
+  waiting: "notif_waiting",
+  failed: "notif_failed",
+  newTask: "notif_new_task",
+} as const;
+
+export type NotifKind = "waiting" | "failed" | "newTask";
+
+const DEFAULT_PREFS: Record<keyof typeof PREF_KEYS, boolean> = {
+  enabled: true,
+  waiting: true,
+  failed: true,
+  newTask: true,
+};
+
+/** Read a single boolean setting, treating any non-"0"/"false" value (or
+ *  unset) as the supplied default. Centralised here so the same shape is
+ *  used everywhere we touch notification prefs. */
+async function readPref(key: string, fallback: boolean): Promise<boolean> {
+  try {
+    const v = await api.settingGet(key);
+    if (v === null || v === undefined) return fallback;
+    return v !== "0" && v.toLowerCase() !== "false";
+  } catch {
+    return fallback;
+  }
+}
+
+export async function loadNotifPrefs(): Promise<Record<keyof typeof PREF_KEYS, boolean>> {
+  const entries = await Promise.all(
+    (Object.entries(PREF_KEYS) as [keyof typeof PREF_KEYS, string][]).map(
+      async ([k, key]) => [k, await readPref(key, DEFAULT_PREFS[k])] as const,
+    ),
+  );
+  return Object.fromEntries(entries) as Record<keyof typeof PREF_KEYS, boolean>;
+}
+
+export async function setNotifPref(kind: keyof typeof PREF_KEYS, value: boolean): Promise<void> {
+  await api.settingSet(PREF_KEYS[kind], value ? "1" : "0");
+  window.dispatchEvent(new CustomEvent("conveyer:notif-prefs-changed"));
+}
+
 /**
- * Watches all runs for phase-status transitions and fires a native OS
- * notification when something needs the user's attention (a phase enters
- * `waiting` for approval, or fails) and the app is not currently focused.
+ * Watches the backend for things worth nudging the user about and fires a
+ * native OS notification — only while the window isn't focused, and only
+ * for the kinds the user has enabled in Settings.
  *
- * Mounted once at the app shell. Cheap: re-fetches the task list whenever
- * the backend emits `run_updated`, diffs against the previous snapshot of
- * phase statuses by id.
+ * Mounted once at the app shell. Triggers:
+ *  - phase enters `waiting` (needs approval)
+ *  - phase enters `failed`
+ *  - a new task appears in the dashboard (source refresh discovered it)
  *
- * Click on a notification → focuses the window and (where Tauri supports
- * it) navigates to the task. The plugin doesn't expose click callbacks on
- * macOS reliably, so we just focus and rely on the user.
+ * Initial snapshots are seeded silently so we don't spam at startup.
  */
 export function useRunNotifications() {
   const lastStatusByPhase = useRef<Map<string, string>>(new Map());
-  const taskTitleById = useRef<Map<string, string>>(new Map());
-  const seeded = useRef(false);
+  const knownTaskIds = useRef<Set<string>>(new Set());
   const permission = useRef<boolean | null>(null);
 
   useEffect(() => {
@@ -45,17 +86,39 @@ export function useRunNotifications() {
 
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
+    let unlistenRefreshed: (() => void) | null = null;
     let cancelled = false;
+
+    const maybeNotify = async (kind: NotifKind, title: string, body: string) => {
+      if (!permission.current) return;
+      if (document.hasFocus()) return;
+      const prefs = await loadNotifPrefs();
+      if (!prefs.enabled) return;
+      if (!prefs[kind]) return;
+      try { sendNotification({ title, body }); } catch { /* noop */ }
+    };
 
     const refresh = async (announce: boolean) => {
       try {
         const tasks = await api.tasksList();
-        // Build a per-task title lookup so the notification body is useful.
-        for (const t of tasks) taskTitleById.current.set(t.id, t.title);
+        // New-task detection runs over the full list (cheap; tasks have
+        // stable ids). Seeded silently on the first pass.
+        const ids = new Set(tasks.map((t) => t.id));
+        if (announce) {
+          for (const t of tasks) {
+            if (!knownTaskIds.current.has(t.id)) {
+              void maybeNotify(
+                "newTask",
+                "New task",
+                `“${t.title}” was discovered from ${t.source_id}.`,
+              );
+            }
+          }
+        }
+        knownTaskIds.current = ids;
 
-        // We need phase status, but tasksList only carries the run summary.
-        // Pull full run details for tasks that have an active or recently-
-        // changed run. Cheap enough for the typical handful of in-flight tasks.
+        // Phase transitions need full run details. Pull only for tasks
+        // with an active/changed run.
         const candidates = tasks.filter(
           (t) =>
             t.run_status === "running" ||
@@ -83,15 +146,10 @@ export function useRunNotifications() {
       const prev = lastStatusByPhase.current.get(phase.id);
       lastStatusByPhase.current.set(phase.id, phase.status);
       if (!announce) return;
-      if (!permission.current) return;
 
-      // Only notify on *transitions into* states the user cares about,
-      // and only when the window doesn't already have focus (no point
-      // ringing a bell for someone staring at the screen).
       const becameWaiting = phase.status === "waiting" && prev !== "waiting";
       const becameFailed = phase.status === "failed" && prev !== "failed";
       if (!becameWaiting && !becameFailed) return;
-      if (document.hasFocus()) return;
 
       const phaseLabel = labelFor(phase.kind);
       const title = becameWaiting
@@ -100,27 +158,29 @@ export function useRunNotifications() {
       const body = becameWaiting
         ? `“${task.title}” is waiting for your approval.`
         : `“${task.title}” stopped during ${phaseLabel.toLowerCase()}.`;
-      try {
-        sendNotification({ title, body });
-      } catch {
-        // Plugin not available or denied — silently skip.
-      }
+      void maybeNotify(becameWaiting ? "waiting" : "failed", title, body);
     };
 
     void (async () => {
-      // Seed the snapshot without firing for current state, so we only
-      // notify on changes that happen *after* the app loads.
+      // Seed the snapshots without firing for current state.
       await refresh(false);
-      seeded.current = true;
       unlisten = await listen("run_updated", () => {
         if (cancelled) return;
         void refresh(true);
       });
-      if (cancelled) unlisten();
+      // Auto-refresh polling fires this — new tasks appear here.
+      const handler = () => { if (!cancelled) void refresh(true); };
+      window.addEventListener("conveyer:sources-refreshed", handler);
+      unlistenRefreshed = () => window.removeEventListener("conveyer:sources-refreshed", handler);
+      if (cancelled) {
+        unlisten();
+        unlistenRefreshed();
+      }
     })();
     return () => {
       cancelled = true;
       if (unlisten) unlisten();
+      if (unlistenRefreshed) unlistenRefreshed();
     };
   }, []);
 }

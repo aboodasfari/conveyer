@@ -928,6 +928,7 @@ function NewWorkspaceRow({
 function NotificationsSection() {
   const [granted, setGranted] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
+  const [prefs, setPrefs] = useState<{ enabled: boolean; waiting: boolean; failed: boolean; newTask: boolean } | null>(null);
 
   const refresh = async () => {
     try {
@@ -935,6 +936,12 @@ function NotificationsSection() {
       setGranted(await isPermissionGranted());
     } catch {
       setGranted(false);
+    }
+    try {
+      const { loadNotifPrefs } = await import("../runNotifications");
+      setPrefs(await loadNotifPrefs());
+    } catch {
+      setPrefs({ enabled: true, waiting: true, failed: true, newTask: true });
     }
   };
 
@@ -953,33 +960,75 @@ function NotificationsSection() {
     }
   };
 
+  const toggle = async (kind: "enabled" | "waiting" | "failed" | "newTask") => {
+    if (!prefs) return;
+    const next = { ...prefs, [kind]: !prefs[kind] };
+    setPrefs(next);
+    try {
+      const { setNotifPref } = await import("../runNotifications");
+      await setNotifPref(kind, next[kind]);
+    } catch {
+      setPrefs(prefs);
+    }
+  };
+
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <Heading as="h2" sx={{ fontSize: 2 }}>Notifications</Heading>
 
-      <SubSection
-        title="System notifications"
-        description="Conveyer pings you when a phase is waiting for your approval or fails — only while the window isn't focused."
-        noBorder
-      >
-        {granted === null ? (
-          <Text sx={{ color: "fg.muted", fontSize: 1 }}>Checking…</Text>
-        ) : granted ? (
-          <Text sx={{ color: "fg.muted", fontSize: 1 }}>
-            Enabled. Manage in System Settings → Notifications → Conveyer.
-          </Text>
-        ) : (
+      {granted === false && (
+        <SubSection title="Permission required" noBorder>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "flex-start" }}>
             <Text sx={{ color: "fg.muted", fontSize: 1 }}>
-              Not enabled. If macOS doesn't prompt when you click Enable, open System
-              Settings → Notifications → Conveyer to turn them on.
+              macOS hasn't granted Conveyer notification permission. If clicking Enable doesn't
+              prompt, toggle it in System Settings → Notifications → Conveyer.
             </Text>
             <Button variant="primary" onClick={() => void enable()} disabled={busy}>
               {busy ? "Requesting…" : "Enable notifications"}
             </Button>
           </Box>
-        )}
-      </SubSection>
+        </SubSection>
+      )}
+
+      {granted !== false && prefs && (
+        <SubSection title="What to notify me about" noBorder>
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <NotifToggle
+              label="All notifications"
+              on={prefs.enabled}
+              onToggle={() => void toggle("enabled")}
+            />
+            {prefs.enabled && (
+              <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pl: 4 }}>
+                <NotifToggle
+                  label="Waiting for approval"
+                  on={prefs.waiting}
+                  onToggle={() => void toggle("waiting")}
+                />
+                <NotifToggle
+                  label="Phase failed"
+                  on={prefs.failed}
+                  onToggle={() => void toggle("failed")}
+                />
+                <NotifToggle
+                  label="New task discovered"
+                  on={prefs.newTask}
+                  onToggle={() => void toggle("newTask")}
+                />
+              </Box>
+            )}
+          </Box>
+        </SubSection>
+      )}
+    </Box>
+  );
+}
+
+function NotifToggle({ label, on, onToggle }: { label: string; on: boolean; onToggle: () => void }) {
+  return (
+    <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <Text>{label}</Text>
+      <ToggleSwitch checked={on} onClick={onToggle} aria-label={label} size="small" />
     </Box>
   );
 }
