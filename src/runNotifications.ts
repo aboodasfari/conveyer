@@ -73,7 +73,6 @@ export function useRunNotifications() {
 
   useEffect(() => {
     let unlistenFocus: UnlistenFn | null = null;
-    let unlistenBlur: UnlistenFn | null = null;
     let cancelled = false;
     void (async () => {
       try {
@@ -102,15 +101,11 @@ export function useRunNotifications() {
         console.warn("[notif] focus tracking unavailable:", e);
       }
 
-      if (cancelled) {
-        unlistenFocus?.();
-        unlistenBlur?.();
-      }
+      if (cancelled && unlistenFocus) unlistenFocus();
     })();
     return () => {
       cancelled = true;
-      unlistenFocus?.();
-      unlistenBlur?.();
+      if (unlistenFocus) unlistenFocus();
     };
   }, []);
 
