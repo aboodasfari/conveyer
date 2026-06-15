@@ -273,8 +273,83 @@ export function PhaseChat({
     };
   }, [phaseId]);
 
-  // Auto-scroll on new bubbles.
+  // Eagerly spawn the warm chat sidecar when the chat tab mounts, so
+  // the user's first message hits a hot SDK instead of paying ~5s of
+  // cold-start. Best-effort: backend silently no-ops if there's no
+  // resumable SDK session yet (e.g. phase hasn't run).
   useEffect(() => {
+    void api.chatWarm(phaseId);
+  }, [phaseId]);
+
+  // Pulse on the last bubble. For 'main' sessions the existing
+  // signal (session.status === 'running') is right — process alive
+  // means agent producing. For 'chat' sessions the process stays
+  // alive between turns; we listen to chat_turn_state events from
+  // Rust to know when a turn is actually in flight.
+  const [chatTurnBusy, setChatTurnBusy] = useState(false);
+  useEffect(() => {
+    let unlisten: UnlistenFn | null = null;
+    let cancelled = false;
+    void (async () => {
+      unlisten = await listen<{ phase_id: string; busy: boolean }>(
+        "chat_turn_state",
+        (e) => {
+          if (cancelled) return;
+          if (e.payload.phase_id !== phaseId) return;
+          setChatTurnBusy(e.payload.busy);
+        },
+      );
+      if (cancelled) unlisten();
+    })();
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, [phaseId]);
+
+  // Scroll behaviour: preserve user's position across re-mounts
+  // (tab switches), use sticky-bottom auto-scroll for new bubbles
+  // (only follow the conversation if user is already near the bottom),
+  // and snap to bottom when the user sends a message.
+  const SCROLL_KEY = `conveyer:chat-scroll:${phaseId}`;
+  const isNearBottomRef = useRef(true);
+  const scrollRestoredRef = useRef(false);
+
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+      isNearBottomRef.current = dist < 80;
+      sessionStorage.setItem(SCROLL_KEY, String(el.scrollTop));
+    };
+    el.addEventListener("scroll", onScroll);
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [SCROLL_KEY]);
+
+  // Restore scroll once after initial load. First-time visitors land
+  // at the bottom (newest message), returning visitors land where
+  // they left off.
+  useEffect(() => {
+    if (loading || scrollRestoredRef.current) return;
+    const el = scrollerRef.current;
+    if (!el) return;
+    const saved = sessionStorage.getItem(SCROLL_KEY);
+    if (saved !== null) {
+      el.scrollTop = Number(saved);
+      const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+      isNearBottomRef.current = dist < 80;
+    } else {
+      el.scrollTop = el.scrollHeight;
+      isNearBottomRef.current = true;
+    }
+    scrollRestoredRef.current = true;
+  }, [loading, SCROLL_KEY]);
+
+  // Sticky-bottom auto-scroll on new bubbles.
+  useEffect(() => {
+    if (!scrollRestoredRef.current) return;
+    if (!isNearBottomRef.current) return;
     const el = scrollerRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
@@ -296,6 +371,9 @@ export function PhaseChat({
     if (!content || sending) return;
     setSending(true);
     setSendError(null);
+    // Force scroll to bottom when the user sends — they want to see
+    // their message + the agent's reply. Also re-arm sticky-bottom.
+    isNearBottomRef.current = true;
     try {
       await api.chatReply(phaseId, content);
       setDraft("");
@@ -335,13 +413,21 @@ export function PhaseChat({
         ) : bubbles.length === 0 ? (
           <Text sx={{ color: "fg.muted" }}>Session started; awaiting output.</Text>
         ) : (
-          bubbles.map((b, i) => (
-            <BubbleView
-              key={b.id}
-              bubble={b}
-              streaming={latestSession.status === "running" && i === bubbles.length - 1}
-            />
-          ))
+          bubbles.map((b, i) => {
+            const isLast = i === bubbles.length - 1;
+            const pulse = isLast && (
+              latestSession.role === "chat"
+                ? chatTurnBusy
+                : latestSession.status === "running"
+            );
+            return (
+              <BubbleView
+                key={b.id}
+                bubble={b}
+                streaming={pulse}
+              />
+            );
+          })
         )}
       </Box>
 

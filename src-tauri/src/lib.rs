@@ -93,6 +93,7 @@ pub fn run() {
             commands::sessions::session_cancel,
             commands::sessions::chat_reply,
             commands::sessions::chat_heartbeat,
+            commands::sessions::chat_warm,
             commands::sessions::models_list,
             commands::diff::phase_diff_summary,
             commands::diff::phase_diff_text,

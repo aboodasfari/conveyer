@@ -148,6 +148,16 @@ pub async fn chat_heartbeat(app: AppHandle, phase_id: String) -> AppResult<()> {
     Ok(())
 }
 
+/// Eagerly spawn the warm chat sidecar for `phase_id` so the user
+/// doesn't pay the SDK cold-start cost on their first message.
+/// Called by the UI when the chat tab mounts. Best-effort: silently
+/// no-ops if there's no resumable SDK session yet.
+#[tauri::command]
+pub async fn chat_warm(app: AppHandle, phase_id: String) -> AppResult<()> {
+    session_runner::chat_warm(&app, &phase_id).await;
+    Ok(())
+}
+
 #[derive(Debug, Serialize)]
 pub struct ModelInfo {
     pub id: String,
