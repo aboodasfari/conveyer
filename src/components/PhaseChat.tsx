@@ -411,7 +411,7 @@ function computeChatMode(
     case "running":
       return {
         kind: "disabled-hint",
-        hint: "Agent is working — stop the run to interject.",
+        hint: "Agent is working. You can chat once it pauses for review.",
       };
     case "waiting":
       return {
