@@ -188,6 +188,69 @@ function stubArtifact(phase, prompt) {
 /* -------------------------------------------------------------------------- */
 
 /**
+ * Tools registered with every Copilot session (both fresh and resumed).
+ * Kept as a function so the closure can call `emit` and `msg` for the
+ * out-of-band events Conveyer relies on (pick_workspace, send_back).
+ */
+function phaseTools() {
+  return [
+    {
+      name: "pick_workspace",
+      description:
+        "Pin the absolute workspace path this task should run in for the rest of the run. " +
+        "Call this once during exploration if the task does not already have a workspace pinned. " +
+        "Pass an absolute filesystem path (e.g. /Users/abdul/code/rp). Conveyer will save the " +
+        "pin to the task so all subsequent phases (planning, implementation, review, submit) " +
+        "operate in this workspace and create the worktree from it.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description: "Absolute path to the workspace directory.",
+          },
+        },
+        required: ["path"],
+      },
+      skipPermission: true,
+      handler: async (args) => {
+        const p = String(args?.path ?? "").trim();
+        if (!p) return { ok: false, error: "path is required" };
+        emit({ type: "pick_workspace", path: p });
+        return { ok: true, pinned: p };
+      },
+    },
+    {
+      name: "send_back_to_implementation",
+      description:
+        "Call this during the REVIEW phase when you have found issues that require " +
+        "the implementation phase to redo work. Conveyer will then either rewind to " +
+        "implementation automatically or pause for the user's approval, depending on " +
+        "the user's 'auto-rewind on review send-back' gate setting. " +
+        "Pass a one-line `reason` summarising what needs to change. " +
+        "If your review is approving the work as-is, do NOT call this tool — simply " +
+        "complete the phase normally.",
+      parameters: {
+        type: "object",
+        properties: {
+          reason: {
+            type: "string",
+            description: "Short summary (one line) of what needs to change.",
+          },
+        },
+        required: ["reason"],
+      },
+      skipPermission: true,
+      handler: async (args) => {
+        const reason = String(args?.reason ?? "").trim();
+        emit({ type: "send_back", reason });
+        return { ok: true, queued: true };
+      },
+    },
+  ];
+}
+
+/**
  * Real Copilot SDK call. Uses @github/copilot-sdk to spawn the bundled
  * Copilot CLI in server mode, creates a streaming session anchored at
  * CONVEYER_CODEBASE_PATH, sends the rendered prompt, and forwards the
@@ -202,6 +265,30 @@ function stubArtifact(phase, prompt) {
  * "needs_input" round-trip to surface tool-call confirmations in the UI.
  */
 async function runCopilot(phase, prompt) {
+  await runCopilotSession({ phase, prompt, resume: null });
+}
+
+/**
+ * Resume an existing SDK session and feed it a fresh user message.
+ * Used by the chat-reply flow when the user types into a waiting (or
+ * failed / post-run) phase. The agent picks up its prior state —
+ * tools registered, prompt context, prior messages — and just answers
+ * the follow-up.
+ *
+ * The `sessionId` must be one the SDK still has on disk (see SDK
+ * `getSessionMetadata` / data retention). If resume fails we surface
+ * the error and exit with `ok:false`; the caller (runner) will mark
+ * the phase failed.
+ */
+async function runCopilotReply(phase, userMessage, sessionId) {
+  await runCopilotSession({
+    phase,
+    prompt: userMessage,
+    resume: sessionId,
+  });
+}
+
+async function runCopilotSession({ phase, prompt, resume }) {
   let CopilotClient, approveAll;
   try {
     ({ CopilotClient, approveAll } = await import("@github/copilot-sdk"));
@@ -215,75 +302,27 @@ async function runCopilot(phase, prompt) {
   let session;
   try {
     await client.start?.();
-    const sessionConfig = {
+    const baseConfig = {
       model: env.CONVEYER_COPILOT_MODEL || "gpt-5.1",
       streaming: true,
       workingDirectory: env.CONVEYER_CODEBASE_PATH || process.cwd(),
       onPermissionRequest: approveAll ?? (() => ({ decision: "approve_once" })),
       enableSkills: true,
       pluginDirectories: await discoverPluginDirs(),
-      tools: [
-        {
-          name: "pick_workspace",
-          description:
-            "Pin the absolute workspace path this task should run in for the rest of the run. " +
-            "Call this once during exploration if the task does not already have a workspace pinned. " +
-            "Pass an absolute filesystem path (e.g. /Users/abdul/code/rp). Conveyer will save the " +
-            "pin to the task so all subsequent phases (planning, implementation, review, submit) " +
-            "operate in this workspace and create the worktree from it.",
-          parameters: {
-            type: "object",
-            properties: {
-              path: {
-                type: "string",
-                description: "Absolute path to the workspace directory.",
-              },
-            },
-            required: ["path"],
-          },
-          skipPermission: true,
-          handler: async (args) => {
-            const p = String(args?.path ?? "").trim();
-            if (!p) {
-              return { ok: false, error: "path is required" };
-            }
-            emit({ type: "pick_workspace", path: p });
-            return { ok: true, pinned: p };
-          },
-        },
-        {
-          name: "send_back_to_implementation",
-          description:
-            "Call this during the REVIEW phase when you have found issues that require " +
-            "the implementation phase to redo work. Conveyer will then either rewind to " +
-            "implementation automatically or pause for the user's approval, depending on " +
-            "the user's 'auto-rewind on review send-back' gate setting. " +
-            "Pass a one-line `reason` summarising what needs to change. " +
-            "If your review is approving the work as-is, do NOT call this tool — simply " +
-            "complete the phase normally.",
-          parameters: {
-            type: "object",
-            properties: {
-              reason: {
-                type: "string",
-                description: "Short summary (one line) of what needs to change.",
-              },
-            },
-            required: ["reason"],
-          },
-          skipPermission: true,
-          handler: async (args) => {
-            const reason = String(args?.reason ?? "").trim();
-            emit({ type: "send_back", reason });
-            return { ok: true, queued: true };
-          },
-        },
-      ],
+      tools: phaseTools(),
     };
     if (env.CONVEYER_COPILOT_REASONING) {
-      sessionConfig.reasoningEffort = env.CONVEYER_COPILOT_REASONING;
+      baseConfig.reasoningEffort = env.CONVEYER_COPILOT_REASONING;
     }
-    session = await client.createSession(sessionConfig);
+    if (resume) {
+      session = await client.resumeSession(resume, baseConfig);
+      msg("system", `[chat] resumed SDK session ${resume.slice(0, 8)}…`);
+    } else {
+      session = await client.createSession(baseConfig);
+      if (session?.sessionId) {
+        emit({ type: "session_started", sdk_session_id: session.sessionId });
+      }
+    }
   } catch (e) {
     msg("system", `Failed to start Copilot SDK: ${e?.message ?? e}`);
     try { await client.stop?.(); } catch { /* noop */ }
@@ -455,6 +494,31 @@ async function main() {
       console.error(`render_prompt failed: ${e?.message ?? e}`);
       process.exit(1);
     }
+  }
+
+  // Special mode: reply to an existing SDK session with a fresh user
+  // message. The runner kicks this off when the user types into the
+  // chat box of a waiting / failed / post-run phase. Uses the SDK's
+  // resume API so the agent remembers everything it just did.
+  if (env.CONVEYER_MODE === "reply") {
+    const phase = env.CONVEYER_PHASE || "implementation";
+    const sessionId = env.CONVEYER_RESUME_SDK_SESSION;
+    const userMessage = env.CONVEYER_USER_MESSAGE || "";
+    if (!sessionId) {
+      emit({ type: "done", ok: false, error: "CONVEYER_RESUME_SDK_SESSION not set" });
+      process.exit(1);
+    }
+    if (!userMessage.trim()) {
+      emit({ type: "done", ok: false, error: "CONVEYER_USER_MESSAGE empty" });
+      process.exit(1);
+    }
+    try {
+      await runCopilotReply(phase, userMessage, sessionId);
+    } catch (e) {
+      emit({ type: "done", ok: false, error: e?.message ?? String(e) });
+      process.exit(1);
+    }
+    return;
   }
 
   const phase = env.CONVEYER_PHASE;

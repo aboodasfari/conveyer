@@ -18,6 +18,7 @@ pub struct Session {
     pub log_path: Option<String>,
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
+    pub sdk_session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
@@ -34,7 +35,7 @@ pub struct Message {
 #[tauri::command]
 pub async fn sessions_for_phase(state: State<'_, AppState>, phase_id: String) -> AppResult<Vec<Session>> {
     let rows = sqlx::query_as::<_, Session>(
-        "SELECT id, phase_id, role, status, pid, log_path, started_at, finished_at
+        "SELECT id, phase_id, role, status, pid, log_path, started_at, finished_at, sdk_session_id
          FROM sessions WHERE phase_id = ? ORDER BY started_at",
     )
     .bind(&phase_id)
@@ -104,6 +105,54 @@ pub async fn phase_prompt_get(state: State<'_, AppState>, phase_id: String) -> A
 pub async fn session_cancel(app: AppHandle, phase_id: String) -> AppResult<bool> {
     let registry = app.state::<session_runner::RunnerRegistry>();
     Ok(registry.cancel(&phase_id).is_some())
+}
+
+/// Send a chat message to the agent for an existing phase. Resumes the
+/// SDK session of the most recent session row that has a sdk_session_id
+/// and feeds the agent the user's message. The reply streams into a new
+/// `sessions` row attached to the same phase; the phase's pipeline
+/// status (waiting / failed / done) is left alone.
+#[tauri::command]
+pub async fn chat_reply(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    phase_id: String,
+    content: String,
+) -> AppResult<()> {
+    let trimmed = content.trim().to_string();
+    if trimmed.is_empty() {
+        return Err(crate::error::AppError::Config(
+            "Reply is empty.".to_string(),
+        ));
+    }
+
+    let registry = app.state::<session_runner::RunnerRegistry>();
+    if registry.active_session(&phase_id).is_some() {
+        return Err(crate::error::AppError::Config(
+            "Agent is busy. Stop the current run before replying.".to_string(),
+        ));
+    }
+
+    // Find the most recent session row for this phase that has a SDK
+    // session id we can resume.
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT sdk_session_id FROM sessions
+         WHERE phase_id = ? AND sdk_session_id IS NOT NULL
+         ORDER BY started_at DESC LIMIT 1",
+    )
+    .bind(&phase_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((sdk_session_id,)) = row else {
+        return Err(crate::error::AppError::Config(
+            "No resumable SDK session on this phase. The agent may have started \
+             before chat-reply support; try Send Back or Restart instead."
+                .to_string(),
+        ));
+    };
+
+    session_runner::spawn_reply(app.clone(), phase_id, sdk_session_id, trimmed);
+    Ok(())
 }
 
 #[derive(Debug, Serialize)]
