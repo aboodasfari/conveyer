@@ -139,7 +139,7 @@ function StoryCard({
                       {m.label}
                     </ActionList.Item>
                   ))}
-                  {onDelete && node.task.source_id === "local" && (
+                  {onDelete && (
                     <>
                       <ActionList.Divider />
                       <ActionList.Item

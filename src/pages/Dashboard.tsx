@@ -340,6 +340,13 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
             This will permanently delete <Box as="strong" sx={{ fontWeight: 600 }}>{deleting?.title}</Box>{" "}
             along with its runs, phases, sessions, chat history, and artifacts.
           </Text>
+          {deleting?.source_id && deleting.source_id !== "local" && (
+            <Text sx={{ fontSize: 0, color: "attention.fg" }}>
+              This task came from <Box as="code" sx={{ fontFamily: "mono" }}>{deleting.source_id}</Box>.
+              If the upstream still has it, the next source refresh will recreate it. Use Archive
+              instead if you just want to hide it.
+            </Text>
+          )}
           <Text sx={{ fontSize: 0, color: "fg.muted" }}>
             Any worktrees created for this task will also be removed. Branches and commits are left
             intact in your workspace so you can keep, push, or clean them up manually.
