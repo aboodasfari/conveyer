@@ -148,18 +148,25 @@ export function useRunNotifications() {
 
     const refresh = async (announce: boolean) => {
       try {
-        const tasks = await api.tasksList();
+        const [tasks, sources] = await Promise.all([
+          api.tasksList(),
+          api.sourcesList().catch(() => []),
+        ]);
+        const sourceNameById = new Map(sources.map((s) => [s.id, s.name]));
+
         // New-task detection runs over the full list (cheap; tasks have
         // stable ids). Seeded silently on the first pass.
         const ids = new Set(tasks.map((t) => t.id));
         if (announce) {
           for (const t of tasks) {
             if (!knownTaskIds.current.has(t.id)) {
-              void maybeNotify(
-                "newTask",
-                "New task",
-                `“${t.title}” was discovered from ${t.source_id}.`,
-              );
+              const sourceName = sourceNameById.get(t.source_id);
+              const fromClause = sourceName
+                ? `Discovered in ${sourceName}.`
+                : t.source_id === "local"
+                  ? "Created locally."
+                  : "Newly discovered.";
+              void maybeNotify("newTask", `New task: ${t.title}`, fromClause);
             }
           }
         }

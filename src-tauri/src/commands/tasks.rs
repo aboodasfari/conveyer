@@ -65,7 +65,7 @@ fn work_item_url(cfg: &AdoSourceConfig, id: i64) -> String {
 #[tauri::command]
 pub async fn tasks_list(state: State<'_, AppState>) -> AppResult<Vec<TaskSummary>> {
     let tasks = sqlx::query_as::<_, Task>(&format!(
-        "SELECT {TASK_COLS} FROM tasks ORDER BY updated_at DESC"
+        "SELECT {TASK_COLS} FROM tasks ORDER BY discovered_at DESC, id DESC"
     ))
     .fetch_all(&state.db)
     .await?;
