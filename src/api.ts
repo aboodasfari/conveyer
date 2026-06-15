@@ -70,6 +70,8 @@ export const api = {
     invoke<string | null>("phase_prompt_get", { phaseId }),
   sessionCancel: (phaseId: string) =>
     invoke<boolean>("session_cancel", { phaseId }),
+  chatReply: (phaseId: string, content: string) =>
+    invoke<void>("chat_reply", { phaseId, content }),
   modelsList: () => invoke<import("./types").ModelInfo[]>("models_list"),
 
   // diff

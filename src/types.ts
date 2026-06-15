@@ -80,6 +80,7 @@ export interface Session {
   log_path: string | null;
   started_at: string | null;
   finished_at: string | null;
+  sdk_session_id: string | null;
 }
 
 export interface ModelInfo {

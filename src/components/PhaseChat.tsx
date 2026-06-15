@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Box, Spinner, Text } from "@primer/react";
+import { Box, Button, Spinner, Text, Textarea } from "@primer/react";
 import {
+  ArrowRightIcon,
   CheckCircleIcon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -10,6 +11,7 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { api } from "../api";
 import { Message, Session } from "../types";
 import { RichText } from "./RichText";
+import { formatError } from "../errors";
 
 interface MessageAppended {
   session_id: string;
@@ -151,7 +153,15 @@ function formatRunStart(iso: string | null | undefined): string {
   });
 }
 
-export function PhaseChat({ phaseId }: { phaseId: string }) {
+export function PhaseChat({
+  phaseId,
+  phaseStatus,
+  runStatus,
+}: {
+  phaseId: string;
+  phaseStatus: string;
+  runStatus: string;
+}) {
   const [runs, setRuns] = useState<{ session: Session; messages: Message[] }[]>([]);
   const [loading, setLoading] = useState(true);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -252,51 +262,180 @@ export function PhaseChat({ phaseId }: { phaseId: string }) {
     el.scrollTop = el.scrollHeight;
   }, [bubbles.length]);
 
-  if (loading) {
-    return (
-      <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", flex: 1 }}>
-        <Spinner size="small" />
-      </Box>
-    );
-  }
-  if (!latestSession) {
-    return (
-      <Text sx={{ color: "fg.muted" }}>
-        No session yet. The Chat tab will stream the agent's thinking once a
-        phase is running.
-      </Text>
-    );
-  }
+  // Chat-input state. Enabled / disabled per the policy in
+  // computeChatMode(), which depends on the phase + run status.
+  const chatMode = useMemo(
+    () => computeChatMode(phaseStatus, runStatus, latestSession),
+    [phaseStatus, runStatus, latestSession],
+  );
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const send = useCallback(async () => {
+    const content = draft.trim();
+    if (!content || sending) return;
+    setSending(true);
+    setSendError(null);
+    try {
+      await api.chatReply(phaseId, content);
+      setDraft("");
+    } catch (e) {
+      setSendError(formatError(e));
+    } finally {
+      setSending(false);
+    }
+  }, [draft, phaseId, sending]);
 
   return (
-    <Box
-      ref={scrollerRef}
-      sx={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 3,
-        flex: 1,
-        minHeight: 0,
-        overflowY: "auto",
-        fontFamily: "mono",
-        fontSize: 1,
-        lineHeight: 1.45,
-        pr: 3,
-      }}
-    >
-      {bubbles.length === 0 ? (
-        <Text sx={{ color: "fg.muted" }}>Session started; awaiting output.</Text>
-      ) : (
-        bubbles.map((b, i) => (
-          <BubbleView
-            key={b.id}
-            bubble={b}
-            streaming={latestSession.status === "running" && i === bubbles.length - 1}
-          />
-        ))
+    <Box sx={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+      <Box
+        ref={scrollerRef}
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 3,
+          flex: 1,
+          minHeight: 0,
+          overflowY: "auto",
+          fontFamily: "mono",
+          fontSize: 1,
+          lineHeight: 1.45,
+          pr: 3,
+        }}
+      >
+        {loading ? (
+          <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", flex: 1 }}>
+            <Spinner size="small" />
+          </Box>
+        ) : !latestSession ? (
+          <Text sx={{ color: "fg.muted" }}>
+            No session yet. The Chat tab will stream the agent's thinking once
+            this phase is running.
+          </Text>
+        ) : bubbles.length === 0 ? (
+          <Text sx={{ color: "fg.muted" }}>Session started; awaiting output.</Text>
+        ) : (
+          bubbles.map((b, i) => (
+            <BubbleView
+              key={b.id}
+              bubble={b}
+              streaming={latestSession.status === "running" && i === bubbles.length - 1}
+            />
+          ))
+        )}
+      </Box>
+
+      {chatMode.kind !== "hidden" && (
+        <Box
+          sx={{
+            mt: 3,
+            pt: 3,
+            borderTopWidth: 1,
+            borderTopStyle: "solid",
+            borderTopColor: "border.muted",
+          }}
+        >
+          {chatMode.kind === "disabled-hint" ? (
+            <Text sx={{ color: "fg.muted", fontSize: 0 }}>{chatMode.hint}</Text>
+          ) : (
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <Textarea
+                ref={textareaRef}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    void send();
+                  }
+                }}
+                placeholder={chatMode.placeholder}
+                rows={3}
+                resize="vertical"
+                disabled={sending}
+                sx={{ width: "100%", fontFamily: "mono", fontSize: 1 }}
+              />
+              {sendError && (
+                <Text sx={{ color: "danger.fg", fontSize: 0 }}>{sendError}</Text>
+              )}
+              <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <Text sx={{ color: "fg.muted", fontSize: 0 }}>
+                  ⌘/Ctrl + Enter to send
+                </Text>
+                <Button
+                  trailingVisual={ArrowRightIcon}
+                  variant="primary"
+                  size="small"
+                  onClick={() => void send()}
+                  disabled={sending || draft.trim().length === 0}
+                >
+                  {sending ? "Sending…" : "Send"}
+                </Button>
+              </Box>
+            </Box>
+          )}
+        </Box>
       )}
     </Box>
   );
+}
+
+/**
+ * Decide whether the chat input is shown, and in what guise, for the
+ * current phase + run state. See the design notes in the conversation
+ * around 2026-06-15 — "chat is enabled wherever there's no active
+ * phase blocking it".
+ */
+type ChatMode =
+  | { kind: "hidden" }
+  | { kind: "disabled-hint"; hint: string }
+  | { kind: "enabled"; placeholder: string };
+
+function computeChatMode(
+  phaseStatus: string,
+  runStatus: string,
+  latestSession: Session | null,
+): ChatMode {
+  if (!latestSession || !latestSession.sdk_session_id) {
+    return { kind: "hidden" };
+  }
+  switch (phaseStatus) {
+    case "pending":
+      return { kind: "hidden" };
+    case "running":
+      return {
+        kind: "disabled-hint",
+        hint: "Agent is working — stop the run to interject.",
+      };
+    case "waiting":
+      return {
+        kind: "enabled",
+        placeholder:
+          "Reply to the agent — ask a question, request a change, or steer before approving…",
+      };
+    case "failed":
+    case "cancelled":
+      return {
+        kind: "enabled",
+        placeholder:
+          "Chat with the agent to debug or steer past the error…",
+      };
+    case "done":
+      if (runStatus === "done") {
+        return {
+          kind: "enabled",
+          placeholder: "Continue working with the agent…",
+        };
+      }
+      return {
+        kind: "disabled-hint",
+        hint: "This phase is sealed. Use Send Back on a later phase to reopen it.",
+      };
+    default:
+      return { kind: "hidden" };
+  }
 }
 
 /* -------------------------------------------------------------------------- */

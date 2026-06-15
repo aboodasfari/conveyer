@@ -353,6 +353,7 @@ export function RunPanel({ taskId }: { taskId: string }) {
               onTabChange={setContentTab}
               fullscreen={fullscreen}
               onToggleFullscreen={() => setFullscreen((f) => !f)}
+              runStatus={detail.run.status}
             />
           ) : (
             <Box sx={{ p: 4, color: "fg.muted" }}>
@@ -652,6 +653,7 @@ function PhaseContent({
   onTabChange,
   fullscreen,
   onToggleFullscreen,
+  runStatus,
 }: {
   phase: Phase;
   taskId: string;
@@ -659,6 +661,7 @@ function PhaseContent({
   onTabChange: (t: string) => void;
   fullscreen: boolean;
   onToggleFullscreen: () => void;
+  runStatus: string;
 }) {
   const tabs = PHASE_TABS[phase.kind] ?? [CHAT_TAB];
 
@@ -693,7 +696,7 @@ function PhaseContent({
       </Box>
       <Box sx={{ p: 4, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         {tab === "chat" ? (
-          <PhaseChat phaseId={phase.id} />
+          <PhaseChat phaseId={phase.id} phaseStatus={phase.status} runStatus={runStatus} />
         ) : tab === "diff" ? (
           <DiffViewer phaseId={phase.id} />
         ) : tab === "prompt" ? (
