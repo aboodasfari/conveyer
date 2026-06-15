@@ -352,12 +352,12 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
             </Text>
           </Box>
           <Text>Permanently deletes its runs, chat, and artifacts.</Text>
+          <Text sx={{ color: "fg.muted" }}>This can't be undone.</Text>
           {deleting?.source_id && deleting.source_id !== "local" && (
             <Text sx={{ fontSize: 0, color: "attention.fg" }}>
               From an external source — the next refresh may bring it back. Archive to hide instead.
             </Text>
           )}
-          <Text sx={{ color: "fg.muted" }}>This can't be undone.</Text>
         </Box>
       </Modal>
     </Box>
