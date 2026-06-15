@@ -127,7 +127,9 @@ function SourcesSection() {
   const load = async () => {
     try {
       const [s, i] = await Promise.all([api.sourcesList(), loadRefreshInterval()]);
-      setSources(s);
+      // 'local' is a built-in singleton powering the New task flow —
+      // implementation detail, not something the user adds or manages.
+      setSources(s.filter((src) => src.kind !== "local"));
       setIntervalMin(i);
       setIntervalDraft(String(i));
     } catch (e) {
