@@ -460,9 +460,11 @@ pub async fn tasks_create_local(
 }
 
 /// Delete a task and everything FK-cascaded from it (runs/phases/sessions/
-/// messages). Best-effort wipes the on-disk artifact directory too.
-/// Refuses to delete tasks under a non-local source — those re-appear on
-/// next refresh, so the user almost certainly meant Archive instead.
+/// messages). Best-effort wipes the on-disk artifact directory and removes
+/// any worktrees this task's runs created (branches are LEFT INTACT — the
+/// user might want to keep the code, push it manually, etc.). Refuses to
+/// delete tasks under a non-local source — those re-appear on next refresh,
+/// so the user almost certainly meant Archive instead.
 #[tauri::command]
 pub async fn tasks_delete(state: State<'_, AppState>, task_id: String) -> AppResult<()> {
     let row: Option<(String,)> = sqlx::query_as(
@@ -479,13 +481,53 @@ pub async fn tasks_delete(state: State<'_, AppState>, task_id: String) -> AppRes
             "Only local tasks can be deleted. Move this task to Archive instead.".into(),
         ));
     }
+
+    // Collect (worktree_path, originating_workspace) for every run on this
+    // task that managed to create a worktree. `git worktree remove` has to
+    // be run from inside the originating repo (or with a path the repo
+    // knows about), so we resolve the workspace from tasks.workspace_path
+    // (the same source ensure_for_run used). If nothing's pinned we still
+    // try the path standalone — git is good enough to find the linked dir.
+    let worktree_paths: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT r.worktree_path, t.workspace_path
+         FROM runs r
+         JOIN tasks t ON t.id = r.task_id
+         WHERE r.task_id = ? AND r.worktree_path IS NOT NULL",
+    )
+    .bind(&task_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
     sqlx::query("DELETE FROM tasks WHERE id = ?")
         .bind(&task_id)
         .execute(&state.db)
         .await?;
+
     if let Ok(root) = artifacts_root_for_task(&task_id) {
         let _ = tokio::fs::remove_dir_all(root).await;
     }
+
+    // Worktree cleanup runs after the DB delete so a failure here doesn't
+    // leave the task in a half-deleted state. We DELIBERATELY do not run
+    // `git branch -D <branch>` — preserving the code on disk is the whole
+    // point. `git worktree remove --force` un-links the dir + deletes the
+    // checkout but leaves the branch ref alone.
+    for (wt, ws) in worktree_paths {
+        let wt_path = std::path::PathBuf::from(crate::session_runner::expand_path(&wt));
+        if !wt_path.exists() {
+            continue;
+        }
+        let mut cmd = tokio::process::Command::new("git");
+        if let Some(ws_path) = ws.as_deref().filter(|s| !s.is_empty()) {
+            cmd.arg("-C").arg(crate::session_runner::expand_path(ws_path));
+        }
+        cmd.args(["worktree", "remove", "--force"]).arg(&wt_path);
+        cmd.stdout(std::process::Stdio::null());
+        cmd.stderr(std::process::Stdio::null());
+        let _ = cmd.status().await;
+    }
+
     Ok(())
 }
 

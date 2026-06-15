@@ -340,6 +340,10 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
             This will permanently delete <Box as="strong" sx={{ fontWeight: 600 }}>{deleting?.title}</Box>{" "}
             along with its runs, phases, sessions, chat history, and artifacts.
           </Text>
+          <Text sx={{ fontSize: 0, color: "fg.muted" }}>
+            Any worktrees created for this task will also be removed. Branches and commits are left
+            intact in your workspace so you can keep, push, or clean them up manually.
+          </Text>
           <Text sx={{ color: "fg.muted" }}>This can't be undone.</Text>
         </Box>
       </Modal>
