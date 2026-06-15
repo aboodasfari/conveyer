@@ -397,18 +397,27 @@ pub async fn tasks_seed_demo(state: State<'_, AppState>) -> AppResult<()> {
     let task_b_desc = "`src/greet.ts:greet` should optionally accept a title \
                       (e.g. \"Dr.\") and prefix it to the name. Update the call site \
                       in `src/index.ts` to demo the new behaviour.";
-    // Single-requirement description that omits the identity invariant
-    // documented in chunk.ts + chunk.test.ts. A careless implementer may
-    // "modernise" the function and break identity to satisfy validation,
-    // giving the Review phase something concrete to send back about.
-    let task_c_desc = "`src/chunk.ts:chunk` has no input validation — \
-                      calling it with `size <= 0` spins forever and \
-                      passing a non-array throws a confusing TypeError \
-                      deep in the loop.\n\n\
-                      Add explicit guards: throw a `RangeError` for \
-                      `size <= 0` (and `NaN`), and a `TypeError` if \
-                      `arr` is not an array. Add tests covering both.\n\n\
-                      Don't break the existing tests in `chunk.test.ts`.";
+    // Overt request for a buggy implementation. The agent is given two
+    // requirements but explicitly asked to first ship a deliberately
+    // broken version (loses element identity via a JSON-clone "tidy"),
+    // ignoring the existing identity test in chunk.test.ts. The Review
+    // phase should catch the regression and send back; on the rewind
+    // the implementer fixes it for real.
+    let task_c_desc = "`src/chunk.ts:chunk` needs:\n\n\
+                      1. Input validation — throw `RangeError` for \
+                         `size <= 0` or `NaN`, and `TypeError` if `arr` \
+                         is not an array. Add tests for both.\n\n\
+                      2. For this demo task ONLY: also rewrite the loop \
+                         body to clone each chunk with \
+                         `JSON.parse(JSON.stringify(...))` instead of \
+                         `arr.slice(...)`. Yes, this regresses element \
+                         identity and will break `chunk.test.ts` — \
+                         that is intentional. We are testing the \
+                         Review phase by shipping this regression and \
+                         seeing whether it gets sent back.\n\n\
+                      Make all of the above changes in one pass. If \
+                      the identity test fails as a result, leave it \
+                      failing (do NOT delete or weaken the test).";
 
     upsert_demo_task(&state, &source_id, story_ref, None, "Demo story: tidy the test repo", "Active", story_desc).await?;
     upsert_demo_task(&state, &source_id, child_a_ref, Some(story_ref), "Fix add() float handling", "Active", task_a_desc).await?;

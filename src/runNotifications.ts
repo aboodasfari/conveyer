@@ -12,15 +12,17 @@ import { Phase, TaskSummary } from "./types";const PREF_KEYS = {
   waiting: "notif_waiting",
   failed: "notif_failed",
   newTask: "notif_new_task",
+  taskFinished: "notif_task_finished",
 } as const;
 
-export type NotifKind = "waiting" | "failed" | "newTask";
+export type NotifKind = "waiting" | "failed" | "newTask" | "taskFinished";
 
 const DEFAULT_PREFS: Record<keyof typeof PREF_KEYS, boolean> = {
   enabled: true,
   waiting: true,
   failed: true,
   newTask: true,
+  taskFinished: true,
 };
 
 /** Read a single boolean setting, treating any non-"0"/"false" value (or
@@ -59,11 +61,13 @@ export async function setNotifPref(kind: keyof typeof PREF_KEYS, value: boolean)
  *  - phase enters `waiting` (needs approval)
  *  - phase enters `failed`
  *  - a new task appears in the dashboard (source refresh discovered it)
+ *  - a task finishes (latest run status transitions to `done`)
  *
  * Initial snapshots are seeded silently so we don't spam at startup.
  */
 export function useRunNotifications() {
   const lastStatusByPhase = useRef<Map<string, string>>(new Map());
+  const lastRunStatusByTask = useRef<Map<string, string | null>>(new Map());
   const knownTaskIds = useRef<Set<string>>(new Set());
   const permission = useRef<boolean | null>(null);
   // Tauri's window.isFocused is the source of truth on macOS; the DOM's
@@ -171,6 +175,22 @@ export function useRunNotifications() {
           }
         }
         knownTaskIds.current = ids;
+
+        // Task-finished detection: latest run status transitioned to "done".
+        // Tracked per-task; seeded silently on the first pass.
+        for (const t of tasks) {
+          const prev = lastRunStatusByTask.current.get(t.id);
+          const curr = t.run_status ?? null;
+          lastRunStatusByTask.current.set(t.id, curr);
+          if (!announce) continue;
+          if (curr === "done" && prev !== undefined && prev !== "done") {
+            void maybeNotify(
+              "taskFinished",
+              `Task Finished: ${t.title}`,
+              "All phases completed successfully.",
+            );
+          }
+        }
 
         // Phase transitions need full run details. Pull only for tasks
         // with an active/changed run.

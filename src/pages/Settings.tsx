@@ -994,7 +994,7 @@ function NewWorkspaceRow({
 function NotificationsSection() {
   const [granted, setGranted] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
-  const [prefs, setPrefs] = useState<{ enabled: boolean; waiting: boolean; failed: boolean; newTask: boolean } | null>(null);
+  const [prefs, setPrefs] = useState<{ enabled: boolean; waiting: boolean; failed: boolean; newTask: boolean; taskFinished: boolean } | null>(null);
 
   const refresh = async () => {
     try {
@@ -1007,7 +1007,7 @@ function NotificationsSection() {
       const { loadNotifPrefs } = await import("../runNotifications");
       setPrefs(await loadNotifPrefs());
     } catch {
-      setPrefs({ enabled: true, waiting: true, failed: true, newTask: true });
+      setPrefs({ enabled: true, waiting: true, failed: true, newTask: true, taskFinished: true });
     }
   };
 
@@ -1026,7 +1026,7 @@ function NotificationsSection() {
     }
   };
 
-  const toggle = async (kind: "enabled" | "waiting" | "failed" | "newTask") => {
+  const toggle = async (kind: "enabled" | "waiting" | "failed" | "newTask" | "taskFinished") => {
     if (!prefs) return;
     const next = { ...prefs, [kind]: !prefs[kind] };
     setPrefs(next);
@@ -1081,6 +1081,12 @@ function NotificationsSection() {
                 label="New task discovered"
                 on={prefs.newTask}
                 onToggle={() => void toggle("newTask")}
+                disabled={!prefs.enabled}
+              />
+              <NotifToggle
+                label="Task finished"
+                on={prefs.taskFinished}
+                onToggle={() => void toggle("taskFinished")}
                 disabled={!prefs.enabled}
               />
             </Box>
