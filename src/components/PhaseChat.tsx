@@ -140,7 +140,9 @@ export function PhaseChat({ phaseId }: { phaseId: string }) {
   useEffect(() => { void load(); }, [load]);
 
   // Re-load when the run state changes (so session.status flips
-  // running -> done and the streaming pulse stops).
+  // running -> done and the streaming pulse stops). Also reload on
+  // window focus-regain — macOS throttles event delivery to hidden
+  // WebViews, so the UI can be stale by the time the user returns.
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
     let cancelled = false;
@@ -148,7 +150,13 @@ export function PhaseChat({ phaseId }: { phaseId: string }) {
       unlisten = await listen("run_updated", () => { void load(); });
       if (cancelled) unlisten();
     })();
-    return () => { cancelled = true; if (unlisten) unlisten(); };
+    const onFocus = () => { void load(); };
+    window.addEventListener("conveyer:focus-refresh", onFocus);
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+      window.removeEventListener("conveyer:focus-refresh", onFocus);
+    };
   }, [load]);
 
   useEffect(() => {

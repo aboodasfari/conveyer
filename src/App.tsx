@@ -7,6 +7,7 @@ import { TaskDetail } from "./pages/TaskDetail";
 import { useScrollRestoration } from "./scrollRestoration";
 import { useRunNotifications } from "./runNotifications";
 import { useAutoRefresh } from "./autoRefresh";
+import { useFocusRefresh } from "./focusRefresh";
 
 function ScrollAwareLayout() {
   useScrollRestoration();
@@ -16,6 +17,10 @@ function ScrollAwareLayout() {
   // dashboard. macOS still throttles setInterval when the window is
   // minimized, but it runs fine when the app is just unfocused.
   useAutoRefresh();
+  // When the window regains focus, broadcast a refresh so the UI
+  // catches up to any backend progress that happened while the WebView
+  // was throttled.
+  useFocusRefresh();
   return <Layout />;
 }
 

@@ -193,7 +193,9 @@ export function RunPanel({ taskId }: { taskId: string }) {
     }
   }, [selectedPhaseId, detail, contentTab]);
 
-  // Live updates pushed from Rust on every phase transition.
+  // Live updates pushed from Rust on every phase transition. Also reload
+  // on window focus-regain so the UI catches up to any background
+  // progress made while the WebView was throttled.
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
     let cancelled = false;
@@ -203,9 +205,12 @@ export function RunPanel({ taskId }: { taskId: string }) {
       });
       if (cancelled) unlisten();
     })();
+    const onFocus = () => { void reload(); };
+    window.addEventListener("conveyer:focus-refresh", onFocus);
     return () => {
       cancelled = true;
       if (unlisten) unlisten();
+      window.removeEventListener("conveyer:focus-refresh", onFocus);
     };
   }, [taskId, reload]);
 
@@ -532,6 +537,32 @@ function PhaseRow({
         <Text sx={{ color: "fg.muted", fontSize: 0, display: "block", mb: 1 }}>
           {STATE_LABELS[phase.status] ?? phase.status}
         </Text>
+        {phase.kind === "review" && phase.review_verdict && phase.status === "waiting" && (
+          <Box
+            sx={{
+              borderLeftWidth: 2,
+              borderLeftStyle: "solid",
+              borderLeftColor: phase.review_verdict === "request_changes" ? "attention.fg" : "success.fg",
+              bg: phase.review_verdict === "request_changes" ? "attention.subtle" : "success.subtle",
+              px: 2,
+              py: 1,
+              mb: 2,
+              borderRadius: 1,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Text sx={{ fontSize: 0, fontWeight: 600, display: "block", color: "fg.default" }}>
+              {phase.review_verdict === "request_changes"
+                ? "Reviewer requested changes"
+                : "Reviewer approved"}
+            </Text>
+            {phase.review_reason && (
+              <Text sx={{ fontSize: 0, color: "fg.muted", display: "block", mt: 1, whiteSpace: "pre-wrap" }}>
+                {phase.review_reason}
+              </Text>
+            )}
+          </Box>
+        )}
         {phase.status === "running" && (
           <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
             <Button
@@ -558,31 +589,48 @@ function PhaseRow({
             )}
           </Box>
         )}
-        {phase.status === "waiting" && (
-          <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+        {phase.status === "waiting" && (() => {
+          const reviewerSaidSendBack =
+            phase.kind === "review" && phase.review_verdict === "request_changes";
+          // Re-order so the recommended action (matching the verdict) is
+          // primary. The other option stays visible so the user can
+          // override the reviewer if they want.
+          const sendBackBtn = canRewindToImpl ? (
             <Button
+              key="sb"
+              leadingVisual={ReplyIcon}
+              variant={reviewerSaidSendBack ? "primary" : "danger"}
+              size="small"
+              onClick={(e) => { e.stopPropagation(); onRewind(); }}
+              disabled={busy}
+              title="Reset Implementation and run it again"
+            >
+              Send Back to Implementation
+            </Button>
+          ) : null;
+          const approveBtn = (
+            <Button
+              key="ap"
               leadingVisual={CheckIcon}
-              variant="primary"
+              variant={reviewerSaidSendBack ? "default" : "primary"}
               size="small"
               onClick={(e) => { e.stopPropagation(); onApprove(); }}
               disabled={busy}
+              title={
+                reviewerSaidSendBack
+                  ? "Override the reviewer and advance to the next phase anyway"
+                  : "Approve this phase and advance to the next"
+              }
             >
-              Approve
+              {reviewerSaidSendBack ? "Approve Anyway" : "Approve & Continue"}
             </Button>
-            {canRewindToImpl && (
-              <Button
-                leadingVisual={ReplyIcon}
-                size="small"
-                variant="danger"
-                onClick={(e) => { e.stopPropagation(); onRewind(); }}
-                disabled={busy}
-                title="Send the work back to Implementation"
-              >
-                Send Back
-              </Button>
-            )}
-          </Box>
-        )}
+          );
+          return (
+            <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+              {reviewerSaidSendBack ? <>{sendBackBtn}{approveBtn}</> : <>{approveBtn}{sendBackBtn}</>}
+            </Box>
+          );
+        })()}
         {(phase.status === "failed" || phase.status === "cancelled") && (
           <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
             <Button

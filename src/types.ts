@@ -60,6 +60,10 @@ export interface Phase {
   started_at: string | null;
   finished_at: string | null;
   artifact_path: string | null;
+  /** "approve" | "request_changes" | null. Only populated on review phases. */
+  review_verdict: string | null;
+  /** Free-text reason supplied with a request_changes verdict. */
+  review_reason: string | null;
 }
 
 export interface RunDetail {

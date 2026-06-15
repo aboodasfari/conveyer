@@ -26,7 +26,8 @@ pub struct RunDetail {
 
 const RUN_COLS: &str = "id, task_id, status, started_at, finished_at";
 const PHASE_COLS: &str =
-    "id, run_id, kind, ord, status, started_at, finished_at, artifact_path";
+    "id, run_id, kind, ord, status, started_at, finished_at, artifact_path, \
+     review_verdict, review_reason";
 
 #[tauri::command]
 pub async fn runs_start(
@@ -176,6 +177,15 @@ pub async fn complete_phase_internal(
         .bind(phase_id)
         .execute(&state.db)
         .await?;
+        if phase.kind == "review" {
+            sqlx::query(
+                "UPDATE phases SET review_verdict='approve', review_reason=NULL
+                 WHERE id=? AND review_verdict IS NULL",
+            )
+            .bind(phase_id)
+            .execute(&state.db)
+            .await?;
+        }
         let next_id = start_next_phase(state, &phase.run_id, phase.ord).await?;
         if let Some(id) = next_id {
             session_runner::spawn_for_phase(app.clone(), id);
@@ -188,6 +198,15 @@ pub async fn complete_phase_internal(
         .bind(phase_id)
         .execute(&state.db)
         .await?;
+        if phase.kind == "review" {
+            sqlx::query(
+                "UPDATE phases SET review_verdict='approve', review_reason=NULL
+                 WHERE id=? AND review_verdict IS NULL",
+            )
+            .bind(phase_id)
+            .execute(&state.db)
+            .await?;
+        }
         sqlx::query("UPDATE runs SET status='waiting' WHERE id=?")
             .bind(&phase.run_id)
             .execute(&state.db)
@@ -252,17 +271,21 @@ pub async fn phase_rewind(
     let target = load_phase(&state, &phase_id).await?;
 
     let mut tx = state.db.begin().await?;
-    // Reset target to running.
+    // Reset target to running. Also clear any review verdict on this
+    // phase and on later phases — they're about to be re-run.
     sqlx::query(
         "UPDATE phases SET status='running', started_at=datetime('now'),
-                            finished_at=NULL WHERE id=?",
+                            finished_at=NULL,
+                            review_verdict=NULL, review_reason=NULL
+         WHERE id=?",
     )
     .bind(&target.id)
     .execute(&mut *tx)
     .await?;
     // Clear all phases after the target.
     sqlx::query(
-        "UPDATE phases SET status='pending', started_at=NULL, finished_at=NULL
+        "UPDATE phases SET status='pending', started_at=NULL, finished_at=NULL,
+                            review_verdict=NULL, review_reason=NULL
          WHERE run_id=? AND ord > ?",
     )
     .bind(&target.run_id)
@@ -321,6 +344,16 @@ pub async fn review_send_back_internal(
     }
     let auto = gate_auto_advance(state, "review_rewind").await?;
 
+    // Persist the verdict + reason on the review phase so the UI can
+    // show what happened (and re-order action buttons accordingly).
+    sqlx::query(
+        "UPDATE phases SET review_verdict='request_changes', review_reason=? WHERE id=?",
+    )
+    .bind(if reason.is_empty() { None } else { Some(reason) })
+    .bind(phase_id)
+    .execute(&state.db)
+    .await?;
+
     if auto {
         // Mark review done and rewind to the implementation phase.
         sqlx::query(
@@ -345,7 +378,8 @@ pub async fn review_send_back_internal(
             .execute(&state.db)
             .await?;
             sqlx::query(
-                "UPDATE phases SET status='pending', started_at=NULL, finished_at=NULL
+                "UPDATE phases SET status='pending', started_at=NULL, finished_at=NULL,
+                                    review_verdict=NULL, review_reason=NULL
                  WHERE run_id=? AND id != ? AND kind != 'implementation'
                        AND ord > (SELECT ord FROM phases WHERE id = ?)",
             )
@@ -419,7 +453,9 @@ pub async fn phase_restart(
         .await?;
     sqlx::query(
         "UPDATE phases SET status='running', started_at=datetime('now'),
-                            finished_at=NULL WHERE id=?",
+                            finished_at=NULL,
+                            review_verdict=NULL, review_reason=NULL
+         WHERE id=?",
     )
     .bind(&target.id)
     .execute(&mut *tx)

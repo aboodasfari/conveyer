@@ -58,7 +58,8 @@ export function TaskDetail() {
   }, [reload]);
 
   // Refresh the header chip (and parent link) when the run state changes
-  // so the status badge actually reflects the current phase.
+  // so the status badge actually reflects the current phase. Also reload
+  // on window focus-regain — see focusRefresh.ts.
   useEffect(() => {
     let unlisten: import("@tauri-apps/api/event").UnlistenFn | null = null;
     let cancelled = false;
@@ -69,7 +70,13 @@ export function TaskDetail() {
       });
       if (cancelled) unlisten();
     })();
-    return () => { cancelled = true; if (unlisten) unlisten(); };
+    const onFocus = () => { void reload(); };
+    window.addEventListener("conveyer:focus-refresh", onFocus);
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+      window.removeEventListener("conveyer:focus-refresh", onFocus);
+    };
   }, [id, reload]);
 
   if (loading) {

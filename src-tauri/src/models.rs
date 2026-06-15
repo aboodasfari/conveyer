@@ -57,6 +57,8 @@ pub struct Phase {
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
     pub artifact_path: Option<String>,
+    pub review_verdict: Option<String>,
+    pub review_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
