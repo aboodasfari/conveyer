@@ -227,6 +227,13 @@ function SourcesSection() {
         </Box>
       </SubSection>
 
+      <SubSection
+        title="Notifications"
+        description="Conveyer fires a native macOS notification when a phase is waiting for your approval or fails — but only while the window isn't focused. If you don't see one, check System Settings → Notifications → Conveyer."
+      >
+        <NotificationDiagnostics />
+      </SubSection>
+
       <AddSourceModal
         open={addOpen}
         onClose={() => setAddOpen(false)}
@@ -915,6 +922,85 @@ function NewWorkspaceRow({
       >
         Add
       </Button>
+    </Box>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*                          Notification diagnostics                          */
+/* -------------------------------------------------------------------------- */
+
+function NotificationDiagnostics() {
+  const [status, setStatus] = useState<string>("checking…");
+  const [busy, setBusy] = useState(false);
+
+  const refresh = async () => {
+    try {
+      const { isPermissionGranted } = await import("@tauri-apps/plugin-notification");
+      const ok = await isPermissionGranted();
+      setStatus(ok ? "granted" : "denied or not granted yet");
+    } catch (e) {
+      setStatus(`unavailable (${(e as Error).message ?? e})`);
+    }
+  };
+
+  useEffect(() => { void refresh(); }, []);
+
+  const requestPerm = async () => {
+    setBusy(true);
+    try {
+      const { requestPermission } = await import("@tauri-apps/plugin-notification");
+      const res = await requestPermission();
+      setStatus(`requestPermission → ${res}`);
+    } catch (e) {
+      setStatus(`request failed: ${(e as Error).message ?? e}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendTest = async () => {
+    setBusy(true);
+    try {
+      const { sendNotification, isPermissionGranted, requestPermission } =
+        await import("@tauri-apps/plugin-notification");
+      let granted = await isPermissionGranted();
+      if (!granted) {
+        const res = await requestPermission();
+        granted = res === "granted";
+      }
+      if (!granted) {
+        setStatus("denied — open System Settings → Notifications → Conveyer to enable");
+        return;
+      }
+      sendNotification({
+        title: "Conveyer test notification",
+        body: "If you see this, native notifications are working.",
+      });
+      setStatus("sent — switch focus away to see it appear");
+    } catch (e) {
+      setStatus(`send failed: ${(e as Error).message ?? e}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+        <Button onClick={() => void sendTest()} disabled={busy}>
+          Send test notification
+        </Button>
+        <Button onClick={() => void requestPerm()} disabled={busy}>
+          Request permission
+        </Button>
+        <Button variant="invisible" onClick={() => void refresh()} disabled={busy}>
+          Refresh
+        </Button>
+      </Box>
+      <Text sx={{ fontSize: 0, color: "fg.muted" }}>
+        Permission: <Box as="code" sx={{ fontFamily: "mono" }}>{status}</Box>
+      </Text>
     </Box>
   );
 }
