@@ -33,6 +33,10 @@ pub struct RunnerRegistry {
 struct RunnerHandle {
     session_id: String,
     cancel: Option<oneshot::Sender<()>>,
+    /// Set when the agent invokes the `send_back_to_implementation` tool
+    /// during the review phase. On clean phase completion the runner reads
+    /// this to decide whether to advance or rewind.
+    review_send_back: Option<String>,
 }
 
 impl RunnerRegistry {
@@ -43,7 +47,11 @@ impl RunnerRegistry {
     fn register(&self, phase_id: String, session_id: String, cancel: oneshot::Sender<()>) {
         self.inner.lock().unwrap().insert(
             phase_id,
-            RunnerHandle { session_id, cancel: Some(cancel) },
+            RunnerHandle {
+                session_id,
+                cancel: Some(cancel),
+                review_send_back: None,
+            },
         );
     }
 
@@ -63,6 +71,21 @@ impl RunnerRegistry {
 
     pub fn active_session(&self, phase_id: &str) -> Option<String> {
         self.inner.lock().unwrap().get(phase_id).map(|h| h.session_id.clone())
+    }
+
+    /// Record that the reviewer requested the work be sent back to the
+    /// implementation phase. Returns the previously-recorded reason if any.
+    pub fn record_send_back(&self, phase_id: &str, reason: String) {
+        let mut map = self.inner.lock().unwrap();
+        if let Some(h) = map.get_mut(phase_id) {
+            h.review_send_back = Some(reason);
+        }
+    }
+
+    /// Read the send-back intent for a phase, if the reviewer set one.
+    pub fn take_send_back(&self, phase_id: &str) -> Option<String> {
+        self.inner.lock().unwrap().get_mut(phase_id)
+            .and_then(|h| h.review_send_back.take())
     }
 }
 
@@ -86,6 +109,7 @@ enum SidecarEvent {
     },
     Artifact { path: String },
     PickWorkspace { path: String },
+    SendBack { #[serde(default)] reason: Option<String> },
     NeedsInput {
         prompt: String,
         #[serde(default)]
@@ -639,12 +663,23 @@ async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
     .execute(&state.db)
     .await?;
 
+    // Read send-back intent BEFORE we unregister so the runner handle's
+    // state is still live.
+    let send_back_reason = registry.take_send_back(phase_id);
     registry.unregister(phase_id);
 
     if final_ok {
-        // Advance the pipeline. phase_complete is awaitable when called
-        // directly with state instead of via tauri::command.
-        let _ = crate::commands::runs::complete_phase_internal(app, &state, phase_id).await;
+        if let Some(reason) = send_back_reason {
+            // Reviewer asked to send back to implementation. Route via the
+            // review_rewind gate instead of the normal advance path.
+            let _ = crate::commands::runs::review_send_back_internal(
+                app, &state, phase_id, &reason,
+            ).await;
+        } else {
+            // Normal advance. phase_complete is awaitable when called
+            // directly with state instead of via tauri::command.
+            let _ = crate::commands::runs::complete_phase_internal(app, &state, phase_id).await;
+        }
     } else {
         let final_msg = error_msg.unwrap_or_else(|| "Session ended without success".to_string());
         let _ = persist_message(&state, &session_id, "system", &format!("[error] {final_msg}")).await;
@@ -751,6 +786,25 @@ async fn handle_line(
                 }));
                 emit_run_updated(app, state, phase_id).await;
             }
+        }
+        SidecarEvent::SendBack { reason } => {
+            // Reviewer requested the work be sent back to implementation.
+            // Stash the intent so the runner's exit path can decide
+            // whether to auto-rewind (gate on) or wait for the user.
+            let registry = app.state::<RunnerRegistry>();
+            let reason_text = reason.unwrap_or_default();
+            registry.record_send_back(phase_id, reason_text.clone());
+            let display = if reason_text.is_empty() {
+                "[review] requested send-back to implementation".to_string()
+            } else {
+                format!("[review] requested send-back: {reason_text}")
+            };
+            let _ = persist_message(state, session_id, "system", &display).await;
+            let _ = app.emit("message_appended", serde_json::json!({
+                "session_id": session_id,
+                "role": "system",
+                "content": display,
+            }));
         }
         SidecarEvent::NeedsInput { prompt, kind, choices } => {
             let payload = serde_json::json!({

@@ -49,7 +49,9 @@ One of: APPROVE | REQUEST_CHANGES | NEEDS_DISCUSSION
 Anything else worth flagging.
 ```
 
-If your verdict is REQUEST_CHANGES, Conveyer will send the run back to the implementation phase. Keep your findings tight and actionable.
+If your verdict is REQUEST_CHANGES, **call the `send_back_to_implementation` tool** with a one-line `reason` summarising what needs to change. Conveyer will then either rewind to implementation automatically or pause for the user's approval, depending on their gate settings. Without that tool call Conveyer treats your completion as an approval and advances to the next phase.
+
+Keep your findings tight and actionable.
 
 ## Plan
 

@@ -300,6 +300,94 @@ async fn gate_auto_advance(state: &AppState, kind: &str) -> AppResult<bool> {
     Ok(row.map(|(v,)| v == 1).unwrap_or(false))
 }
 
+/// Handle the reviewer's send-back-to-implementation outcome. Called by
+/// session_runner when the review phase completes cleanly AND the agent
+/// invoked the `send_back_to_implementation` tool.
+///
+/// Respects the `review_rewind` gate the same way complete_phase_internal
+/// respects the per-phase auto-advance gate: when on, immediately rewinds
+/// to the implementation phase; when off, marks review as `waiting` so the
+/// user can decide whether to approve or send back via the existing
+/// header buttons. Posts a system message into chat either way.
+pub async fn review_send_back_internal(
+    app: &AppHandle,
+    state: &AppState,
+    phase_id: &str,
+    reason: &str,
+) -> AppResult<RunDetail> {
+    let phase = load_phase(state, phase_id).await?;
+    if phase.status != "running" {
+        return run_get_inner(state, &phase.run_id).await;
+    }
+    let auto = gate_auto_advance(state, "review_rewind").await?;
+
+    if auto {
+        // Mark review done and rewind to the implementation phase.
+        sqlx::query(
+            "UPDATE phases SET status='done', finished_at=datetime('now') WHERE id=?",
+        )
+        .bind(phase_id)
+        .execute(&state.db)
+        .await?;
+        let impl_phase: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM phases WHERE run_id = ? AND kind = 'implementation'",
+        )
+        .bind(&phase.run_id)
+        .fetch_optional(&state.db)
+        .await?;
+        if let Some((impl_id,)) = impl_phase {
+            // Reset implementation to running + clear everything after it.
+            sqlx::query(
+                "UPDATE phases SET status='running', started_at=datetime('now'),
+                                    finished_at=NULL WHERE id=?",
+            )
+            .bind(&impl_id)
+            .execute(&state.db)
+            .await?;
+            sqlx::query(
+                "UPDATE phases SET status='pending', started_at=NULL, finished_at=NULL
+                 WHERE run_id=? AND id != ? AND kind != 'implementation'
+                       AND ord > (SELECT ord FROM phases WHERE id = ?)",
+            )
+            .bind(&phase.run_id)
+            .bind(&impl_id)
+            .bind(&impl_id)
+            .execute(&state.db)
+            .await?;
+            sqlx::query("UPDATE runs SET status='running', finished_at=NULL WHERE id=?")
+                .bind(&phase.run_id)
+                .execute(&state.db)
+                .await?;
+            let summary = if reason.is_empty() {
+                "[auto-rewind] Reviewer requested changes; restarting implementation.".to_string()
+            } else {
+                format!("[auto-rewind] {reason}")
+            };
+            // Note: we DO NOT persist this message because there's no
+            // active session row at this point; the chat already shows
+            // the reviewer's send_back tool call. Just spawn the runner.
+            let _ = summary;
+            session_runner::spawn_for_phase(app.clone(), impl_id);
+        }
+    } else {
+        // Pause for user approval — set review to waiting like a normal gate.
+        sqlx::query(
+            "UPDATE phases SET status='waiting', finished_at=datetime('now') WHERE id=?",
+        )
+        .bind(phase_id)
+        .execute(&state.db)
+        .await?;
+        sqlx::query("UPDATE runs SET status='waiting' WHERE id=?")
+            .bind(&phase.run_id)
+            .execute(&state.db)
+            .await?;
+    }
+
+    let detail = run_get_inner(state, &phase.run_id).await?;
+    emit_run_updated_for_run(app, state, &phase.run_id).await;
+    Ok(detail)
+}
+
 /// Re-run a failed phase from scratch. Clears the prior sessions/messages
 /// for this phase so the chat doesn't accumulate stale interrupted runs,
 /// resets the phase + run to `running`, and spawns a fresh sidecar.

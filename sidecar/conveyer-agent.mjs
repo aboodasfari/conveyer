@@ -251,6 +251,33 @@ async function runCopilot(phase, prompt) {
             return { ok: true, pinned: p };
           },
         },
+        {
+          name: "send_back_to_implementation",
+          description:
+            "Call this during the REVIEW phase when you have found issues that require " +
+            "the implementation phase to redo work. Conveyer will then either rewind to " +
+            "implementation automatically or pause for the user's approval, depending on " +
+            "the user's 'auto-rewind on review send-back' gate setting. " +
+            "Pass a one-line `reason` summarising what needs to change. " +
+            "If your review is approving the work as-is, do NOT call this tool — simply " +
+            "complete the phase normally.",
+          parameters: {
+            type: "object",
+            properties: {
+              reason: {
+                type: "string",
+                description: "Short summary (one line) of what needs to change.",
+              },
+            },
+            required: ["reason"],
+          },
+          skipPermission: true,
+          handler: async (args) => {
+            const reason = String(args?.reason ?? "").trim();
+            emit({ type: "send_back", reason });
+            return { ok: true, queued: true };
+          },
+        },
       ],
     };
     if (env.CONVEYER_COPILOT_REASONING) {

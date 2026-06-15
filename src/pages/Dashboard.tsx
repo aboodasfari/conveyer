@@ -74,6 +74,20 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
   useEffect(() => { void load(); }, [load]);
   useAutoRefresh(load);
 
+  // Tasks' run_status / current_phase columns change when a phase
+  // transitions in the runner — listen so the dashboard chips update
+  // immediately instead of waiting for the next poll.
+  useEffect(() => {
+    let unlisten: import("@tauri-apps/api/event").UnlistenFn | null = null;
+    let cancelled = false;
+    void (async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      unlisten = await listen("run_updated", () => { void load(); });
+      if (cancelled) unlisten();
+    })();
+    return () => { cancelled = true; if (unlisten) unlisten(); };
+  }, [load]);
+
   const refresh = async () => {
     if (sources.length === 0) return;
     setRefreshing(true);

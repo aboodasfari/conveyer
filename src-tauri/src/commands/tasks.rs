@@ -382,24 +382,37 @@ pub async fn tasks_seed_demo(state: State<'_, AppState>) -> AppResult<()> {
     .execute(&state.db)
     .await?;
 
-    // 6. Story + two child tasks. Stable source_refs so identifiers in
+    // 6. Story + child tasks. Stable source_refs so identifiers in
     //    artifacts/<task_id>/ stay readable when grepping.
     let story_ref = "demo-story-1";
     let child_a_ref = "demo-task-1";
     let child_b_ref = "demo-task-2";
+    let child_c_ref = "demo-task-3";
 
     let story_desc = "Polish the toy code in `conveyer-test-repo`. \
-                      Two child tasks track the work.";
+                      Three child tasks track the work.";
     let task_a_desc = "`src/math.ts:add` rounds its inputs and so loses precision \
                       when called with floats. Fix it to handle floats correctly \
                       and add a test.";
     let task_b_desc = "`src/greet.ts:greet` should optionally accept a title \
                       (e.g. \"Dr.\") and prefix it to the name. Update the call site \
                       in `src/index.ts` to demo the new behaviour.";
+    // Two-part requirement; the obvious fix addresses one half and skips the
+    // other, so a thorough Review phase has something to send back about.
+    let task_c_desc = "`src/chunk.ts:chunk` has TWO problems:\n\n\
+                      1. It doesn't validate input — calling it with `size <= 0` \
+                         spins forever. Throw a `RangeError` for `size <= 0` and \
+                         a `TypeError` if `arr` is not an array.\n\n\
+                      2. It clones each chunk via `JSON.parse(JSON.stringify(...))`, \
+                         which loses functions, Dates, and `undefined` values. \
+                         It should preserve element identity — return slices of \
+                         the original array unchanged.\n\n\
+                      Add tests covering both behaviours.";
 
     upsert_demo_task(&state, &source_id, story_ref, None, "Demo story: tidy the test repo", "Active", story_desc).await?;
     upsert_demo_task(&state, &source_id, child_a_ref, Some(story_ref), "Fix add() float handling", "Active", task_a_desc).await?;
     upsert_demo_task(&state, &source_id, child_b_ref, Some(story_ref), "Add optional title to greet()", "Active", task_b_desc).await?;
+    upsert_demo_task(&state, &source_id, child_c_ref, Some(story_ref), "Validate and de-clone chunk()", "Active", task_c_desc).await?;
 
     Ok(())
 }

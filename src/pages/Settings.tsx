@@ -659,28 +659,60 @@ function ExecutionSection() {
             const g = gates.find((x) => x.phase_kind === k) ?? { phase_kind: k, auto_advance: 0 };
             const on = g.auto_advance === 1;
             const labelId = `gate-${k}`;
+            const isReview = k === "review";
+            const rewindGate = gates.find((x) => x.phase_kind === "review_rewind")
+              ?? { phase_kind: "review_rewind", auto_advance: 0 };
+            const rewindOn = rewindGate.auto_advance === 1;
             return (
-              <Box
-                key={k}
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  py: 2,
-                }}
-              >
-                <Text id={labelId}>
-                  {titleCase(k)}{" "}
-                  <Text sx={{ color: "fg.muted", fontSize: 0 }}>
-                    · {on ? "auto-advance after" : "wait for me after"}
+              <Box key={k}>
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    py: 2,
+                  }}
+                >
+                  <Text id={labelId}>
+                    {titleCase(k)}{" "}
+                    <Text sx={{ color: "fg.muted", fontSize: 0 }}>
+                      · {isReview
+                          ? (on ? "auto-advance when reviewer approves" : "wait for me when reviewer approves")
+                          : (on ? "auto-advance after" : "wait for me after")}
+                    </Text>
                   </Text>
-                </Text>
-                <ToggleSwitch
-                  checked={on}
-                  onClick={() => toggleGate(k, g.auto_advance)}
-                  aria-labelledby={labelId}
-                  size="small"
-                />
+                  <ToggleSwitch
+                    checked={on}
+                    onClick={() => toggleGate(k, g.auto_advance)}
+                    aria-labelledby={labelId}
+                    size="small"
+                  />
+                </Box>
+                {isReview && (
+                  <Box
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      py: 2,
+                      pl: 3,
+                    }}
+                  >
+                    <Text id="gate-review-rewind">
+                      <Text sx={{ color: "fg.muted" }}>↳</Text>{" "}
+                      Send back to implementation{" "}
+                      <Text sx={{ color: "fg.muted", fontSize: 0 }}>
+                        · {rewindOn ? "auto-rewind when reviewer requests changes" : "wait for me when reviewer requests changes"}
+                      </Text>
+                    </Text>
+                    <ToggleSwitch
+                      checked={rewindOn}
+                      onClick={() => toggleGate("review_rewind", rewindGate.auto_advance)}
+                      aria-labelledby="gate-review-rewind"
+                      size="small"
+                    />
+                  </Box>
+                )}
               </Box>
             );
           })}

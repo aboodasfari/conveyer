@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d1117"/>
+      <stop offset="1" stop-color="#1f2329"/>
+    </linearGradient>
+    <linearGradient id="trail" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#a371f7" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#79c0ff" stop-opacity="1"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+  <!-- pipeline track -->
+  <line x1="240" y1="512" x2="784" y2="512"
+        stroke="url(#trail)" stroke-width="14" stroke-linecap="round"/>
+  <!-- staged dots (5 phases: exploration -> planning -> impl -> review -> submit) -->
+  <g>
+    <circle cx="260" cy="512" r="22" fill="#a371f7"/>
+    <circle cx="394" cy="512" r="22" fill="#a371f7" opacity="0.75"/>
+    <circle cx="528" cy="512" r="26" fill="#79c0ff"/>
+    <circle cx="662" cy="512" r="22" fill="#79c0ff" opacity="0.75"/>
+    <circle cx="796" cy="512" r="22" fill="#79c0ff"/>
+  </g>
+  <!-- forward-motion chevron above the belt -->
+  <g transform="translate(528 360)" fill="none" stroke="#ffffff" stroke-width="40" stroke-linecap="round" stroke-linejoin="round" opacity="0.95">
+    <path d="M -54 -50 L 22 0 L -54 50"/>
+    <path d="M  22 -50 L 98 0 L  22 50"/>
+  </g>
+</svg>
