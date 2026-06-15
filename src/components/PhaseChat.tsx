@@ -70,7 +70,11 @@ function buildBubbles(
 ): Bubble[] {
   const out: Bubble[] = [];
   runs.forEach((run, idx) => {
-    if (idx > 0) {
+    // Only flag the boundary between distinct phase attempts (role
+    // 'main', i.e. a re-spawned runner after send-back / rewind).
+    // Chat replies (role 'reply') stream as a continuation of the
+    // same phase — no separator.
+    if (idx > 0 && run.session.role === "main") {
       const label = `New attempt · ${formatRunStart(run.session.started_at)}`;
       out.push({ kind: "separator", id: `sep-${run.session.id}`, label });
     }
