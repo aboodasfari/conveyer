@@ -397,22 +397,23 @@ pub async fn tasks_seed_demo(state: State<'_, AppState>) -> AppResult<()> {
     let task_b_desc = "`src/greet.ts:greet` should optionally accept a title \
                       (e.g. \"Dr.\") and prefix it to the name. Update the call site \
                       in `src/index.ts` to demo the new behaviour.";
-    // Two-part requirement; the obvious fix addresses one half and skips the
-    // other, so a thorough Review phase has something to send back about.
-    let task_c_desc = "`src/chunk.ts:chunk` has TWO problems:\n\n\
-                      1. It doesn't validate input — calling it with `size <= 0` \
-                         spins forever. Throw a `RangeError` for `size <= 0` and \
-                         a `TypeError` if `arr` is not an array.\n\n\
-                      2. It clones each chunk via `JSON.parse(JSON.stringify(...))`, \
-                         which loses functions, Dates, and `undefined` values. \
-                         It should preserve element identity — return slices of \
-                         the original array unchanged.\n\n\
-                      Add tests covering both behaviours.";
+    // Single-requirement description that omits the identity invariant
+    // documented in chunk.ts + chunk.test.ts. A careless implementer may
+    // "modernise" the function and break identity to satisfy validation,
+    // giving the Review phase something concrete to send back about.
+    let task_c_desc = "`src/chunk.ts:chunk` has no input validation — \
+                      calling it with `size <= 0` spins forever and \
+                      passing a non-array throws a confusing TypeError \
+                      deep in the loop.\n\n\
+                      Add explicit guards: throw a `RangeError` for \
+                      `size <= 0` (and `NaN`), and a `TypeError` if \
+                      `arr` is not an array. Add tests covering both.\n\n\
+                      Don't break the existing tests in `chunk.test.ts`.";
 
     upsert_demo_task(&state, &source_id, story_ref, None, "Demo story: tidy the test repo", "Active", story_desc).await?;
     upsert_demo_task(&state, &source_id, child_a_ref, Some(story_ref), "Fix add() float handling", "Active", task_a_desc).await?;
     upsert_demo_task(&state, &source_id, child_b_ref, Some(story_ref), "Add optional title to greet()", "Active", task_b_desc).await?;
-    upsert_demo_task(&state, &source_id, child_c_ref, Some(story_ref), "Validate and de-clone chunk()", "Active", task_c_desc).await?;
+    upsert_demo_task(&state, &source_id, child_c_ref, Some(story_ref), "Add input validation to chunk()", "Active", task_c_desc).await?;
 
     Ok(())
 }
