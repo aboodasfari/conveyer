@@ -398,20 +398,19 @@ function computeChatMode(
       return {
         kind: "enabled",
         placeholder:
-          "Reply to the agent — ask a question, request a change, or steer before approving…",
+          "Reply to the agent. Ask a question, request a change, or steer before approving.",
       };
     case "failed":
     case "cancelled":
       return {
         kind: "enabled",
-        placeholder:
-          "Chat with the agent to debug or steer past the error…",
+        placeholder: "Chat with the agent to debug or steer past the error.",
       };
     case "done":
       if (runStatus === "done") {
         return {
           kind: "enabled",
-          placeholder: "Continue working with the agent…",
+          placeholder: "Continue working with the agent.",
         };
       }
       return {
