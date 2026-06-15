@@ -702,20 +702,14 @@ function AssistantBubble({ content, streaming }: { content: string; streaming: b
 /** User: prepended with a chevron, like a shell prompt. */
 function UserBubble({ content }: { content: string }) {
   return (
-    <Box sx={{ display: "flex", gap: 1, color: "accent.fg" }}>
-      <Box
-        aria-hidden
-        sx={{
-          width: GUTTER_WIDTH,
-          flexShrink: 0,
-          display: "flex",
-          justifyContent: "center",
-          pt: "1px",
-          fontWeight: 700,
-        }}
-      >
-        ›
-      </Box>
+    <Box sx={{ display: "flex", gap: 1 }}>
+      <Gutter
+        marker={
+          <Box sx={{ color: "accent.fg", display: "flex" }}>
+            <ChevronRightIcon size={12} />
+          </Box>
+        }
+      />
       <Box sx={{ flex: 1, color: "fg.default", whiteSpace: "pre-wrap", minWidth: 0 }}>{content}</Box>
     </Box>
   );
