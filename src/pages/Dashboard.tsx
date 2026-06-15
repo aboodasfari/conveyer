@@ -336,18 +336,27 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
         }
       >
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <Text>
-            Permanently delete <Box as="strong" sx={{ fontWeight: 600 }}>{deleting?.title}</Box>,
-            its runs, chat, and artifacts.
-          </Text>
+          <Box
+            sx={{
+              px: 2,
+              py: 2,
+              bg: "canvas.subtle",
+              borderLeftWidth: 3,
+              borderLeftStyle: "solid",
+              borderLeftColor: "border.default",
+              borderRadius: 1,
+            }}
+          >
+            <Text sx={{ fontWeight: 600, wordBreak: "break-word" }}>
+              {deleting?.title}
+            </Text>
+          </Box>
+          <Text>Permanently deletes its runs, chat, and artifacts.</Text>
           {deleting?.source_id && deleting.source_id !== "local" && (
             <Text sx={{ fontSize: 0, color: "attention.fg" }}>
               From an external source — the next refresh may bring it back. Archive to hide instead.
             </Text>
           )}
-          <Text sx={{ fontSize: 0, color: "fg.muted" }}>
-            Worktrees are removed; branches stay.
-          </Text>
           <Text sx={{ color: "fg.muted" }}>This can't be undone.</Text>
         </Box>
       </Modal>
