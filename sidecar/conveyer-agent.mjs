@@ -379,25 +379,44 @@ async function runCopilotChatRepl(sessionId, idleMs) {
     }
   });
 
+  // Subscribed event handler runs for the whole life of the session
+  // (one-shot main turn + REPL turns thereafter). No need to set it
+  // up again per turn.
+
   // Ready for commands.
+  await runReplLoop({ session, flush, idleMs });
+
+  try { unsubscribe?.(); } catch { /* noop */ }
+  try { await client.stop?.(); } catch { /* noop */ }
+  emit({ type: "done", ok: true });
+}
+
+/**
+ * Shared REPL loop. Owns the idle watchdog + stdin command parser +
+ * per-turn sendAndWait. Used by both runCopilotChatRepl (fresh resume)
+ * and runCopilotSession (after the main one-shot turn completes — we
+ * transition into REPL instead of exiting so Rust can keep the same
+ * process for chat replies).
+ *
+ * Emits `ready` once on entry. Per turn: emits the agent's
+ * messages/tool_calls via the existing session.on subscription, then
+ * `turn_done`. Exits on stdin EOF, a `{type:"shutdown"}` command, or
+ * idle timeout.
+ */
+async function runReplLoop({ session, flush, idleMs }) {
   emit({ type: "ready" });
 
-  // Read stdin line-by-line. Node's readline is the simplest way.
   const { default: readline } = await import("node:readline");
   const rl = readline.createInterface({ input: process.stdin });
   const TURN_TIMEOUT_MS = 30 * 60 * 1000;
   let busy = false;
 
-  // Idle watchdog. Reset before/after each turn; if it fires the
-  // process exits cleanly and the next user reply will spawn a fresh
-  // one. While `busy` is true we never arm the timer — sendAndWait
-  // can take minutes and we don't want a ping or stale schedule to
-  // kill the process mid-turn. `resetIdle()` is called both on ping
-  // and on turn completion; both safely no-op while busy.
+  // Idle watchdog. Reset before/after each turn; while `busy` is true
+  // resetIdle() no-ops so a ping during a long-running turn can't arm
+  // a timer that fires mid-sendAndWait.
   let idleTimer = setTimeout(shutdownIdle, idleMs);
   function shutdownIdle() {
     msg("system", `[chat] idle for ${(idleMs / 1000) | 0}s, shutting down warm sidecar.`);
-    emit({ type: "done", ok: true });
     setTimeout(() => process.exit(0), 50);
   }
   function resetIdle() {
@@ -412,9 +431,6 @@ async function runCopilotChatRepl(sessionId, idleMs) {
     try { cmd = JSON.parse(line); } catch { continue; }
     if (cmd.type === "shutdown") break;
     if (cmd.type === "ping") {
-      // Heartbeat from the UI saying the chat tab is still mounted.
-      // Pings keep the warm sidecar alive; absence of pings + replies
-      // for `idleMs` causes shutdown.
       resetIdle();
       continue;
     }
@@ -444,11 +460,7 @@ async function runCopilotChatRepl(sessionId, idleMs) {
     }
   }
 
-  // EOF or shutdown command — clean up.
   clearTimeout(idleTimer);
-  try { unsubscribe?.(); } catch { /* noop */ }
-  try { await client.stop?.(); } catch { /* noop */ }
-  emit({ type: "done", ok: true });
 }
 
 async function runCopilotSession({ phase, prompt, resume }) {
@@ -542,6 +554,7 @@ async function runCopilotSession({ phase, prompt, resume }) {
     }
   });
 
+  let mainOk = false;
   try {
     // The SDK's sendAndWait defaults to a 60s timeout waiting for
     // session.idle, which is far too short for a real phase that does
@@ -551,15 +564,36 @@ async function runCopilotSession({ phase, prompt, resume }) {
     flush();
     // Capture the artifact file the agent (hopefully) wrote.
     await checkArtifactWritten();
-    emit({ type: "done", ok: true });
+    mainOk = true;
+    // Tell Rust the main turn succeeded AND that this process is
+    // about to enter chat REPL mode so Rust can hand the live child
+    // off instead of waiting for exit. Only flag keep_alive for
+    // fresh main runs — resume reply mode below exits as before.
+    emit({ type: "done", ok: true, keep_alive: !resume });
   } catch (e) {
     flush();
     msg("system", `Session failed: ${e?.message ?? e}`);
     emit({ type: "done", ok: false, error: e?.message ?? String(e) });
-  } finally {
-    try { unsubscribe?.(); } catch { /* noop */ }
-    try { await client.stop?.(); } catch { /* noop */ }
   }
+
+  if (mainOk && !resume) {
+    // Transition into chat REPL using the same client + session +
+    // event subscription. The Rust runner will register this process
+    // as the warm chat sidecar for the phase, so the user's first
+    // reply skips the SDK cold-start cost. Only do this on fresh
+    // main runs (resume is null); old-style one-shot reply mode just
+    // exits as before.
+    const rawIdle = parseInt(env.CONVEYER_CHAT_IDLE_MS || "", 10);
+    const idleMs = Number.isFinite(rawIdle) && rawIdle > 0 ? rawIdle : 75_000;
+    try {
+      await runReplLoop({ session, flush, idleMs });
+    } catch (e) {
+      msg("system", `[chat] REPL exited: ${e?.message ?? e}`);
+    }
+  }
+
+  try { unsubscribe?.(); } catch { /* noop */ }
+  try { await client.stop?.(); } catch { /* noop */ }
 }
 
 function truncate(s, n) {

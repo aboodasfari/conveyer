@@ -272,13 +272,22 @@ export function PhaseChat({
     };
   }, [phaseId]);
 
-  // Eagerly spawn the warm chat sidecar when the chat tab mounts, so
-  // the user's first message hits a hot SDK instead of paying ~5s of
-  // cold-start. Best-effort: backend silently no-ops if there's no
-  // resumable SDK session yet (e.g. phase hasn't run).
+  // Eagerly spawn the warm chat sidecar when the chat would actually
+  // be usable, so the user's first message hits a hot SDK instead of
+  // paying ~5s of cold-start. Skipped while the phase is still
+  // running (to avoid spawning a duplicate chat sidecar that would
+  // race the main runner for the same SDK session) and for terminal
+  // 'done' phases in the middle of a pipeline. Best-effort: backend
+  // silently no-ops if there's no resumable SDK session.
   useEffect(() => {
+    const canWarm =
+      phaseStatus === "waiting" ||
+      phaseStatus === "failed" ||
+      phaseStatus === "cancelled" ||
+      (phaseStatus === "done" && runStatus === "done");
+    if (!canWarm) return;
     void api.chatWarm(phaseId);
-  }, [phaseId]);
+  }, [phaseId, phaseStatus, runStatus]);
 
   // Pulse on the last bubble. For 'main' sessions the existing
   // signal (session.status === 'running') is right — process alive

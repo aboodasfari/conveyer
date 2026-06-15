@@ -163,6 +163,12 @@ enum SidecarEvent {
         ok: bool,
         #[serde(default)]
         error: Option<String>,
+        /// Sidecar hint that it's about to transition to chat REPL
+        /// instead of exiting. When true + ok=true, Rust hands the
+        /// live child off to the chat reader loop. Absent / false
+        /// keeps today's behaviour (wait for child exit).
+        #[serde(default)]
+        keep_alive: Option<bool>,
     },
 }
 
@@ -636,8 +642,9 @@ async fn ensure_chat_spawned(
     let app_clone = app.clone();
     let sid_clone = session_id.clone();
     let phase_clone = phase_id.to_string();
+    let reader = BufReader::new(stdout).lines();
     tauri::async_runtime::spawn(async move {
-        chat_reader_loop(app_clone, sid_clone, phase_clone, child, stdout, ready_tx).await;
+        chat_reader_loop(app_clone, sid_clone, phase_clone, child, reader, ready_tx).await;
     });
 
     // Wait for the sidecar to be ready. If it never sends `ready`, the
@@ -686,19 +693,23 @@ pub async fn chat_heartbeat(app: &AppHandle, phase_id: &str) {
 /// events through `handle_line` and watches for the chat-specific
 /// `ready` / `turn_done` events. Owns the Child so it can clean up
 /// once the sidecar exits (idle timeout, EOF, or kill).
+///
+/// Takes the stdout reader pre-built so callers can hand off an
+/// existing `Lines` instance — used by the handoff path where the
+/// reader has already consumed earlier output from the same child.
 async fn chat_reader_loop(
     app: AppHandle,
     session_id: String,
     phase_id: String,
     mut child: Child,
-    stdout: tokio::process::ChildStdout,
+    mut reader: tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
     ready_tx: oneshot::Sender<()>,
 ) {
     let state = app.state::<AppState>();
-    let mut reader = BufReader::new(stdout).lines();
     let mut ready_tx_opt = Some(ready_tx);
     let mut ok = false;
     let mut error_msg: Option<String> = None;
+    let mut keep_alive = false; // unused in chat reader, but handle_line needs the slot
 
     loop {
         match reader.next_line().await {
@@ -724,7 +735,7 @@ async fn chat_reader_loop(
                         _ => {}
                     }
                 }
-                if !handle_line(&app, &state, &session_id, &phase_id, &line, &mut ok, &mut error_msg).await {
+                if !handle_line(&app, &state, &session_id, &phase_id, &line, &mut ok, &mut error_msg, &mut keep_alive).await {
                     // `done` event = sidecar is shutting down (idle or
                     // command). Reader continues to drain until EOF.
                     continue;
@@ -750,6 +761,106 @@ async fn chat_reader_loop(
         "busy": false,
     }));
     emit_run_updated(&app, &state, &phase_id).await;
+}
+
+/// Hand a live main-phase sidecar off to chat REPL mode. Called from
+/// `run_one` after the main turn emits done with keep_alive=true: the
+/// sidecar is in the middle of transitioning to its REPL loop and
+/// we want to keep the process alive so the user's first chat reply
+/// skips the SDK cold-start cost.
+///
+/// On success the chat registry is populated and the chat reader loop
+/// owns the child. On failure we return the child and reader back so
+/// the caller can fall through to the original wait-for-exit path —
+/// no regression vs the pre-handoff behaviour.
+async fn handoff_to_chat(
+    app: &AppHandle,
+    state: &AppState,
+    phase_id: &str,
+    main_session_id: &str,
+    mut child: Child,
+    reader: tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+) -> Result<(), (Child, tokio::io::Lines<BufReader<tokio::process::ChildStdout>>, AppError)> {
+    let registry = app.state::<RunnerRegistry>();
+
+    // Refuse if there's already a warm chat handle for this phase.
+    // Shouldn't happen on the auto-run path, but defensive.
+    if registry.get_chat(phase_id).is_some() {
+        return Err((child, reader, AppError::Other(
+            "Chat handle already exists for this phase; declining handoff.".into(),
+        )));
+    }
+
+    // The SDK session id was stashed onto the main session row when
+    // the SDK emitted session_started. Reuse it for the chat session.
+    let sdk_row: Result<Option<(Option<String>,)>, _> = sqlx::query_as(
+        "SELECT sdk_session_id FROM sessions WHERE id = ?",
+    )
+    .bind(main_session_id)
+    .fetch_optional(&state.db)
+    .await;
+    let sdk_session_id = match sdk_row {
+        Ok(Some((Some(id),))) => id,
+        _ => {
+            return Err((child, reader, AppError::Other(
+                "No sdk_session_id on main session row; can't hand off.".into(),
+            )));
+        }
+    };
+
+    // Verify stdin was piped (must have been: main runner spawns with
+    // stdin=piped specifically for this handoff). Check without taking
+    // so we can return child intact on the next failure.
+    if child.stdin.is_none() {
+        return Err((child, reader, AppError::Other(
+            "Main sidecar stdin not piped; can't hand off.".into(),
+        )));
+    }
+
+    // Create the chat session row that the REPL turns will append into.
+    let chat_session_id = Uuid::new_v4().to_string();
+    if let Err(e) = sqlx::query(
+        "INSERT INTO sessions(id, phase_id, role, status, started_at, sdk_session_id, pid)
+         VALUES(?, ?, 'chat', 'running', datetime('now'), ?, ?)",
+    )
+    .bind(&chat_session_id)
+    .bind(phase_id)
+    .bind(&sdk_session_id)
+    .bind(child.id().map(|p| p as i64))
+    .execute(&state.db)
+    .await {
+        return Err((child, reader, AppError::from(e)));
+    }
+
+    // Everything past this point is infallible (channel + spawn).
+    // Safe to start consuming the live child.
+    let stdin = child.stdin.take().expect("checked is_some above");
+
+    // Mark the main session row done — its turn is over, the REPL
+    // takes over from here.
+    let _ = sqlx::query("UPDATE sessions SET status='done', finished_at=datetime('now') WHERE id=?")
+        .bind(main_session_id)
+        .execute(&state.db)
+        .await;
+
+    // Wire up the writer + reader tasks.
+    let (stdin_tx, stdin_rx) = mpsc::channel::<String>(8);
+    tauri::async_runtime::spawn(chat_stdin_writer(stdin, stdin_rx));
+
+    // Register the chat handle BEFORE spawning the reader, so a
+    // chat_warm() called while the sidecar is still emitting `ready`
+    // finds it immediately.
+    registry.register_chat(phase_id.to_string(), chat_session_id.clone(), stdin_tx);
+
+    let app_clone = app.clone();
+    let phase_clone = phase_id.to_string();
+    let sid_clone = chat_session_id.clone();
+    let (ready_tx, _ready_rx) = oneshot::channel::<()>();
+    tauri::async_runtime::spawn(async move {
+        chat_reader_loop(app_clone, sid_clone, phase_clone, child, reader, ready_tx).await;
+    });
+
+    Ok(())
 }
 
 
@@ -862,9 +973,14 @@ async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
     if let Some(wp) = &worktree_path {
         cmd.env("CONVEYER_WORKTREE_PATH", wp);
     }
-    cmd.stdout(Stdio::piped())
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    // Once the main turn succeeds the sidecar transitions to chat REPL
+    // mode on the same process. The chat reader loop heartbeats every
+    // 30s; this gives it 2.5 missed pings of slack before shutdown.
+    cmd.env("CONVEYER_CHAT_IDLE_MS", "75000");
     if let Some(p) = &ctx.parent_title {
         cmd.env("CONVEYER_PARENT_TITLE", p);
     }
@@ -973,6 +1089,7 @@ async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
 
     let mut ok = false;
     let mut error_msg: Option<String> = None;
+    let mut keep_alive = false;
 
     loop {
         tokio::select! {
@@ -984,7 +1101,7 @@ async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
             line = reader.next_line() => {
                 match line {
                     Ok(Some(line)) => {
-                        if !handle_line(app, &state, &session_id, phase_id, &line, &mut ok, &mut error_msg).await {
+                        if !handle_line(app, &state, &session_id, phase_id, &line, &mut ok, &mut error_msg, &mut keep_alive).await {
                             // 'done' event seen — stop reading.
                             break;
                         }
@@ -995,6 +1112,40 @@ async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
                         break;
                     }
                 }
+            }
+        }
+    }
+
+    // Handoff path: the sidecar emitted done with keep_alive=true and
+    // is now transitioning into chat REPL on the same process. Take
+    // ownership of the live child + reader and route them into the
+    // chat reader loop so the user's next chat reply skips the SDK
+    // cold-start cost. complete_phase_internal still runs so the
+    // pipeline advances as if the sidecar had exited.
+    //
+    // If anything in the handoff fails, we fall back to the original
+    // wait-for-exit path — no regression.
+    if ok && keep_alive {
+        match handoff_to_chat(app, &state, phase_id, &session_id, child, reader).await {
+            Ok(()) => {
+                // Main session row marked done inside handoff_to_chat
+                // so the chat session can begin its own lifecycle.
+                let send_back_reason = registry.take_send_back(phase_id);
+                registry.unregister(phase_id);
+                if let Some(reason) = send_back_reason {
+                    let _ = crate::commands::runs::review_send_back_internal(
+                        app, &state, phase_id, &reason,
+                    ).await;
+                } else {
+                    let _ = crate::commands::runs::complete_phase_internal(app, &state, phase_id).await;
+                }
+                return Ok(());
+            }
+            Err((restored_child, restored_reader, err)) => {
+                tracing::warn!("chat handoff failed for {phase_id}: {err}; falling back to normal exit");
+                child = restored_child;
+                reader = restored_reader;
+                // fall through to normal exit path below
             }
         }
     }
@@ -1046,6 +1197,7 @@ async fn handle_line(
     line: &str,
     ok: &mut bool,
     error_msg: &mut Option<String>,
+    keep_alive: &mut bool,
 ) -> bool {
     if line.trim().is_empty() {
         return true;
@@ -1191,11 +1343,12 @@ async fn handle_line(
             // them before delegating here. If they reach this dispatcher
             // (e.g. emitted in the wrong mode) just ignore.
         }
-        SidecarEvent::Done { ok: done_ok, error } => {
+        SidecarEvent::Done { ok: done_ok, error, keep_alive: ka } => {
             *ok = done_ok;
             if !done_ok {
                 *error_msg = error;
             }
+            *keep_alive = done_ok && ka.unwrap_or(false);
             return false;
         }
     }
