@@ -166,12 +166,11 @@ export function PhaseChat({
   runStatus: string;
 }) {
   const [runs, setRuns] = useState<{ session: Session; messages: Message[] }[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const nextLocalId = useRef(-1);
 
   const load = useCallback(async () => {
-    setLoading(true);
     try {
       const sessions = await api.sessionsForPhase(phaseId);
       const loaded = await Promise.all(
@@ -182,7 +181,7 @@ export function PhaseChat({
       );
       setRuns(loaded);
     } finally {
-      setLoading(false);
+      setInitialLoading(false);
     }
   }, [phaseId]);
 
@@ -307,53 +306,87 @@ export function PhaseChat({
     };
   }, [phaseId]);
 
-  // Scroll behaviour: preserve user's position across re-mounts
-  // (tab switches), use sticky-bottom auto-scroll for new bubbles
-  // (only follow the conversation if user is already near the bottom),
-  // and snap to bottom when the user sends a message.
+  // Scroll behaviour: preserve user's position across tab-switch
+  // mounts; sticky-bottom auto-scroll that follows new bubbles AND
+  // streaming content (assistant deltas grow an existing bubble).
+  //
+  // The model is one boolean ref `stickyRef` ("user wants to follow
+  // the conversation"): true while scrolled to bottom, false the
+  // moment they scroll up. Auto-scroll fires whenever the scroll
+  // container's content height changes AND sticky is true. Position
+  // is also persisted to sessionStorage so a tab-switch restores it.
   const SCROLL_KEY = `conveyer:chat-scroll:${phaseId}`;
-  const isNearBottomRef = useRef(true);
+  const stickyRef = useRef(true);
   const scrollRestoredRef = useRef(false);
 
+  // Track scroll: update sticky + persist position.
   useEffect(() => {
     const el = scrollerRef.current;
     if (!el) return;
     const onScroll = () => {
       const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
-      isNearBottomRef.current = dist < 80;
-      sessionStorage.setItem(SCROLL_KEY, String(el.scrollTop));
+      stickyRef.current = dist < 80;
+      // Only persist after we've successfully restored, otherwise the
+      // initial layout pass (scrollTop=0 before restore) overwrites
+      // the previous saved value.
+      if (scrollRestoredRef.current) {
+        sessionStorage.setItem(SCROLL_KEY, String(el.scrollTop));
+      }
     };
-    el.addEventListener("scroll", onScroll);
+    el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
   }, [SCROLL_KEY]);
 
-  // Restore scroll once after initial load. First-time visitors land
-  // at the bottom (newest message), returning visitors land where
-  // they left off.
+  // Restore once, after the first content render. Use rAF to wait for
+  // layout, otherwise scrollHeight is still based on the empty state.
   useEffect(() => {
-    if (loading || scrollRestoredRef.current) return;
+    if (initialLoading || scrollRestoredRef.current) return;
     const el = scrollerRef.current;
     if (!el) return;
-    const saved = sessionStorage.getItem(SCROLL_KEY);
-    if (saved !== null) {
-      el.scrollTop = Number(saved);
+    const raf = requestAnimationFrame(() => {
+      const saved = sessionStorage.getItem(SCROLL_KEY);
+      if (saved !== null) {
+        const n = Number(saved);
+        if (Number.isFinite(n)) {
+          el.scrollTop = n;
+        } else {
+          el.scrollTop = el.scrollHeight;
+        }
+      } else {
+        el.scrollTop = el.scrollHeight;
+      }
       const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
-      isNearBottomRef.current = dist < 80;
-    } else {
-      el.scrollTop = el.scrollHeight;
-      isNearBottomRef.current = true;
-    }
-    scrollRestoredRef.current = true;
-  }, [loading, SCROLL_KEY]);
+      stickyRef.current = dist < 80;
+      scrollRestoredRef.current = true;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [initialLoading, SCROLL_KEY]);
 
-  // Sticky-bottom auto-scroll on new bubbles.
+  // Sticky-bottom: whenever the scroll container's content grows AND
+  // the user hasn't scrolled away from the bottom, follow. Uses
+  // ResizeObserver so this catches both new-bubble adds AND streaming
+  // content growth within an existing bubble.
   useEffect(() => {
-    if (!scrollRestoredRef.current) return;
-    if (!isNearBottomRef.current) return;
     const el = scrollerRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [bubbles.length]);
+    const ro = new ResizeObserver(() => {
+      if (!scrollRestoredRef.current) return;
+      if (!stickyRef.current) return;
+      el.scrollTop = el.scrollHeight;
+    });
+    // Observe all current and future children (one observer per child
+    // catches their content size changes).
+    for (const child of Array.from(el.children)) {
+      ro.observe(child as Element);
+    }
+    const mo = new MutationObserver(() => {
+      for (const child of Array.from(el.children)) {
+        ro.observe(child as Element);
+      }
+    });
+    mo.observe(el, { childList: true });
+    return () => { ro.disconnect(); mo.disconnect(); };
+  }, []);
 
   // Chat-input state. Enabled / disabled per the policy in
   // computeChatMode(), which depends on the phase + run status.
@@ -371,9 +404,9 @@ export function PhaseChat({
     if (!content || sending) return;
     setSending(true);
     setSendError(null);
-    // Force scroll to bottom when the user sends — they want to see
-    // their message + the agent's reply. Also re-arm sticky-bottom.
-    isNearBottomRef.current = true;
+    // Snap to bottom + re-arm sticky so the user sees their message
+    // and the agent's reply land in real time.
+    stickyRef.current = true;
     try {
       await api.chatReply(phaseId, content);
       setDraft("");
@@ -401,7 +434,7 @@ export function PhaseChat({
           pr: 3,
         }}
       >
-        {loading ? (
+        {initialLoading && runs.length === 0 ? (
           <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", flex: 1 }}>
             <Spinner size="small" />
           </Box>
