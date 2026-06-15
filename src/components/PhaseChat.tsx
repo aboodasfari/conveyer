@@ -45,15 +45,40 @@ interface ChatBubble {
   content: string;
 }
 
-type Bubble = ToolBubble | ChatBubble;
+interface SeparatorBubble {
+  kind: "separator";
+  id: string;
+  label: string;
+}
+
+type Bubble = ToolBubble | ChatBubble | SeparatorBubble;
 
 /**
  * Pair tool_call_start / tool_call_complete rows by tool_call_id and turn
  * everything into a flat array of bubbles that the renderer iterates.
  * Messages with role "system" whose content starts with "[thinking]" are
  * re-classed as thinking bubbles for styling.
+ *
+ * `runs` is one entry per Session row for the phase (oldest first). A
+ * thin separator bubble is inserted between runs so the user can see
+ * the boundary between a rejected attempt and the next one. Tool-call
+ * pairing is per-run — calls don't bridge sessions.
  */
-function buildBubbles(messages: Message[]): Bubble[] {
+function buildBubbles(
+  runs: { session: Session; messages: Message[] }[],
+): Bubble[] {
+  const out: Bubble[] = [];
+  runs.forEach((run, idx) => {
+    if (idx > 0) {
+      const label = `New attempt · ${formatRunStart(run.session.started_at)}`;
+      out.push({ kind: "separator", id: `sep-${run.session.id}`, label });
+    }
+    out.push(...buildBubblesForMessages(run.messages));
+  });
+  return out;
+}
+
+function buildBubblesForMessages(messages: Message[]): Bubble[] {
   const out: Bubble[] = [];
   const byCallId = new Map<string, ToolBubble>();
 
@@ -114,9 +139,20 @@ function buildBubbles(messages: Message[]): Bubble[] {
   return out;
 }
 
+function formatRunStart(iso: string | null | undefined): string {
+  if (!iso) return "new session";
+  const d = new Date(iso.replace(" ", "T") + (iso.endsWith("Z") ? "" : "Z"));
+  if (Number.isNaN(d.getTime())) return "new session";
+  return d.toLocaleString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    month: "short",
+    day: "numeric",
+  });
+}
+
 export function PhaseChat({ phaseId }: { phaseId: string }) {
-  const [session, setSession] = useState<Session | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [runs, setRuns] = useState<{ session: Session; messages: Message[] }[]>([]);
   const [loading, setLoading] = useState(true);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const nextLocalId = useRef(-1);
@@ -125,17 +161,20 @@ export function PhaseChat({ phaseId }: { phaseId: string }) {
     setLoading(true);
     try {
       const sessions = await api.sessionsForPhase(phaseId);
-      const latest = sessions[sessions.length - 1] ?? null;
-      setSession(latest);
-      if (latest) {
-        setMessages(await api.messagesForSession(latest.id));
-      } else {
-        setMessages([]);
-      }
+      const loaded = await Promise.all(
+        sessions.map(async (s) => ({
+          session: s,
+          messages: await api.messagesForSession(s.id),
+        })),
+      );
+      setRuns(loaded);
     } finally {
       setLoading(false);
     }
   }, [phaseId]);
+
+  // Latest session id; streaming events only target this one.
+  const latestSession = runs.length > 0 ? runs[runs.length - 1].session : null;
 
   useEffect(() => { void load(); }, [load]);
 
@@ -165,17 +204,25 @@ export function PhaseChat({ phaseId }: { phaseId: string }) {
     void (async () => {
       unlisten = await listen<MessageAppended>("message_appended", (e) => {
         const p = e.payload;
-        setMessages((prev) => {
-          if (!session) {
+        setRuns((prev) => {
+          if (prev.length === 0) {
             void load();
             return prev;
           }
-          if (p.session_id !== session.id) return prev;
-          return [
-            ...prev,
+          // Append to whichever run owns the session_id. Almost always the
+          // latest, but a slow event during a rewind could in theory arrive
+          // for an older one — we still find it correctly.
+          const idx = prev.findIndex((r) => r.session.id === p.session_id);
+          if (idx === -1) {
+            // Unknown session id — a brand-new session just spawned; pull
+            // the full list so we pick up the new run.
+            void load();
+            return prev;
+          }
+          const target = prev[idx];
+          const nextMessages = [
+            ...target.messages,
             {
-              // Negative ids stay outside any backend id range; collisions
-              // resolve on the next full reload.
               id: nextLocalId.current--,
               session_id: p.session_id,
               ts: new Date().toISOString(),
@@ -183,6 +230,9 @@ export function PhaseChat({ phaseId }: { phaseId: string }) {
               content: p.content,
             } as Message,
           ];
+          const next = prev.slice();
+          next[idx] = { ...target, messages: nextMessages };
+          return next;
         });
       });
       if (cancelled) unlisten();
@@ -191,9 +241,9 @@ export function PhaseChat({ phaseId }: { phaseId: string }) {
       cancelled = true;
       if (unlisten) unlisten();
     };
-  }, [session, load]);
+  }, [load]);
 
-  const bubbles = useMemo(() => buildBubbles(messages), [messages]);
+  const bubbles = useMemo(() => buildBubbles(runs), [runs]);
 
   // Auto-scroll on new bubbles.
   useEffect(() => {
@@ -209,7 +259,7 @@ export function PhaseChat({ phaseId }: { phaseId: string }) {
       </Box>
     );
   }
-  if (!session) {
+  if (!latestSession) {
     return (
       <Text sx={{ color: "fg.muted" }}>
         No session yet. The Chat tab will stream the agent's thinking once a
@@ -241,7 +291,7 @@ export function PhaseChat({ phaseId }: { phaseId: string }) {
           <BubbleView
             key={b.id}
             bubble={b}
-            streaming={session.status === "running" && i === bubbles.length - 1}
+            streaming={latestSession.status === "running" && i === bubbles.length - 1}
           />
         ))
       )}
@@ -254,11 +304,31 @@ export function PhaseChat({ phaseId }: { phaseId: string }) {
 /* -------------------------------------------------------------------------- */
 
 function BubbleView({ bubble, streaming }: { bubble: Bubble; streaming: boolean }) {
+  if (bubble.kind === "separator") return <SeparatorBubbleView label={bubble.label} />;
   if (bubble.kind === "tool") return <ToolBubbleView bubble={bubble} streaming={streaming} />;
   if (bubble.kind === "thinking") return <ThinkingBubble content={bubble.content} streaming={streaming} />;
   if (bubble.kind === "user") return <UserBubble content={bubble.content} />;
   if (bubble.kind === "assistant") return <AssistantBubble content={bubble.content} streaming={streaming} />;
   return <SystemBubble content={bubble.content} />;
+}
+
+function SeparatorBubbleView({ label }: { label: string }) {
+  return (
+    <Box
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        gap: 2,
+        my: 2,
+        color: "fg.muted",
+        fontSize: 0,
+      }}
+    >
+      <Box sx={{ flex: 1, height: "1px", bg: "border.muted" }} />
+      <Text sx={{ whiteSpace: "nowrap" }}>{label}</Text>
+      <Box sx={{ flex: 1, height: "1px", bg: "border.muted" }} />
+    </Box>
+  );
 }
 
 /* -------------------------------------------------------------------------- */
