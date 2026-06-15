@@ -928,17 +928,10 @@ function NewWorkspaceRow({
 /* -------------------------------------------------------------------------- */
 
 function NotificationsSection() {
-  const [granted, setGranted] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [prefs, setPrefs] = useState<{ enabled: boolean; waiting: boolean; failed: boolean; newTask: boolean } | null>(null);
 
   const refresh = async () => {
-    try {
-      const { isPermissionGranted } = await import("@tauri-apps/plugin-notification");
-      setGranted(await isPermissionGranted());
-    } catch {
-      setGranted(false);
-    }
     try {
       const { loadNotifPrefs } = await import("../runNotifications");
       setPrefs(await loadNotifPrefs());
@@ -953,12 +946,24 @@ function NotificationsSection() {
     setBusy(true);
     try {
       const { requestPermission } = await import("@tauri-apps/plugin-notification");
-      const res = await requestPermission();
-      setGranted(res === "granted");
+      await requestPermission();
     } catch {
-      setGranted(false);
+      // ignore — user can open System Settings via the other button
     } finally {
       setBusy(false);
+    }
+  };
+
+  /// Open the macOS Notifications pane directly. We deep-link to
+  /// Conveyer's row using the bundle identifier when possible; macOS
+  /// silently falls back to the general Notifications pane if the app
+  /// isn't registered there yet.
+  const openSystemSettings = async () => {
+    try {
+      const { openUrl } = await import("@tauri-apps/plugin-opener");
+      await openUrl("x-apple.systempreferences:com.apple.preference.notifications?id=com.conveyer.app");
+    } catch {
+      // ignore
     }
   };
 
@@ -978,22 +983,24 @@ function NotificationsSection() {
     <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <Heading as="h2" sx={{ fontSize: 2 }}>Notifications</Heading>
 
-      {granted === false && (
-        <SubSection title="Permission required" noBorder>
-          <Box sx={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "flex-start" }}>
-            <Text sx={{ color: "fg.muted", fontSize: 1 }}>
-              macOS hasn't granted Conveyer notification permission. If clicking Enable doesn't
-              prompt, toggle it in System Settings → Notifications → Conveyer.
-            </Text>
-            <Button variant="primary" onClick={() => void enable()} disabled={busy}>
-              {busy ? "Requesting…" : "Enable notifications"}
+      <SubSection title="macOS permission" noBorder>
+        <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 2 }}>
+          <Text sx={{ color: "fg.muted", fontSize: 1 }}>
+            Manage Conveyer's notification permission and banner style in System Settings.
+          </Text>
+          <Box sx={{ display: "flex", gap: 2, flexShrink: 0 }}>
+            <Button onClick={() => void enable()} disabled={busy}>
+              {busy ? "Requesting…" : "Request permission"}
+            </Button>
+            <Button variant="primary" onClick={() => void openSystemSettings()}>
+              Open System Settings
             </Button>
           </Box>
-        </SubSection>
-      )}
+        </Box>
+      </SubSection>
 
-      {granted !== false && prefs && (
-        <SubSection title="What to notify me about" noBorder>
+      {prefs && (
+        <SubSection title="What to notify me about">
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
             <NotifToggle
               label="All notifications"
