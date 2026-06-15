@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Box, Button, Spinner, Text, Textarea } from "@primer/react";
+import { Box, Spinner, Text, Textarea } from "@primer/react";
 import {
-  ArrowRightIcon,
   CheckCircleIcon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -340,13 +339,13 @@ export function PhaseChat({
           {chatMode.kind === "disabled-hint" ? (
             <Text sx={{ color: "fg.muted", fontSize: 0 }}>{chatMode.hint}</Text>
           ) : (
-            <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
               <Textarea
                 ref={textareaRef}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     void send();
                   }
@@ -360,20 +359,6 @@ export function PhaseChat({
               {sendError && (
                 <Text sx={{ color: "danger.fg", fontSize: 0 }}>{sendError}</Text>
               )}
-              <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <Text sx={{ color: "fg.muted", fontSize: 0 }}>
-                  ⌘/Ctrl + Enter to send
-                </Text>
-                <Button
-                  trailingVisual={ArrowRightIcon}
-                  variant="primary"
-                  size="small"
-                  onClick={() => void send()}
-                  disabled={sending || draft.trim().length === 0}
-                >
-                  {sending ? "Sending…" : "Send"}
-                </Button>
-              </Box>
             </Box>
           )}
         </Box>
