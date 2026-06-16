@@ -355,6 +355,88 @@ function phaseTools() {
       skipPermission: true,
       handler: askUserHandler,
     },
+    {
+      name: "propose_pr",
+      description:
+        "SUBMIT phase only. Propose (DRAFT) the pull request for the work on this " +
+        "branch WITHOUT creating it. Conveyer shows your proposal to the user as a PR " +
+        "preview; the user approves it and you'll later be asked to actually create it. " +
+        "Inspect the commits/diff and the git remote to fill this in. Determine the " +
+        "target branch from the remote's default branch (e.g. `git remote show origin`). " +
+        "Do NOT run `az repos pr create` or push yet — only propose.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "PR title (usually the task title)." },
+          target_branch: { type: "string", description: "Branch to merge into, e.g. main." },
+          description: { type: "string", description: "PR description in markdown." },
+          reviewers: {
+            type: "array", items: { type: "string" },
+            description: "Optional suggested reviewers.",
+          },
+          work_items: {
+            type: "array", items: { type: "string" },
+            description: "Optional linked work item ids/urls.",
+          },
+        },
+        required: ["title", "target_branch", "description"],
+      },
+      skipPermission: true,
+      handler: async (args) => {
+        emit({
+          type: "propose_pr",
+          title: String(args?.title ?? "").trim(),
+          target_branch: String(args?.target_branch ?? "").trim(),
+          description: String(args?.description ?? ""),
+          reviewers: Array.isArray(args?.reviewers) ? args.reviewers.map(String) : [],
+          work_items: Array.isArray(args?.work_items) ? args.work_items.map(String) : [],
+        });
+        return { ok: true, proposed: true };
+      },
+    },
+    {
+      name: "pr_created",
+      description:
+        "SUBMIT phase only. Call this AFTER you have actually created the pull request " +
+        "(when the user approved the proposal and asked you to create it). Report the " +
+        "PR number, URL, and the status of any checks you queued. Set status to " +
+        "'created' on success or 'failed' if creation failed (with a short error).",
+      parameters: {
+        type: "object",
+        properties: {
+          number: { type: "number", description: "PR number, if known." },
+          url: { type: "string", description: "PR web URL." },
+          status: { type: "string", description: "'created' or 'failed'." },
+          error: { type: "string", description: "Short error message when failed." },
+          checks: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string" },
+                status: { type: "string", description: "e.g. queued, running, passed, failed, n/a" },
+              },
+            },
+            description: "Checks/policies you queued and their current status.",
+          },
+        },
+        required: ["status"],
+      },
+      skipPermission: true,
+      handler: async (args) => {
+        emit({
+          type: "pr_created",
+          number: typeof args?.number === "number" ? args.number : null,
+          url: args?.url ? String(args.url) : null,
+          status: String(args?.status ?? "created"),
+          error: args?.error ? String(args.error) : null,
+          checks: Array.isArray(args?.checks)
+            ? args.checks.map((c) => ({ name: String(c?.name ?? ""), status: String(c?.status ?? "") }))
+            : [],
+        });
+        return { ok: true };
+      },
+    },
   ];
 }
 

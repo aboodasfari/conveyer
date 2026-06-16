@@ -168,6 +168,46 @@ pub async fn complete_phase_internal(
         return run_get_inner(state, &phase.run_id).await;
     }
 
+    // Submit phase is special: the main turn only *drafts* a PR (status
+    // 'draft'). We don't finish the phase here. Instead we either auto-create
+    // it (gate on) or show the preview and wait for the user to approve
+    // creation (gate off). The phase becomes 'done' later, when the agent
+    // reports the PR created (finalize_submit_internal). If the agent never
+    // proposed a PR, fall through to the normal completion path below.
+    if phase.kind == "submit" {
+        let has_draft: Option<(String,)> = sqlx::query_as(
+            "SELECT status FROM pull_requests WHERE phase_id = ?",
+        )
+        .bind(phase_id)
+        .fetch_optional(&state.db)
+        .await?;
+        if let Some((pr_status,)) = has_draft {
+            // Only intervene while the PR hasn't been created yet.
+            if pr_status == "draft" || pr_status == "failed" {
+                let auto = gate_auto_advance(state, &phase.kind).await?;
+                if auto {
+                    // Keep the phase 'running' while the agent creates it.
+                    session_runner::pr_begin_create(app, state, phase_id).await?;
+                } else {
+                    // Show the PR preview; wait for the user to click Create.
+                    sqlx::query(
+                        "UPDATE phases SET status='waiting', finished_at=datetime('now') WHERE id=?",
+                    )
+                    .bind(phase_id)
+                    .execute(&state.db)
+                    .await?;
+                    sqlx::query("UPDATE runs SET status='waiting' WHERE id=?")
+                        .bind(&phase.run_id)
+                        .execute(&state.db)
+                        .await?;
+                }
+                let detail = run_get_inner(state, &phase.run_id).await?;
+                emit_run_updated_for_run(app, state, &phase.run_id).await;
+                return Ok(detail);
+            }
+        }
+    }
+
     let auto = gate_auto_advance(state, &phase.kind).await?;
 
     if auto {
@@ -233,6 +273,26 @@ pub async fn phase_approve(
         )));
     }
 
+    // Approving a submit-phase preview means "create the proposed PR", not
+    // "finish the phase". Route to pr_begin_create; the phase finishes only
+    // once the agent reports the PR created.
+    if phase.kind == "submit" {
+        let pr: Option<(String,)> = sqlx::query_as(
+            "SELECT status FROM pull_requests WHERE phase_id = ?",
+        )
+        .bind(&phase_id)
+        .fetch_optional(&state.db)
+        .await?;
+        if let Some((pr_status,)) = pr {
+            if pr_status == "draft" || pr_status == "failed" {
+                session_runner::pr_begin_create(&app, &state, &phase_id).await?;
+                let detail = run_get_inner(&state, &phase.run_id).await?;
+                emit_run_updated_for_run(&app, &state, &phase.run_id).await;
+                return Ok(detail);
+            }
+        }
+    }
+
     // Mark the just-completed phase as done, then advance to the next.
     sqlx::query("UPDATE phases SET status='done' WHERE id=?")
         .bind(&phase_id)
@@ -246,6 +306,33 @@ pub async fn phase_approve(
     let detail = run_get_inner(&state, &phase.run_id).await?;
     emit_run_updated_for_run(&app, &state, &phase.run_id).await;
     Ok(detail)
+}
+
+/// Called by the session runner once the agent confirms the PR was created.
+/// Marks the submit phase done and advances the run (submit is last, so the
+/// run finishes). Safe to call once; no-op if the phase isn't running.
+pub async fn finalize_submit_internal(
+    app: &AppHandle,
+    state: &AppState,
+    phase_id: &str,
+) -> AppResult<()> {
+    let phase = load_phase(state, phase_id).await?;
+    if phase.status == "done" {
+        return Ok(());
+    }
+    sqlx::query(
+        "UPDATE phases SET status='done', finished_at=datetime('now') WHERE id=?",
+    )
+    .bind(phase_id)
+    .execute(&state.db)
+    .await?;
+    // Submit is the final phase; this closes out the run.
+    let next_id = start_next_phase(state, &phase.run_id, phase.ord).await?;
+    if let Some(id) = next_id {
+        session_runner::spawn_for_phase(app.clone(), id);
+    }
+    emit_run_updated_for_run(app, state, &phase.run_id).await;
+    Ok(())
 }
 
 async fn load_phase(state: &AppState, phase_id: &str) -> AppResult<Phase> {

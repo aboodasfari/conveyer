@@ -25,6 +25,7 @@ import { PhaseChat } from "./PhaseChat";
 import { PhaseArtifact } from "./PhaseArtifact";
 import { PromptView } from "./PromptView";
 import { DiffViewer } from "./DiffViewer";
+import { PullRequestView } from "./PullRequestView";
 
 const RING_PULSE_KEYFRAMES = `
 @keyframes conveyerRingPulse {
@@ -706,6 +707,8 @@ function PhaseContent({
           />
         ) : tab === "diff" ? (
           <DiffViewer phaseId={phase.id} phaseStatus={phase.status} />
+        ) : tab === "pr" ? (
+          <PullRequestView phaseId={phase.id} />
         ) : tab === "prompt" ? (
           <PromptView phaseId={phase.id} />
         ) : (

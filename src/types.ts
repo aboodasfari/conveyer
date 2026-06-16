@@ -97,6 +97,28 @@ export interface CommentMessage {
   content: string;
 }
 
+export interface PrCheck {
+  name: string;
+  status: string;
+}
+
+export interface PullRequest {
+  phase_id: string;
+  title: string;
+  source_branch: string | null;
+  target_branch: string | null;
+  description: string | null;
+  status: string; // draft | creating | created | failed
+  number: number | null;
+  url: string | null;
+  checks_json: string | null;
+  reviewers_json: string | null;
+  work_items_json: string | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface RunDetail {
   run: Run;
   phases: Phase[];

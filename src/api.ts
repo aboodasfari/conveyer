@@ -105,6 +105,11 @@ export const api = {
   phaseDiffText: (phaseId: string, commit?: string | null) =>
     invoke<string>("phase_diff_text", { phaseId, commit: commit ?? null }),
 
+  // pull requests (submit phase)
+  pullRequestForPhase: (phaseId: string) =>
+    invoke<import("./types").PullRequest | null>("pull_request_for_phase", { phaseId }),
+  prCreate: (phaseId: string) => invoke<void>("pr_create", { phaseId }),
+
   // workspaces
   workspacesList: () => invoke<import("./types").Workspace[]>("workspaces_list"),
   workspaceUpsert: (id: number | null, name: string, path: string) =>

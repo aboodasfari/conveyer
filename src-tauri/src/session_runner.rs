@@ -196,6 +196,23 @@ enum SidecarEvent {
     Artifact { path: String },
     PickWorkspace { path: String },
     SendBack { #[serde(default)] reason: Option<String> },
+    /// Submit phase: the agent proposed (drafted) a PR. We store it as a
+    /// preview; creation happens later on the user's approval.
+    ProposePr {
+        #[serde(default)] title: Option<String>,
+        #[serde(default)] target_branch: Option<String>,
+        #[serde(default)] description: Option<String>,
+        #[serde(default)] reviewers: Option<Vec<String>>,
+        #[serde(default)] work_items: Option<Vec<String>>,
+    },
+    /// Submit phase: the agent actually created (or failed to create) the PR.
+    PrCreated {
+        #[serde(default)] number: Option<i64>,
+        #[serde(default)] url: Option<String>,
+        status: String,
+        #[serde(default)] error: Option<String>,
+        #[serde(default)] checks: Option<Value>,
+    },
     /// Emitted by the sidecar once it has a SDK session id, so we can
     /// later call `client.resumeSession(id)` for user chat replies.
     SessionStarted { sdk_session_id: String },
@@ -1023,6 +1040,51 @@ fn sanitize_reply(s: &str) -> String {
 }
 
 
+/// Begin actually creating the proposed PR: flip status to 'creating'
+/// and resume the agent with an instruction to create it. The agent
+/// reports back via the `pr_created` tool, handled in handle_line.
+pub async fn pr_begin_create(
+    app: &AppHandle,
+    state: &AppState,
+    phase_id: &str,
+) -> AppResult<()> {
+    // Load the draft so we can frame a precise instruction.
+    let row: Option<(String, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT title, target_branch, source_branch, description
+         FROM pull_requests WHERE phase_id = ?",
+    )
+    .bind(phase_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((title, target, source, _desc)) = row else {
+        return Err(AppError::Config("No drafted pull request to create.".into()));
+    };
+
+    sqlx::query("UPDATE pull_requests SET status='creating', error=NULL, updated_at=datetime('now') WHERE phase_id=?")
+        .bind(phase_id)
+        .execute(&state.db)
+        .await?;
+    let _ = app.emit("pr_changed", serde_json::json!({ "phase_id": phase_id }));
+    emit_run_updated(app, state, phase_id).await;
+
+    let target = target.unwrap_or_else(|| "the default branch".into());
+    let source = source.unwrap_or_default();
+    let instruction = format!(
+        "The user approved the pull request proposal. Create it now:\n\n\
+         1. Push the branch `{source}` to the remote if it isn't already pushed.\n\
+         2. Create a DRAFT pull request from `{source}` into `{target}` titled \
+            \"{title}\", using the description you proposed (and the repo's PR template \
+            if one exists).\n\
+         3. Best-effort: queue the required policy/build checks WITHOUT waiting for them \
+            to finish. If you can't queue them, that's fine — just note it.\n\
+         4. When done, call the `pr_created` tool with the PR number, URL, status \
+            ('created' or 'failed'), and the checks you queued. Do not describe internal \
+            git/az commands in your reply — just confirm the PR.",
+    );
+    // Reuse the warm chat sidecar (resumes the SDK session).
+    chat_send_reply(app.clone(), phase_id.to_string(), instruction).await
+}
+
 /// Deliver a user's answer to a pending `ask_user` / needs_input request.
 /// Writes `{type:"answer", request_id, content}` to the live sidecar's
 /// stdin so the blocked tool handler resolves and the agent continues.
@@ -1834,6 +1896,70 @@ async fn handle_line(
             .bind(session_id)
             .execute(&state.db)
             .await;
+        }
+        SidecarEvent::ProposePr { title, target_branch, description, reviewers, work_items } => {
+            // Source branch comes from the run, not the agent.
+            let source_branch: Option<String> = sqlx::query_scalar(
+                "SELECT r.branch_name FROM phases p JOIN runs r ON r.id = p.run_id WHERE p.id = ?",
+            )
+            .bind(phase_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+            let reviewers_json = reviewers.map(|v| serde_json::to_string(&v).unwrap_or_default());
+            let work_items_json = work_items.map(|v| serde_json::to_string(&v).unwrap_or_default());
+            // Upsert as a draft. Don't clobber an already-created PR.
+            let _ = sqlx::query(
+                "INSERT INTO pull_requests
+                   (phase_id, title, source_branch, target_branch, description, status,
+                    reviewers_json, work_items_json, updated_at)
+                 VALUES(?, ?, ?, ?, ?, 'draft', ?, ?, datetime('now'))
+                 ON CONFLICT(phase_id) DO UPDATE SET
+                   title=excluded.title,
+                   source_branch=excluded.source_branch,
+                   target_branch=excluded.target_branch,
+                   description=excluded.description,
+                   reviewers_json=excluded.reviewers_json,
+                   work_items_json=excluded.work_items_json,
+                   updated_at=datetime('now')
+                 WHERE pull_requests.status IN ('draft','failed')",
+            )
+            .bind(phase_id)
+            .bind(title.unwrap_or_default())
+            .bind(&source_branch)
+            .bind(&target_branch)
+            .bind(&description)
+            .bind(&reviewers_json)
+            .bind(&work_items_json)
+            .execute(&state.db)
+            .await;
+            let _ = app.emit("pr_changed", serde_json::json!({ "phase_id": phase_id }));
+            emit_run_updated(app, state, phase_id).await;
+        }
+        SidecarEvent::PrCreated { number, url, status, error, checks } => {
+            let checks_json = checks.map(|c| c.to_string());
+            let created_ok = status == "created";
+            let row_status = if created_ok { "created" } else { "failed" };
+            let _ = sqlx::query(
+                "UPDATE pull_requests SET status=?, number=?, url=?, error=?, checks_json=?,
+                                          updated_at=datetime('now')
+                 WHERE phase_id=?",
+            )
+            .bind(row_status)
+            .bind(number)
+            .bind(&url)
+            .bind(&error)
+            .bind(&checks_json)
+            .bind(phase_id)
+            .execute(&state.db)
+            .await;
+            if created_ok {
+                // PR exists — finish the submit phase + run.
+                let _ = crate::commands::runs::finalize_submit_internal(app, state, phase_id).await;
+            }
+            let _ = app.emit("pr_changed", serde_json::json!({ "phase_id": phase_id }));
+            emit_run_updated(app, state, phase_id).await;
         }
         SidecarEvent::NeedsInput { request_id, prompt, kind, choices } => {
             let request_id = request_id.unwrap_or_else(|| Uuid::new_v4().to_string());

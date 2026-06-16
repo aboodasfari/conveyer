@@ -1,6 +1,7 @@
 pub mod comments;
 pub mod diff;
 pub mod gates;
+pub mod pull_requests;
 pub mod runs;
 pub mod sessions;
 pub mod settings;
