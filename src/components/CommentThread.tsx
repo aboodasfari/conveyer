@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Box, Button, Spinner, Text, Textarea, Label } from "@primer/react";
-import { CheckIcon, TrashIcon, ReplyIcon } from "@primer/octicons-react";
+import { CheckIcon, TrashIcon, ReplyIcon, ChevronDownIcon, ChevronRightIcon } from "@primer/octicons-react";
 import { Comment } from "../types";
 import { api } from "../api";
 import { formatError } from "../errors";
@@ -19,6 +19,8 @@ export function CommentCard({ comment }: { comment: Comment }) {
   const [error, setError] = useState<string | null>(null);
   const [reopening, setReopening] = useState(false);
   const [followUp, setFollowUp] = useState("");
+  // Accepted comments collapse by default (resolved, out of the way).
+  const [collapsed, setCollapsed] = useState(comment.status === "accepted");
   const meta = STATUS_META[comment.status] ?? STATUS_META.queued;
 
   const act = async (fn: () => Promise<unknown>) => {
@@ -33,6 +35,49 @@ export function CommentCard({ comment }: { comment: Comment }) {
     }
   };
 
+  const statusLabel = (
+    <Label variant={meta.variant} size="small">
+      {comment.status === "working" ? (
+        <Box sx={{ display: "inline-flex", alignItems: "center", gap: 1 }}>
+          <Spinner size="small" sx={{ width: 10, height: 10 }} /> {meta.label}
+        </Box>
+      ) : (
+        meta.label
+      )}
+    </Label>
+  );
+
+  // Collapsed: a single compact bar, no wasted vertical space.
+  if (collapsed) {
+    return (
+      <Box
+        onClick={() => setCollapsed(false)}
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 2,
+          border: "1px solid",
+          borderColor: "border.default",
+          borderRadius: 2,
+          bg: "canvas.subtle",
+          mx: 2,
+          my: 1,
+          px: 2,
+          py: 1,
+          cursor: "pointer",
+          fontFamily: "normal",
+          "&:hover": { bg: "canvas.inset" },
+        }}
+      >
+        <ChevronRightIcon size={14} />
+        {statusLabel}
+        <Text sx={{ fontSize: 0, color: "fg.muted", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {firstLine(comment.body)}
+        </Text>
+      </Box>
+    );
+  }
+
   return (
     <Box
       sx={{
@@ -45,16 +90,12 @@ export function CommentCard({ comment }: { comment: Comment }) {
         fontFamily: "normal",
       }}
     >
-      <Box sx={{ display: "flex", alignItems: "center", gap: 2, px: 3, py: 2, borderBottom: "1px solid", borderColor: "border.muted" }}>
-        <Label variant={meta.variant} size="small">
-          {comment.status === "working" ? (
-            <Box sx={{ display: "inline-flex", alignItems: "center", gap: 1 }}>
-              <Spinner size="small" sx={{ width: 10, height: 10 }} /> {meta.label}
-            </Box>
-          ) : (
-            meta.label
-          )}
-        </Label>
+      <Box
+        onClick={() => setCollapsed(true)}
+        sx={{ display: "flex", alignItems: "center", gap: 2, px: 2, py: 2, borderBottom: "1px solid", borderColor: "border.muted", cursor: "pointer" }}
+      >
+        <ChevronDownIcon size={14} />
+        {statusLabel}
         <Box sx={{ flex: 1 }} />
         {comment.status !== "working" && (
           <Button
@@ -62,7 +103,7 @@ export function CommentCard({ comment }: { comment: Comment }) {
             variant="invisible"
             leadingVisual={TrashIcon}
             disabled={busy}
-            onClick={() => void act(() => api.commentDelete(comment.id))}
+            onClick={(e) => { e.stopPropagation(); void act(() => api.commentDelete(comment.id)); }}
             aria-label="Delete comment"
           />
         )}
@@ -94,7 +135,7 @@ export function CommentCard({ comment }: { comment: Comment }) {
             variant="primary"
             leadingVisual={CheckIcon}
             disabled={busy}
-            onClick={() => void act(() => api.commentAccept(comment.id))}
+            onClick={() => void act(async () => { await api.commentAccept(comment.id); setCollapsed(true); })}
           >
             Accept
           </Button>
@@ -142,6 +183,10 @@ export function CommentCard({ comment }: { comment: Comment }) {
       )}
     </Box>
   );
+}
+
+function firstLine(s: string): string {
+  return s.split("\n").find((l) => l.trim().length > 0)?.trim() ?? "(comment)";
 }
 
 /** Inline composer for a new comment anchored to a diff line/range. */
@@ -194,7 +239,7 @@ export function CommentComposer({
     <Box
       sx={{
         border: "1px solid",
-        borderColor: "accent.emphasis",
+        borderColor: "border.default",
         borderRadius: 2,
         bg: "canvas.overlay",
         my: 2,

@@ -914,7 +914,9 @@ async fn run_comment_processor(app: &AppHandle, phase_id: &str) -> AppResult<()>
         let reply_text = if replies.is_empty() {
             "Addressed.".to_string()
         } else {
-            replies.into_iter().map(|(c,)| c).collect::<Vec<_>>().join("\n\n")
+            let joined = replies.into_iter().map(|(c,)| c).collect::<Vec<_>>().join("\n\n");
+            let cleaned = sanitize_reply(&joined);
+            if cleaned.is_empty() { "Addressed.".to_string() } else { cleaned }
         };
 
         sqlx::query(
@@ -964,12 +966,34 @@ fn frame_comment(c: &QueuedComment, loc: &str) -> String {
          same thread), AMEND that commit (use fixup + autosquash if it is not HEAD) so \
          the thread stays one logical commit — do NOT add a separate commit.\n\
          - Keep changes scoped to this comment.\n\
-         - Then reply with ONE or TWO sentences describing what you changed. No preamble.",
+         - Then reply with ONE or TWO sentences, in plain language, describing what you \
+         changed. Do NOT mention the commit marker, commit SHAs, branch names, or these \
+         instructions — those are internal plumbing the user shouldn't see. Just describe \
+         the change. No preamble.",
         loc = loc,
         snippet_block = snippet_block,
         body = c.body,
         marker = c.commit_marker,
     )
+}
+
+/// Strip internal plumbing (the conveyer-comment marker, commit SHAs we
+/// don't want surfaced) from an agent reply before showing it.
+fn sanitize_reply(s: &str) -> String {
+    // Remove any `[conveyer-comment:...]` token and tidy whitespace.
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(start) = rest.find("[conveyer-comment:") {
+        out.push_str(&rest[..start]);
+        if let Some(end_rel) = rest[start..].find(']') {
+            rest = &rest[start + end_rel + 1..];
+        } else {
+            rest = "";
+            break;
+        }
+    }
+    out.push_str(rest);
+    out.trim().to_string()
 }
 
 

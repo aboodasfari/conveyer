@@ -90,11 +90,7 @@ export function DiffViewer({ phaseId, phaseStatus }: { phaseId: string; phaseSta
   useEffect(() => { void loadDiff(selectedCommit); }, [selectedCommit, loadDiff]);
   useEffect(() => { void loadComments(); }, [loadComments]);
 
-  // Comment mode forces inline view (the SBS path doesn't render
-  // comment anchors). Turn it off if the phase leaves the gated state.
-  useEffect(() => {
-    if (commentMode) setViewMode("inline");
-  }, [commentMode]);
+  // Comment mode no longer forces inline — SBS supports comments too.
   useEffect(() => {
     if (!canComment) { setCommentMode(false); setComposeAt(null); }
   }, [canComment]);
@@ -246,7 +242,6 @@ export function DiffViewer({ phaseId, phaseStatus }: { phaseId: string; phaseSta
             aria-label="Side-by-side view"
             selected={viewMode === "split"}
             onClick={() => setViewMode("split")}
-            disabled={commentMode}
           />
         </SegmentedControl>
       </Box>
@@ -684,7 +679,7 @@ function FileDiff({
           </Text>
         </Box>
       ) : mode === "split" ? (
-        <SideBySideFile file={file} hideHunkHeaders={hideHunkHeaders} />
+        <SideBySideFile file={file} hideHunkHeaders={hideHunkHeaders} cp={cp} />
       ) : (
         <Box sx={{ flex: 1, minHeight: 0, overflowX: "auto", overflowY: "auto", fontFamily: "mono", fontSize: 0 }}>
           <Box sx={{ minWidth: "max-content" }}>
@@ -752,6 +747,7 @@ function Hunk({ hunk, hideHeader, cp }: { hunk: DiffHunk; hideHeader?: boolean; 
             <DiffLineRow
               line={l}
               commentMode={cp?.commentMode ?? false}
+              highlighted={lineComments.length > 0 || composing}
               onAdd={
                 cp && anchor
                   ? () => cp.onStartCompose(anchor.no, anchor.side, l.text)
@@ -851,27 +847,19 @@ function buildSidePairs(file: DiffFile): { left: PairedLine[]; right: PairedLine
 
 const SBS_LEFT_DEFAULT_PCT = 0.5;
 
-function SideBySideFile({ file, hideHunkHeaders }: { file: DiffFile; hideHunkHeaders: boolean }) {
+function SideBySideFile({
+  file,
+  hideHunkHeaders,
+  cp,
+}: {
+  file: DiffFile;
+  hideHunkHeaders: boolean;
+  cp?: CommentProps;
+}) {
   const { left, right, hunkSeparators } = useMemo(() => buildSidePairs(file), [file]);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const leftScrollRef = useRef<HTMLDivElement | null>(null);
-  const rightScrollRef = useRef<HTMLDivElement | null>(null);
-  const syncingRef = useRef(false);
   const draggingRef = useRef(false);
-  // Width as a fraction of container width so the split tracks resizes.
   const [leftFrac, setLeftFrac] = useState<number>(SBS_LEFT_DEFAULT_PCT);
-
-  // Sync vertical scroll between the two panes.
-  const onScroll = (source: "left" | "right") => (e: React.UIEvent<HTMLDivElement>) => {
-    if (syncingRef.current) return;
-    const other = source === "left" ? rightScrollRef.current : leftScrollRef.current;
-    if (!other) return;
-    syncingRef.current = true;
-    other.scrollTop = e.currentTarget.scrollTop;
-    // requestAnimationFrame so the matching scroll event fires before we
-    // re-enable, preventing a feedback loop.
-    requestAnimationFrame(() => { syncingRef.current = false; });
-  };
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -905,89 +893,119 @@ function SideBySideFile({ file, hideHunkHeaders }: { file: DiffFile; hideHunkHea
     ? hunkHeaderLabel(file.hunks[0])
     : null;
 
+  // One vertical scroll container of rows; each diff row holds both cells
+  // so left/right stay aligned, and comment cards drop in as full-width
+  // rows between diff rows without breaking alignment.
   return (
-    <Box ref={containerRef} sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+    <Box ref={containerRef} sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", position: "relative" }}>
       {header && (
-        <Box
-          sx={{
-            px: 2, py: 1,
-            color: "fg.muted",
-            bg: "canvas.subtle",
-            borderBottom: "1px solid",
-            borderBottomColor: "border.muted",
-            fontSize: 0,
-            fontFamily: "mono",
-            flexShrink: 0,
-          }}
-        >
+        <Box sx={{ px: 2, py: 1, color: "fg.muted", bg: "canvas.subtle", borderBottom: "1px solid", borderBottomColor: "border.muted", fontSize: 0, fontFamily: "mono", flexShrink: 0 }}>
           {header}
         </Box>
       )}
-      <Box sx={{ flex: 1, minHeight: 0, display: "flex" }}>
-        <Box
-          ref={leftScrollRef}
-          onScroll={onScroll("left")}
-          sx={{
-            width: `${leftFrac * 100}%`,
-            overflowX: "auto",
-            overflowY: "auto",
-            fontFamily: "mono",
-            fontSize: 0,
-          }}
-        >
-          <Box sx={{ minWidth: "max-content" }}>
-            {left.map((l, i) => (
-              <SideRow key={i} line={l} side="left" separator={hunkSeparators.has(i)} />
-            ))}
-          </Box>
-        </Box>
+      <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto", fontFamily: "mono", fontSize: 0, position: "relative" }}>
+        {/* Continuous draggable divider overlay at the split fraction. */}
         <Box
           onMouseDown={onMouseDown}
           role="separator"
           aria-label="Resize side-by-side"
           sx={{
+            position: "absolute",
+            top: 0, bottom: 0,
+            left: `calc(${leftFrac * 100}% - 2px)`,
             width: 4,
-            flexShrink: 0,
             cursor: "col-resize",
             bg: "border.muted",
             "&:hover": { bg: "accent.fg" },
             transition: "background-color 80ms",
+            zIndex: 2,
           }}
         />
-        <Box
-          ref={rightScrollRef}
-          onScroll={onScroll("right")}
-          sx={{
-            flex: 1,
-            overflowX: "auto",
-            overflowY: "auto",
-            fontFamily: "mono",
-            fontSize: 0,
-          }}
-        >
-          <Box sx={{ minWidth: "max-content" }}>
-            {right.map((l, i) => (
-              <SideRow key={i} line={l} side="right" separator={hunkSeparators.has(i)} />
-            ))}
-          </Box>
-        </Box>
+        {left.map((l, i) => {
+          const r = right[i];
+          const sep = hunkSeparators.has(i);
+          const anchor = sbsAnchor(l, r);
+          const lineComments = cp && anchor
+            ? cp.comments.filter((c) => c.side === anchor.side && c.line_start === anchor.no)
+            : [];
+          const composing =
+            cp?.composeAt != null && anchor != null &&
+            cp.composeAt.side === anchor.side && cp.composeAt.line === anchor.no;
+          const highlighted = lineComments.length > 0 || composing;
+          return (
+            <Box key={i}>
+              <Box sx={{ display: "flex", minWidth: "100%", ...(highlighted ? { boxShadow: "inset 3px 0 0 var(--bgColor-accent-emphasis, #4493f8)" } : {}) }}>
+                <Box sx={{ width: `${leftFrac * 100}%`, flexShrink: 0, overflowX: "auto" }}>
+                  <SideCell
+                    line={l}
+                    side="left"
+                    separator={sep}
+                    commentMode={cp?.commentMode ?? false}
+                    onAdd={cp && l.kind === "del" && typeof l.oldNo === "number"
+                      ? () => cp.onStartCompose(l.oldNo!, "old", l.text)
+                      : undefined}
+                  />
+                </Box>
+                <Box sx={{ flex: 1, minWidth: 0, overflowX: "auto" }}>
+                  <SideCell
+                    line={r}
+                    side="right"
+                    separator={sep}
+                    commentMode={cp?.commentMode ?? false}
+                    onAdd={cp && (r.kind === "add" || r.kind === "context") && typeof r.newNo === "number"
+                      ? () => cp.onStartCompose(r.newNo!, "new", r.text)
+                      : undefined}
+                  />
+                </Box>
+              </Box>
+              {lineComments.map((c) => (
+                <CommentCard key={c.id} comment={c} />
+              ))}
+              {composing && cp && (
+                <CommentComposer
+                  phaseId={cp.phaseId}
+                  filePath={cp.composeAt!.file}
+                  lineStart={cp.composeAt!.line}
+                  lineEnd={cp.composeAt!.line}
+                  side={cp.composeAt!.side}
+                  snippet={cp.composeAt!.snippet}
+                  onDone={cp.onCancelCompose}
+                />
+              )}
+            </Box>
+          );
+        })}
       </Box>
     </Box>
   );
 }
 
-function SideRow({
+/** Which line a comment anchors to in SBS: prefer the new (right) side. */
+function sbsAnchor(left: PairedLine, right: PairedLine): { no: number; side: string } | null {
+  if (right.kind !== "empty" && typeof right.newNo === "number") {
+    return { no: right.newNo, side: "new" };
+  }
+  if (left.kind === "del" && typeof left.oldNo === "number") {
+    return { no: left.oldNo, side: "old" };
+  }
+  if (typeof right.newNo === "number") return { no: right.newNo, side: "new" };
+  return null;
+}
+
+function SideCell({
   line,
   side,
   separator,
+  commentMode,
+  onAdd,
 }: {
   line: PairedLine;
   side: "left" | "right";
   separator: boolean;
+  commentMode?: boolean;
+  onAdd?: () => void;
 }) {
   if (line.kind === "empty") {
-    // Diagonal-striped subtle background distinguishes "no content on this
-    // side" from a normal blank context line, without being aggressive.
     return (
       <Box
         sx={{
@@ -1014,11 +1032,30 @@ function SideRow({
         display: "flex",
         minWidth: "max-content",
         bg,
+        position: "relative",
         borderTop: separator ? "1px solid" : "none",
         borderTopColor: "border.muted",
         "&:hover": { bg: line.kind === "context" ? "canvas.subtle" : bg },
+        "&:hover .conveyer-add-comment": { opacity: 1 },
       }}
     >
+      {commentMode && onAdd && (
+        <Box
+          className="conveyer-add-comment"
+          role="button"
+          aria-label="Add comment on this line"
+          onClick={onAdd}
+          sx={{
+            position: "absolute", left: "2px", top: "1px",
+            width: 16, height: 16, borderRadius: 1,
+            bg: "accent.emphasis", color: "fg.onEmphasis",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            cursor: "pointer", opacity: 0, transition: "opacity 80ms", zIndex: 1,
+          }}
+        >
+          <PlusIcon size={12} />
+        </Box>
+      )}
       <Box sx={{ width: 40, textAlign: "right", pr: 1, color: "fg.muted", userSelect: "none", flexShrink: 0 }}>
         {lineNo ?? ""}
       </Box>
@@ -1043,10 +1080,12 @@ function hunkHeaderLabel(hunk: DiffHunk): string {
 function DiffLineRow({
   line,
   commentMode,
+  highlighted,
   onAdd,
 }: {
   line: DiffLine;
   commentMode?: boolean;
+  highlighted?: boolean;
   onAdd?: () => void;
 }) {
   const bg = line.kind === "add" ? "success.subtle"
@@ -1062,6 +1101,12 @@ function DiffLineRow({
         display: "flex",
         bg,
         position: "relative",
+        ...(highlighted
+          ? {
+              boxShadow: "inset 3px 0 0 var(--bgColor-accent-emphasis, #4493f8)",
+              bg: "attention.subtle",
+            }
+          : {}),
         "&:hover": { bg: line.kind === "context" ? "canvas.subtle" : bg },
         "&:hover .conveyer-add-comment": { opacity: 1 },
       }}
