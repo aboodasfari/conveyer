@@ -4,7 +4,6 @@ import {
   CheckCircleIcon,
   ChevronDownIcon,
   ChevronRightIcon,
-  ChevronRightIcon as OptionChevron,
   CommentDiscussionIcon,
   XCircleIcon,
 } from "@primer/octicons-react";
@@ -648,12 +647,8 @@ function NeedsInputForm({
                   {i + 1}.
                 </Box>
                 <Text sx={{ flex: 1, minWidth: 0, fontSize: 1, color: "fg.default" }}>{c}</Text>
-                {isSubmitting ? (
+                {isSubmitting && (
                   <Spinner size="small" sx={{ width: 14, height: 14 }} />
-                ) : (
-                  <Box sx={{ color: "fg.muted", display: "flex" }}>
-                    <OptionChevron size={14} />
-                  </Box>
                 )}
               </Box>
             );
