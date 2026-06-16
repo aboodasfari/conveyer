@@ -40,7 +40,6 @@ export function CommentCard({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [reopening, setReopening] = useState(false);
   const [followUp, setFollowUp] = useState("");
   const meta = STATUS_META[comment.status] ?? STATUS_META.queued;
   const thread = parseThread(comment);
@@ -161,30 +160,9 @@ export function CommentCard({
         <Text sx={{ color: "danger.fg", fontSize: 0, px: 3, py: 1, display: "block" }}>{error}</Text>
       )}
 
-      {comment.status === "addressed" && !reopening && (
-        <Box sx={{ display: "flex", gap: 2, px: 3, py: 2, borderTop: "1px solid", borderColor: "border.muted" }}>
-          <Button
-            size="small"
-            variant="primary"
-            leadingVisual={CheckIcon}
-            disabled={busy}
-            onClick={() => void act(async () => { await api.commentAccept(comment.id); onToggleCollapsed(true); })}
-          >
-            Accept
-          </Button>
-          <Button
-            size="small"
-            leadingVisual={ReplyIcon}
-            disabled={busy}
-            onClick={() => setReopening(true)}
-          >
-            Reopen
-          </Button>
-        </Box>
-      )}
-
-      {comment.status === "addressed" && reopening && (
+      {comment.status === "addressed" && (
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2, px: 3, py: 2, borderTop: "1px solid", borderColor: "border.muted" }}>
+          {/* The thread stays open with a reply box until you accept. */}
           <Textarea
             value={followUp}
             onChange={(e) => setFollowUp(e.target.value)}
@@ -194,36 +172,40 @@ export function CommentCard({
                 if (followUp.trim().length > 0 && !busy) {
                   void act(async () => {
                     await api.commentReopen(comment.id, followUp.trim());
-                    setReopening(false);
                     setFollowUp("");
                   });
                 }
               }
-              if (e.key === "Escape") { setReopening(false); setFollowUp(""); }
             }}
-            placeholder="What still needs changing?"
+            placeholder="Reply to request another change…"
             rows={2}
             disabled={busy}
             sx={{ width: "100%" }}
           />
-          <Box sx={{ display: "flex", gap: 2 }}>
+          <Box sx={{ display: "flex", gap: 2, alignItems: "center" }}>
             <Button
               size="small"
               variant="primary"
+              leadingVisual={CheckIcon}
+              disabled={busy}
+              onClick={() => void act(async () => { await api.commentAccept(comment.id); onToggleCollapsed(true); })}
+            >
+              Accept
+            </Button>
+            <Button
+              size="small"
+              leadingVisual={ReplyIcon}
               disabled={busy || followUp.trim().length === 0}
               onClick={() =>
                 void act(async () => {
                   await api.commentReopen(comment.id, followUp.trim());
-                  setReopening(false);
                   setFollowUp("");
                 })
               }
             >
-              Send back
+              Send reply
             </Button>
-            <Button size="small" disabled={busy} onClick={() => { setReopening(false); setFollowUp(""); }}>
-              Cancel
-            </Button>
+            <Text sx={{ color: "fg.muted", fontSize: 0, ml: "auto" }}>⌘/Ctrl + Enter</Text>
           </Box>
         </Box>
       )}
