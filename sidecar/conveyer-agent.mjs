@@ -896,9 +896,21 @@ async function main() {
   }
 
   const backend = env.CONVEYER_BACKEND || "copilot";
+  // Resume mode: pick the SDK session back up and feed it the answer
+  // (CONVEYER_USER_MESSAGE) instead of the freshly-built prompt. Used to
+  // recover a needs_input answer after the original process died.
+  const resumeSid = env.CONVEYER_RESUME_SDK_SESSION;
   try {
     if (backend === "copilot") {
-      await runCopilot(phase, prompt);
+      if (resumeSid) {
+        await runCopilotSession({
+          phase,
+          prompt: env.CONVEYER_USER_MESSAGE || prompt,
+          resume: resumeSid,
+        });
+      } else {
+        await runCopilot(phase, prompt);
+      }
     } else {
       await runStub(phase, prompt);
     }

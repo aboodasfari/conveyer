@@ -471,8 +471,26 @@ async fn resolve_reasoning(state: &AppState, phase_kind: &str) -> AppResult<Opti
 /// successful exit.
 pub fn spawn_for_phase(app: AppHandle, phase_id: String) {
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = run_one(&app, &phase_id).await {
+        if let Err(e) = run_one(&app, &phase_id, None).await {
             tracing::error!("session runner for phase {phase_id} failed: {e}");
+        }
+    });
+}
+
+/// Resume a phase's SDK session and feed it `answer` as the next
+/// message, then continue the main run normally (streams output,
+/// advances the pipeline on success). Used to recover a needs_input
+/// answer after the original sidecar process died (e.g. app restart):
+/// instead of forcing a phase restart, we pick the conversation back up.
+pub fn spawn_for_phase_resume(
+    app: AppHandle,
+    phase_id: String,
+    sdk_session_id: String,
+    answer: String,
+) {
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = run_one(&app, &phase_id, Some((sdk_session_id, answer))).await {
+            tracing::error!("resume runner for phase {phase_id} failed: {e}");
         }
     });
 }
@@ -758,48 +776,121 @@ pub async fn submit_input(
         .filter(|s| !s.is_empty())
         .unwrap_or("running")
         .to_string();
+    let question = parsed.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
     // Find the live sidecar stdin sender (chat handle or main runner).
     let registry = app.state::<RunnerRegistry>();
-    let Some(tx) = registry.stdin_sender(phase_id) else {
-        return Err(AppError::Config(
-            "The agent process is no longer running. Restart the phase to continue.".into(),
-        ));
-    };
+    let live_tx = registry.stdin_sender(phase_id);
 
-    // Deliver the answer.
-    let answer_cmd = serde_json::json!({
-        "type": "answer",
-        "request_id": request_id,
-        "content": content,
-    });
-    tx.send(answer_cmd.to_string())
-        .await
-        .map_err(|_| AppError::Other("Failed to deliver answer to the agent.".into()))?;
+    if let Some(tx) = live_tx {
+        // Live process: deliver the answer straight to the blocked tool
+        // handler so the agent continues in the same session.
+        let answer_cmd = serde_json::json!({
+            "type": "answer",
+            "request_id": request_id,
+            "content": content,
+        });
+        tx.send(answer_cmd.to_string())
+            .await
+            .map_err(|_| AppError::Other("Failed to deliver answer to the agent.".into()))?;
 
-    // Persist the answer into the transcript on the phase's latest session.
-    let sess: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM sessions WHERE phase_id = ? ORDER BY started_at DESC LIMIT 1",
+        // Persist the answer into the transcript on the phase's latest session.
+        let sess: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM sessions WHERE phase_id = ? ORDER BY started_at DESC LIMIT 1",
+        )
+        .bind(phase_id)
+        .fetch_optional(&state.db)
+        .await?;
+        if let Some((sid,)) = sess {
+            let _ = persist_message(&state, &sid, "user", content).await;
+            let _ = app.emit("message_appended", serde_json::json!({
+                "session_id": sid,
+                "role": "user",
+                "content": content,
+            }));
+        }
+
+        // Clear pending state + restore the interrupted status.
+        sqlx::query("UPDATE phases SET status=?, pending_input=NULL WHERE id=?")
+            .bind(&prior_status)
+            .bind(phase_id)
+            .execute(&state.db)
+            .await?;
+        emit_run_updated(app, &state, phase_id).await;
+        return Ok(());
+    }
+
+    // No live process (e.g. the app was restarted while the phase was
+    // paused). Resume the SDK session and feed it the answer instead of
+    // forcing a phase restart. Requires a resumable SDK session id.
+    let sdk_row: Option<(String,)> = sqlx::query_as(
+        "SELECT sdk_session_id FROM sessions
+         WHERE phase_id = ? AND sdk_session_id IS NOT NULL
+         ORDER BY started_at DESC LIMIT 1",
     )
     .bind(phase_id)
     .fetch_optional(&state.db)
     .await?;
-    if let Some((sid,)) = sess {
-        let _ = persist_message(&state, &sid, "user", content).await;
-        let _ = app.emit("message_appended", serde_json::json!({
-            "session_id": sid,
-            "role": "user",
-            "content": content,
-        }));
-    }
+    let Some((sdk_session_id,)) = sdk_row else {
+        return Err(AppError::Config(
+            "The agent process ended and its session can't be resumed. \
+             Restart the phase to continue.".into(),
+        ));
+    };
 
-    // Clear pending state + restore the interrupted status.
-    sqlx::query("UPDATE phases SET status=?, pending_input=NULL WHERE id=?")
-        .bind(&prior_status)
+    // Frame the answer so the agent has full context regardless of how
+    // the SDK preserved the interrupted tool call.
+    let framed = if question.is_empty() {
+        format!(
+            "Resuming after the app restarted. My answer to your question: {content}\n\n\
+             Please continue from where you left off."
+        )
+    } else {
+        format!(
+            "Resuming after the app restarted. You previously asked: \"{question}\"\n\n\
+             My answer: {content}\n\n\
+             Please continue from where you left off."
+        )
+    };
+
+    if prior_status == "running" {
+        // Interrupted during the main phase run: resume as a main run so
+        // the pipeline advances on completion. Record the answer in the
+        // transcript ourselves (the resumed run doesn't echo it).
+        if let Some((sid,)) = sqlx::query_as::<_, (String,)>(
+            "SELECT id FROM sessions WHERE phase_id = ? ORDER BY started_at DESC LIMIT 1",
+        )
         .bind(phase_id)
-        .execute(&state.db)
-        .await?;
-    emit_run_updated(app, &state, phase_id).await;
+        .fetch_optional(&state.db)
+        .await?
+        {
+            let _ = persist_message(&state, &sid, "user", content).await;
+            let _ = app.emit("message_appended", serde_json::json!({
+                "session_id": sid,
+                "role": "user",
+                "content": content,
+            }));
+        }
+        sqlx::query("UPDATE phases SET status='running', pending_input=NULL WHERE id=?")
+            .bind(phase_id)
+            .execute(&state.db)
+            .await?;
+        emit_run_updated(app, &state, phase_id).await;
+        spawn_for_phase_resume(app.clone(), phase_id.to_string(), sdk_session_id, framed);
+    } else {
+        // Interrupted while the agent asked mid chat-reply (phase was
+        // waiting/done): resume as a chat turn so we don't re-advance an
+        // already-finished phase. Restore the prior status first.
+        sqlx::query("UPDATE phases SET status=?, pending_input=NULL WHERE id=?")
+            .bind(&prior_status)
+            .bind(phase_id)
+            .execute(&state.db)
+            .await?;
+        emit_run_updated(app, &state, phase_id).await;
+        // chat_send_reply resumes the SDK session, persists its own user
+        // message, and streams the reply (no pipeline advance).
+        let _ = chat_send_reply(app.clone(), phase_id.to_string(), framed).await;
+    }
     Ok(())
 }
 
@@ -971,7 +1062,11 @@ async fn handoff_to_chat(
 }
 
 
-async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
+async fn run_one(
+    app: &AppHandle,
+    phase_id: &str,
+    resume: Option<(String, String)>,
+) -> AppResult<()> {
     let state = app.state::<AppState>();
 
     // Bail out if there's already a live runner for this phase.
@@ -1084,6 +1179,13 @@ async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    // Resume mode: pick the SDK session back up and feed it the answer
+    // instead of building a fresh prompt. Used to recover a needs_input
+    // answer after the original process died.
+    if let Some((sdk_sid, answer)) = &resume {
+        cmd.env("CONVEYER_RESUME_SDK_SESSION", sdk_sid);
+        cmd.env("CONVEYER_USER_MESSAGE", answer);
+    }
     // Once the main turn succeeds the sidecar transitions to chat REPL
     // mode on the same process. The chat reader loop heartbeats every
     // 30s; this gives it 2.5 missed pings of slack before shutdown.
@@ -1110,8 +1212,9 @@ async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
     // Pre-render the prompt to disk so the Prompt tab populates immediately,
     // before the (slow-to-start) Copilot SDK has any chance to boot. We
     // invoke the sidecar in CONVEYER_MODE=render_prompt — same env, just
-    // builds the prompt + writes prompt.md + exits.
-    {
+    // builds the prompt + writes prompt.md + exits. Skipped on resume:
+    // the prompt.md already exists from the original run.
+    if resume.is_none() {
         let mut pre = Command::new("node");
         pre.arg(&sidecar)
             .env("CONVEYER_MODE", "render_prompt")

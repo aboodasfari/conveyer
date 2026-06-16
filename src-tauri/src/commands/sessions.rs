@@ -115,7 +115,6 @@ pub async fn session_cancel(app: AppHandle, phase_id: String) -> AppResult<bool>
 #[tauri::command]
 pub async fn chat_reply(
     app: AppHandle,
-    state: State<'_, AppState>,
     phase_id: String,
     content: String,
 ) -> AppResult<()> {
