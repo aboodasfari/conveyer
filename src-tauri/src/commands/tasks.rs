@@ -388,6 +388,7 @@ pub async fn tasks_seed_demo(state: State<'_, AppState>) -> AppResult<()> {
     let child_a_ref = "demo-task-1";
     let child_b_ref = "demo-task-2";
     let child_c_ref = "demo-task-3";
+    let child_d_ref = "demo-task-4";
 
     let story_desc = "Polish the toy code in `conveyer-test-repo`. \
                       Three child tasks track the work.";
@@ -418,11 +419,26 @@ pub async fn tasks_seed_demo(state: State<'_, AppState>) -> AppResult<()> {
                       Make all of the above changes in one pass. If \
                       the identity test fails as a result, leave it \
                       failing (do NOT delete or weaken the test).";
+    // Designed to exercise the ask_user round-trip: a genuine product
+    // fork the codebase can't resolve, so the agent should pause and
+    // ask which option to build before implementing.
+    let task_d_desc = "Add a `formatDuration(seconds: number): string` helper to \
+                      `src/duration.ts` (new file) and export it from `src/index.ts`. \
+                      It turns a number of seconds into a human-readable string.\n\n\
+                      There are two equally-valid output styles and which one we want \
+                      is a product decision that has NOT been made and cannot be \
+                      inferred from the codebase:\n\n\
+                      - Compact: `1h 5m`, `45s`, `2h 0m 30s`\n\
+                      - Verbose: `1 hour 5 minutes`, `45 seconds`\n\n\
+                      Use the `ask_user` tool to ask which style to implement (offer \
+                      both as choices), then implement exactly that style and add a \
+                      test covering a couple of cases. Do not implement both.";
 
     upsert_demo_task(&state, &source_id, story_ref, None, "Demo story: tidy the test repo", "Active", story_desc).await?;
     upsert_demo_task(&state, &source_id, child_a_ref, Some(story_ref), "Fix add() float handling", "Active", task_a_desc).await?;
     upsert_demo_task(&state, &source_id, child_b_ref, Some(story_ref), "Add optional title to greet()", "Active", task_b_desc).await?;
     upsert_demo_task(&state, &source_id, child_c_ref, Some(story_ref), "Add input validation to chunk()", "Active", task_c_desc).await?;
+    upsert_demo_task(&state, &source_id, child_d_ref, Some(story_ref), "Add formatDuration() helper", "Active", task_d_desc).await?;
 
     Ok(())
 }
