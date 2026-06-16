@@ -26,13 +26,14 @@ pub struct Comment {
     pub status: String,
     pub agent_reply: Option<String>,
     pub commit_marker: String,
+    pub thread_json: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
 
 const COMMENT_COLS: &str =
     "id, phase_id, file_path, line_start, line_end, side, snippet, body, \
-     status, agent_reply, commit_marker, created_at, updated_at";
+     status, agent_reply, commit_marker, thread_json, created_at, updated_at";
 
 #[tauri::command]
 pub async fn comments_for_phase(
@@ -73,9 +74,10 @@ pub async fn comment_create(
     // Short, stable marker the agent embeds in its commit message so
     // follow-ups in this thread can find + amend the same commit.
     let marker = id.split('-').next().unwrap_or(&id).to_string();
+    let thread = serde_json::json!([{ "role": "user", "content": body }]).to_string();
     sqlx::query(
-        "INSERT INTO comments(id, phase_id, file_path, line_start, line_end, side, snippet, body, status, commit_marker)
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)",
+        "INSERT INTO comments(id, phase_id, file_path, line_start, line_end, side, snippet, body, status, commit_marker, thread_json)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)",
     )
     .bind(&id)
     .bind(&input.phase_id)
@@ -86,6 +88,7 @@ pub async fn comment_create(
     .bind(&input.snippet)
     .bind(&body)
     .bind(&marker)
+    .bind(&thread)
     .execute(&state.db)
     .await?;
 
@@ -130,14 +133,21 @@ pub async fn comment_reopen(
     if follow_up.is_empty() {
         return Err(AppError::Config("Follow-up is empty.".into()));
     }
-    // Append the follow-up to the thread body and re-queue.
+    // Append the follow-up as a new user message in the thread and
+    // re-queue. Body is left as the original first-line preview.
     let existing = load_comment(&state, &input.comment_id).await?;
-    let new_body = format!("{}\n\n— follow-up —\n{}", existing.body, follow_up);
+    let mut thread: Vec<serde_json::Value> = existing
+        .thread_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
+    thread.push(serde_json::json!({ "role": "user", "content": follow_up }));
+    let thread_str = serde_json::to_string(&thread).unwrap_or_default();
     sqlx::query(
-        "UPDATE comments SET body=?, status='queued', agent_reply=NULL, updated_at=datetime('now')
+        "UPDATE comments SET thread_json=?, status='queued', updated_at=datetime('now')
          WHERE id=?",
     )
-    .bind(&new_body)
+    .bind(&thread_str)
     .bind(&input.comment_id)
     .execute(&state.db)
     .await?;

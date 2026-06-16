@@ -86,4 +86,5 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("0009_sdk_session_id", include_str!("migrations/0009_sdk_session_id.sql")),
     ("0010_pending_input", include_str!("migrations/0010_pending_input.sql")),
     ("0011_comments", include_str!("migrations/0011_comments.sql")),
+    ("0012_comment_thread", include_str!("migrations/0012_comment_thread.sql")),
 ];

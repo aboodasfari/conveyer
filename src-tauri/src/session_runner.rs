@@ -780,6 +780,7 @@ struct QueuedComment {
     snippet: Option<String>,
     body: String,
     commit_marker: String,
+    thread_json: Option<String>,
 }
 
 /// Kick the per-phase comment processor. Idempotent: if one is already
@@ -820,7 +821,7 @@ async fn run_comment_processor(app: &AppHandle, phase_id: &str) -> AppResult<()>
     loop {
         // Next queued comment (FIFO).
         let next: Option<QueuedComment> = sqlx::query_as(
-            "SELECT id, file_path, line_start, line_end, snippet, body, commit_marker
+            "SELECT id, file_path, line_start, line_end, snippet, body, commit_marker, thread_json
              FROM comments WHERE phase_id = ? AND status = 'queued'
              ORDER BY created_at, id LIMIT 1",
         )
@@ -868,16 +869,18 @@ async fn run_comment_processor(app: &AppHandle, phase_id: &str) -> AppResult<()>
         .unwrap_or(0);
 
         // Persist a concise user message so the chat transcript reads
-        // sensibly alongside the diff comment.
+        // sensibly alongside the diff comment. Use the latest user entry
+        // in the thread (the new follow-up on a reopen).
         let loc = comment_loc(&c.file_path, c.line_start, c.line_end);
-        let user_note = format!("Review comment on {loc}: {}", first_line(&c.body));
+        let latest_user = latest_user_message(c.thread_json.as_deref()).unwrap_or_else(|| c.body.clone());
+        let user_note = format!("Review comment on {loc}: {}", first_line(&latest_user));
         let _ = persist_message(&state, &session_id, "user", &user_note).await;
         let _ = app.emit("message_appended", serde_json::json!({
             "session_id": session_id, "role": "user", "content": user_note,
         }));
 
         // Send the framed comment as a chat turn.
-        let prompt = frame_comment(&c, &loc);
+        let prompt = frame_comment(&c, &loc, &latest_user);
         let cmd = serde_json::json!({ "type": "reply", "content": prompt }).to_string();
         if tx.send(cmd).await.is_err() {
             sqlx::query(
@@ -919,11 +922,15 @@ async fn run_comment_processor(app: &AppHandle, phase_id: &str) -> AppResult<()>
             if cleaned.is_empty() { "Addressed.".to_string() } else { cleaned }
         };
 
+        // Append the agent's reply to the thread so the UI renders it as
+        // its own bubble, and keep agent_reply as the latest for rollup.
+        let new_thread = append_thread_message(c.thread_json.as_deref(), "agent", &reply_text);
         sqlx::query(
-            "UPDATE comments SET status='addressed', agent_reply=?, updated_at=datetime('now')
+            "UPDATE comments SET status='addressed', agent_reply=?, thread_json=?, updated_at=datetime('now')
              WHERE id=?",
         )
         .bind(&reply_text)
+        .bind(&new_thread)
         .bind(&c.id)
         .execute(&state.db)
         .await?;
@@ -947,7 +954,7 @@ fn first_line(s: &str) -> String {
     s.lines().next().unwrap_or("").trim().to_string()
 }
 
-fn frame_comment(c: &QueuedComment, loc: &str) -> String {
+fn frame_comment(c: &QueuedComment, loc: &str, latest_user: &str) -> String {
     let snippet = c.snippet.as_deref().unwrap_or("").trim_end();
     let snippet_block = if snippet.is_empty() {
         String::new()
@@ -957,7 +964,7 @@ fn frame_comment(c: &QueuedComment, loc: &str) -> String {
     format!(
         "You are addressing a code-review comment left on the diff for this phase.\n\n\
          Location: `{loc}`{snippet_block}\n\n\
-         Comment(s):\n{body}\n\n\
+         Comment:\n{body}\n\n\
          Instructions:\n\
          - Make the requested change in the worktree.\n\
          - COMMIT it. Put the marker `[conveyer-comment:{marker}]` at the END of the \
@@ -972,9 +979,31 @@ fn frame_comment(c: &QueuedComment, loc: &str) -> String {
          the change. No preamble.",
         loc = loc,
         snippet_block = snippet_block,
-        body = c.body,
+        body = latest_user,
         marker = c.commit_marker,
     )
+}
+
+/// Latest user message from a thread_json array, if any.
+fn latest_user_message(thread_json: Option<&str>) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(thread_json?).ok()?;
+    let arr = v.as_array()?;
+    for entry in arr.iter().rev() {
+        if entry.get("role").and_then(|r| r.as_str()) == Some("user") {
+            return entry.get("content").and_then(|c| c.as_str()).map(|s| s.to_string());
+        }
+    }
+    None
+}
+
+/// Append a {role, content} message to a thread_json array (creating the
+/// array if absent) and return the serialized result.
+fn append_thread_message(thread_json: Option<&str>, role: &str, content: &str) -> String {
+    let mut arr: Vec<serde_json::Value> = thread_json
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
+    arr.push(serde_json::json!({ "role": role, "content": content }));
+    serde_json::to_string(&arr).unwrap_or_default()
 }
 
 /// Strip internal plumbing (the conveyer-comment marker, commit SHAs we

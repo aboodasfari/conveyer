@@ -87,8 +87,14 @@ export interface Comment {
   status: string; // queued | working | addressed | accepted
   agent_reply: string | null;
   commit_marker: string;
+  thread_json: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface CommentMessage {
+  role: "user" | "agent";
+  content: string;
 }
 
 export interface RunDetail {

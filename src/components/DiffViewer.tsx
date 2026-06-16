@@ -50,6 +50,16 @@ export function DiffViewer({ phaseId, phaseStatus }: { phaseId: string; phaseSta
   const [composeAt, setComposeAt] = useState<{
     file: string; line: number; side: string; snippet: string;
   } | null>(null);
+  // Per-comment collapse overrides; default derives from status (accepted
+  // comments start collapsed). Highlighting only reflects expanded cards.
+  const [collapsedOverrides, setCollapsedOverrides] = useState<Record<string, boolean>>({});
+  const isCollapsed = useCallback(
+    (c: Comment) => collapsedOverrides[c.id] ?? (c.status === "accepted"),
+    [collapsedOverrides],
+  );
+  const setCollapsed = useCallback((id: string, next: boolean) => {
+    setCollapsedOverrides((prev) => ({ ...prev, [id]: next }));
+  }, []);
 
   const loadComments = useCallback(async () => {
     try {
@@ -280,6 +290,8 @@ export function DiffViewer({ phaseId, phaseStatus }: { phaseId: string; phaseSta
                   setComposeAt({ file: activeFile.path, line, side, snippet })
                 }
                 onCancelCompose={() => setComposeAt(null)}
+                isCollapsed={isCollapsed}
+                onToggleCollapsed={setCollapsed}
               />
             ) : (
               <Text sx={{ color: "fg.muted" }}>Select a file to view its diff.</Text>
@@ -619,6 +631,8 @@ interface CommentProps {
   composeAt: { file: string; line: number; side: string; snippet: string } | null;
   onStartCompose: (line: number, side: string, snippet: string) => void;
   onCancelCompose: () => void;
+  isCollapsed: (c: Comment) => boolean;
+  onToggleCollapsed: (id: string, next: boolean) => void;
 }
 
 function FileDiff({
@@ -630,9 +644,11 @@ function FileDiff({
   composeAt,
   onStartCompose,
   onCancelCompose,
+  isCollapsed,
+  onToggleCollapsed,
 }: { file: DiffFile; mode: "inline" | "split" } & CommentProps) {
   const statusBg = STATUS_BG[file.status];
-  const cp: CommentProps = { phaseId, commentMode, comments, composeAt, onStartCompose, onCancelCompose };
+  const cp: CommentProps = { phaseId, commentMode, comments, composeAt, onStartCompose, onCancelCompose, isCollapsed, onToggleCollapsed };
   // With full-context diffs (-U99999) the common case is a single hunk
   // starting at line 1, which is just "the whole file" — don't bother
   // showing a hunk header for that.
@@ -742,20 +758,26 @@ function Hunk({ hunk, hideHeader, cp }: { hunk: DiffHunk; hideHeader?: boolean; 
           anchor != null &&
           cp.composeAt.side === anchor.side &&
           cp.composeAt.line === anchor.no;
+        const hasExpanded = cp ? lineComments.some((c) => !cp.isCollapsed(c)) : false;
         return (
           <Box key={i}>
             <DiffLineRow
               line={l}
               commentMode={cp?.commentMode ?? false}
-              highlighted={lineComments.length > 0 || composing}
+              highlighted={hasExpanded || composing}
               onAdd={
                 cp && anchor
                   ? () => cp.onStartCompose(anchor.no, anchor.side, l.text)
                   : undefined
               }
             />
-            {lineComments.map((c) => (
-              <CommentCard key={c.id} comment={c} />
+            {cp && lineComments.map((c) => (
+              <CommentCard
+                key={c.id}
+                comment={c}
+                collapsed={cp.isCollapsed(c)}
+                onToggleCollapsed={(next) => cp.onToggleCollapsed(c.id, next)}
+              />
             ))}
             {composing && cp && (
               <CommentComposer
@@ -931,7 +953,40 @@ function SideBySideFile({
           const composing =
             cp?.composeAt != null && anchor != null &&
             cp.composeAt.side === anchor.side && cp.composeAt.line === anchor.no;
-          const highlighted = lineComments.length > 0 || composing;
+          const hasExpanded = cp ? lineComments.some((c) => !cp.isCollapsed(c)) : false;
+          const highlighted = hasExpanded || composing;
+          // Comments/composer render on the anchored side only (ADO-style):
+          // left cell for old-side anchors, right cell for new-side.
+          const anchorSide = anchor?.side === "old" ? "left" : "right";
+          const sideExtras = (cp && (lineComments.length > 0 || composing)) ? (
+            <Box sx={{ display: "flex", minWidth: "100%" }}>
+              {anchorSide === "left" ? (
+                <>
+                  <Box sx={{ width: `${leftFrac * 100}%`, flexShrink: 0 }}>
+                    {lineComments.map((c) => (
+                      <CommentCard key={c.id} comment={c} collapsed={cp.isCollapsed(c)} onToggleCollapsed={(n) => cp.onToggleCollapsed(c.id, n)} />
+                    ))}
+                    {composing && (
+                      <CommentComposer phaseId={cp.phaseId} filePath={cp.composeAt!.file} lineStart={cp.composeAt!.line} lineEnd={cp.composeAt!.line} side={cp.composeAt!.side} snippet={cp.composeAt!.snippet} onDone={cp.onCancelCompose} />
+                    )}
+                  </Box>
+                  <Box sx={{ flex: 1 }} />
+                </>
+              ) : (
+                <>
+                  <Box sx={{ width: `${leftFrac * 100}%`, flexShrink: 0 }} />
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    {lineComments.map((c) => (
+                      <CommentCard key={c.id} comment={c} collapsed={cp.isCollapsed(c)} onToggleCollapsed={(n) => cp.onToggleCollapsed(c.id, n)} />
+                    ))}
+                    {composing && (
+                      <CommentComposer phaseId={cp.phaseId} filePath={cp.composeAt!.file} lineStart={cp.composeAt!.line} lineEnd={cp.composeAt!.line} side={cp.composeAt!.side} snippet={cp.composeAt!.snippet} onDone={cp.onCancelCompose} />
+                    )}
+                  </Box>
+                </>
+              )}
+            </Box>
+          ) : null;
           return (
             <Box key={i}>
               <Box sx={{ display: "flex", minWidth: "100%", ...(highlighted ? { boxShadow: "inset 3px 0 0 var(--bgColor-accent-emphasis, #4493f8)" } : {}) }}>
@@ -958,20 +1013,7 @@ function SideBySideFile({
                   />
                 </Box>
               </Box>
-              {lineComments.map((c) => (
-                <CommentCard key={c.id} comment={c} />
-              ))}
-              {composing && cp && (
-                <CommentComposer
-                  phaseId={cp.phaseId}
-                  filePath={cp.composeAt!.file}
-                  lineStart={cp.composeAt!.line}
-                  lineEnd={cp.composeAt!.line}
-                  side={cp.composeAt!.side}
-                  snippet={cp.composeAt!.snippet}
-                  onDone={cp.onCancelCompose}
-                />
-              )}
+              {sideExtras}
             </Box>
           );
         })}

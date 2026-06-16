@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Box, Button, Spinner, Text, Textarea, Label } from "@primer/react";
 import { CheckIcon, TrashIcon, ReplyIcon, ChevronDownIcon, ChevronRightIcon } from "@primer/octicons-react";
-import { Comment } from "../types";
+import { Comment, CommentMessage } from "../types";
 import { api } from "../api";
 import { formatError } from "../errors";
 import { RichText } from "./RichText";
@@ -13,15 +13,37 @@ const STATUS_META: Record<string, { label: string; variant: "default" | "accent"
   accepted: { label: "Accepted", variant: "done" },
 };
 
+function parseThread(comment: Comment): CommentMessage[] {
+  if (comment.thread_json) {
+    try {
+      const arr = JSON.parse(comment.thread_json) as CommentMessage[];
+      if (Array.isArray(arr) && arr.length > 0) return arr;
+    } catch {
+      // fall through
+    }
+  }
+  // Legacy fallback: synthesize from body + agent_reply.
+  const out: CommentMessage[] = [{ role: "user", content: comment.body }];
+  if (comment.agent_reply) out.push({ role: "agent", content: comment.agent_reply });
+  return out;
+}
+
 /** A single review-comment thread card, anchored under its diff line. */
-export function CommentCard({ comment }: { comment: Comment }) {
+export function CommentCard({
+  comment,
+  collapsed,
+  onToggleCollapsed,
+}: {
+  comment: Comment;
+  collapsed: boolean;
+  onToggleCollapsed: (next: boolean) => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reopening, setReopening] = useState(false);
   const [followUp, setFollowUp] = useState("");
-  // Accepted comments collapse by default (resolved, out of the way).
-  const [collapsed, setCollapsed] = useState(comment.status === "accepted");
   const meta = STATUS_META[comment.status] ?? STATUS_META.queued;
+  const thread = parseThread(comment);
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -51,7 +73,7 @@ export function CommentCard({ comment }: { comment: Comment }) {
   if (collapsed) {
     return (
       <Box
-        onClick={() => setCollapsed(false)}
+        onClick={() => onToggleCollapsed(false)}
         sx={{
           display: "flex",
           alignItems: "center",
@@ -65,6 +87,7 @@ export function CommentCard({ comment }: { comment: Comment }) {
           px: 2,
           py: 1,
           cursor: "pointer",
+          userSelect: "none",
           fontFamily: "normal",
           "&:hover": { bg: "canvas.inset" },
         }}
@@ -91,8 +114,8 @@ export function CommentCard({ comment }: { comment: Comment }) {
       }}
     >
       <Box
-        onClick={() => setCollapsed(true)}
-        sx={{ display: "flex", alignItems: "center", gap: 2, px: 2, py: 2, borderBottom: "1px solid", borderColor: "border.muted", cursor: "pointer" }}
+        onClick={() => onToggleCollapsed(true)}
+        sx={{ display: "flex", alignItems: "center", gap: 2, px: 2, py: 2, borderBottom: "1px solid", borderColor: "border.muted", cursor: "pointer", userSelect: "none" }}
       >
         <ChevronDownIcon size={14} />
         {statusLabel}
@@ -109,20 +132,29 @@ export function CommentCard({ comment }: { comment: Comment }) {
         )}
       </Box>
 
-      <Box sx={{ px: 3, py: 2 }}>
-        <Text sx={{ fontSize: 1, whiteSpace: "pre-wrap", display: "block" }}>{comment.body}</Text>
-      </Box>
-
-      {comment.agent_reply && (
-        <Box sx={{ px: 3, py: 2, borderTop: "1px solid", borderColor: "border.muted", bg: "canvas.subtle" }}>
-          <Text sx={{ fontSize: 0, fontWeight: 600, color: "fg.muted", display: "block", mb: 1 }}>
-            Agent
-          </Text>
-          <Box sx={{ fontSize: 1 }}>
-            <RichText content={comment.agent_reply} />
+      {/* Thread: each message as its own bubble. */}
+      <Box sx={{ display: "flex", flexDirection: "column" }}>
+        {thread.map((m, i) => (
+          <Box
+            key={i}
+            sx={{
+              px: 3, py: 2,
+              borderTop: i === 0 ? "none" : "1px solid",
+              borderColor: "border.muted",
+              bg: m.role === "agent" ? "canvas.subtle" : "transparent",
+            }}
+          >
+            <Text sx={{ fontSize: 0, fontWeight: 600, color: "fg.muted", display: "block", mb: 1 }}>
+              {m.role === "agent" ? "Agent" : "You"}
+            </Text>
+            {m.role === "agent" ? (
+              <Box sx={{ fontSize: 1 }}><RichText content={m.content} /></Box>
+            ) : (
+              <Text sx={{ fontSize: 1, whiteSpace: "pre-wrap", display: "block" }}>{m.content}</Text>
+            )}
           </Box>
-        </Box>
-      )}
+        ))}
+      </Box>
 
       {error && (
         <Text sx={{ color: "danger.fg", fontSize: 0, px: 3, py: 1, display: "block" }}>{error}</Text>
@@ -135,7 +167,7 @@ export function CommentCard({ comment }: { comment: Comment }) {
             variant="primary"
             leadingVisual={CheckIcon}
             disabled={busy}
-            onClick={() => void act(async () => { await api.commentAccept(comment.id); setCollapsed(true); })}
+            onClick={() => void act(async () => { await api.commentAccept(comment.id); onToggleCollapsed(true); })}
           >
             Accept
           </Button>
