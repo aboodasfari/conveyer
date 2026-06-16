@@ -1658,44 +1658,85 @@ async fn mark_phase_failed(state: &AppState, phase_id: &str) -> AppResult<()> {
 /// Anything still marked `running` is stale and must be marked failed so the
 /// UI doesn't lie about progress.
 pub async fn reconcile_orphaned_runs(state: &AppState) -> AppResult<()> {
-    let now_note = "[interrupted] Conveyer was closed while this phase was running.";
-
-    // Append a marker message to any orphaned sessions so the user sees in
-    // the chat why it stopped.
-    let orphans: Vec<(String,)> = sqlx::query_as(
-        "SELECT id FROM sessions WHERE status = 'running'",
+    // A phase paused on needs_input is recoverable: the user can still
+    // answer, which resumes the SDK session. Don't fail those runs — only
+    // genuinely-interrupted (running) work. We still close out the dead
+    // sidecar session row so the chat stops showing a live pulse.
+    let needs_input_phase_ids: Vec<(String,)> = sqlx::query_as(
+        "SELECT id FROM phases WHERE status = 'needs_input'",
     )
     .fetch_all(&state.db)
     .await
     .unwrap_or_default();
-    for (session_id,) in &orphans {
+    let recoverable: std::collections::HashSet<String> =
+        needs_input_phase_ids.into_iter().map(|(id,)| id).collect();
+
+    // Annotate + close orphaned sessions. Sessions on a needs_input phase
+    // get a gentle "answer to resume" note and are marked done (not
+    // failed) so they don't look broken; others get the interrupted note.
+    let orphans: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT id, phase_id FROM sessions WHERE status = 'running'",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    for (session_id, phase_id) in &orphans {
+        let is_recoverable = phase_id
+            .as_deref()
+            .map(|p| recoverable.contains(p))
+            .unwrap_or(false);
+        let note = if is_recoverable {
+            "[interrupted] Conveyer was closed while the agent was waiting for your answer. Answer the question to resume."
+        } else {
+            "[interrupted] Conveyer was closed while this phase was running."
+        };
         let _ = sqlx::query(
             "INSERT INTO messages(session_id, role, content) VALUES(?, 'system', ?)",
         )
         .bind(session_id)
-        .bind(now_note)
+        .bind(note)
         .execute(&state.db)
         .await;
     }
 
+    // Close the dead session rows. needs_input phases -> done, others -> failed.
     sqlx::query(
-        "UPDATE sessions SET status='failed', finished_at=datetime('now') WHERE status='running'",
+        "UPDATE sessions SET status='done', finished_at=datetime('now')
+         WHERE status='running'
+           AND phase_id IN (SELECT id FROM phases WHERE status='needs_input')",
     )
     .execute(&state.db)
     .await?;
+    sqlx::query(
+        "UPDATE sessions SET status='failed', finished_at=datetime('now')
+         WHERE status='running'
+           AND (phase_id IS NULL OR phase_id NOT IN (SELECT id FROM phases WHERE status='needs_input'))",
+    )
+    .execute(&state.db)
+    .await?;
+
+    // Fail genuinely-running phases (needs_input phases are left intact).
     sqlx::query(
         "UPDATE phases SET status='failed', finished_at=datetime('now') WHERE status='running'",
     )
     .execute(&state.db)
     .await?;
+    // Fail genuinely-running runs, but NOT ones still holding a needs_input
+    // phase — those stay active so the user can answer + resume.
     sqlx::query(
-        "UPDATE runs SET status='failed', finished_at=datetime('now') WHERE status='running'",
+        "UPDATE runs SET status='failed', finished_at=datetime('now')
+         WHERE status='running'
+           AND id NOT IN (SELECT run_id FROM phases WHERE status='needs_input')",
     )
     .execute(&state.db)
     .await?;
 
     if !orphans.is_empty() {
-        tracing::info!("reconciled {} orphaned running session(s)", orphans.len());
+        tracing::info!(
+            "reconciled {} orphaned session(s); {} recoverable (needs_input)",
+            orphans.len(),
+            recoverable.len(),
+        );
     }
     Ok(())
 }
