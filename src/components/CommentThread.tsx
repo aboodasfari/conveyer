@@ -187,6 +187,19 @@ export function CommentCard({
           <Textarea
             value={followUp}
             onChange={(e) => setFollowUp(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                if (followUp.trim().length > 0 && !busy) {
+                  void act(async () => {
+                    await api.commentReopen(comment.id, followUp.trim());
+                    setReopening(false);
+                    setFollowUp("");
+                  });
+                }
+              }
+              if (e.key === "Escape") { setReopening(false); setFollowUp(""); }
+            }}
             placeholder="What still needs changing?"
             rows={2}
             disabled={busy}
