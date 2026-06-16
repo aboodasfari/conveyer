@@ -799,16 +799,16 @@ async function main() {
     return;
   }
 
-  // Special mode: render the prompt to {artifact_dir}/prompt.md and exit.
-  // The Rust runner kicks this off before the real phase run so the Prompt
-  // tab is populated even if the main run hangs/fails.
+  // Special mode: render the prompt to {artifact_dir}/{phase}.prompt.md
+  // and exit. The Rust runner kicks this off before the real phase run so
+  // the Prompt tab is populated even if the main run hangs/fails.
   if (env.CONVEYER_MODE === "render_prompt") {
     const phase = env.CONVEYER_PHASE;
     if (!phase) process.exit(1);
     try {
       const prompt = await buildPrompt(phase);
       if (env.CONVEYER_ARTIFACT_PATH) {
-        const promptFile = path.join(path.dirname(env.CONVEYER_ARTIFACT_PATH), "prompt.md");
+        const promptFile = path.join(path.dirname(env.CONVEYER_ARTIFACT_PATH), `${phase}.prompt.md`);
         await fs.mkdir(path.dirname(promptFile), { recursive: true });
         await fs.writeFile(promptFile, prompt, "utf8");
       }
@@ -881,9 +881,10 @@ async function main() {
   }
 
   // Persist the rendered prompt next to the phase artifact so the UI's
-  // "Prompt" tab can display exactly what the agent saw.
+  // "Prompt" tab can display exactly what the agent saw. Per-phase file
+  // so phases don't overwrite each other's prompt.
   if (env.CONVEYER_ARTIFACT_PATH) {
-    const promptFile = path.join(path.dirname(env.CONVEYER_ARTIFACT_PATH), "prompt.md");
+    const promptFile = path.join(path.dirname(env.CONVEYER_ARTIFACT_PATH), `${env.CONVEYER_PHASE || phase}.prompt.md`);
     try {
       await fs.mkdir(path.dirname(promptFile), { recursive: true });
       await fs.writeFile(promptFile, prompt, "utf8");

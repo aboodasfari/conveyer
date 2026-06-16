@@ -89,13 +89,24 @@ pub async fn phase_prompt_get(state: State<'_, AppState>, phase_id: String) -> A
     .await?;
     let Some((task_id, kind)) = row else { return Ok(None) };
     let artifact_path = crate::session_runner::artifact_path_for(&task_id, 1, &kind)?;
+    // Per-phase prompt file: `<phase>.prompt.md` next to the artifact, so
+    // each phase keeps its own prompt instead of sharing one prompt.md.
     let prompt_path = artifact_path
         .parent()
-        .map(|p| p.join("prompt.md"));
+        .map(|p| p.join(format!("{kind}.prompt.md")));
     let Some(prompt_path) = prompt_path else { return Ok(None) };
     match tokio::fs::read_to_string(&prompt_path).await {
         Ok(s) => Ok(Some(s)),
-        Err(_) => Ok(None),
+        // Fall back to the legacy shared prompt.md for older runs.
+        Err(_) => {
+            let legacy = artifact_path.parent().map(|p| p.join("prompt.md"));
+            if let Some(legacy) = legacy {
+                if let Ok(s) = tokio::fs::read_to_string(&legacy).await {
+                    return Ok(Some(s));
+                }
+            }
+            Ok(None)
+        }
     }
 }
 

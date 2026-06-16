@@ -583,13 +583,13 @@ function NeedsInputForm({
         <RichText content={prompt} />
       </Box>
       {choices && choices.length > 0 && (
-        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
           {choices.map((c) => (
             <Button
               key={c}
-              size="small"
               disabled={submitting}
               onClick={() => void submit(c)}
+              sx={{ width: "100%", justifyContent: "flex-start", textAlign: "left" }}
             >
               {c}
             </Button>
