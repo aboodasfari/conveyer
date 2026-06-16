@@ -421,7 +421,9 @@ pub async fn tasks_seed_demo(state: State<'_, AppState>) -> AppResult<()> {
                       failing (do NOT delete or weaken the test).";
     // Designed to exercise the ask_user round-trip: a genuine product
     // fork the codebase can't resolve, so the agent should pause and
-    // ask which option to build before implementing.
+    // ask which option to build before implementing. The description
+    // does NOT mention ask_user — the agent has to recognise on its own
+    // that this is a decision only the operator can make.
     let task_d_desc = "Add a `formatDuration(seconds: number): string` helper to \
                       `src/duration.ts` (new file) and export it from `src/index.ts`. \
                       It turns a number of seconds into a human-readable string.\n\n\
@@ -430,9 +432,9 @@ pub async fn tasks_seed_demo(state: State<'_, AppState>) -> AppResult<()> {
                       inferred from the codebase:\n\n\
                       - Compact: `1h 5m`, `45s`, `2h 0m 30s`\n\
                       - Verbose: `1 hour 5 minutes`, `45 seconds`\n\n\
-                      Use the `ask_user` tool to ask which style to implement (offer \
-                      both as choices), then implement exactly that style and add a \
-                      test covering a couple of cases. Do not implement both.";
+                      Implement exactly one style and add a test covering a couple of \
+                      cases. Do not implement both, and do not just pick one \
+                      arbitrarily — the choice matters and is the operator's to make.";
 
     upsert_demo_task(&state, &source_id, story_ref, None, "Demo story: tidy the test repo", "Active", story_desc).await?;
     upsert_demo_task(&state, &source_id, child_a_ref, Some(story_ref), "Fix add() float handling", "Active", task_a_desc).await?;
