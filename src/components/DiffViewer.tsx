@@ -649,6 +649,20 @@ function FileDiff({
 }: { file: DiffFile; mode: "inline" | "split" } & CommentProps) {
   const statusBg = STATUS_BG[file.status];
   const cp: CommentProps = { phaseId, commentMode, comments, composeAt, onStartCompose, onCancelCompose, isCollapsed, onToggleCollapsed };
+  // Measure the inline scroller's visible width so comment cards can be
+  // pinned to it (sticky + fixed width) instead of stretching the
+  // max-content scroll area with a long unwrapped reply.
+  const inlineScrollerRef = useRef<HTMLDivElement | null>(null);
+  const [inlineWidth, setInlineWidth] = useState(0);
+  useEffect(() => {
+    const el = inlineScrollerRef.current;
+    if (!el) return;
+    const update = () => setInlineWidth(el.clientWidth);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [mode]);
   // With full-context diffs (-U99999) the common case is a single hunk
   // starting at line 1, which is just "the whole file" — don't bother
   // showing a hunk header for that.
@@ -697,10 +711,10 @@ function FileDiff({
       ) : mode === "split" ? (
         <SideBySideFile file={file} hideHunkHeaders={hideHunkHeaders} cp={cp} />
       ) : (
-        <Box sx={{ flex: 1, minHeight: 0, overflowX: "auto", overflowY: "auto", fontFamily: "mono", fontSize: 0 }}>
+        <Box ref={inlineScrollerRef} sx={{ flex: 1, minHeight: 0, overflowX: "auto", overflowY: "auto", fontFamily: "mono", fontSize: 0 }}>
           <Box sx={{ minWidth: "max-content" }}>
             {file.hunks.map((h, i) => (
-              <Hunk key={i} hunk={h} hideHeader={hideHunkHeaders} cp={cp} />
+              <Hunk key={i} hunk={h} hideHeader={hideHunkHeaders} cp={cp} pinWidth={inlineWidth} />
             ))}
           </Box>
         </Box>
@@ -717,7 +731,7 @@ const STATUS_BG: Record<DiffFile["status"], string> = {
   binary: "neutral.subtle",
 };
 
-function Hunk({ hunk, hideHeader, cp }: { hunk: DiffHunk; hideHeader?: boolean; cp?: CommentProps }) {
+function Hunk({ hunk, hideHeader, cp, pinWidth }: { hunk: DiffHunk; hideHeader?: boolean; cp?: CommentProps; pinWidth?: number }) {
   // Compute the last new-file line number this hunk covers, so we can show
   // a friendly "Lines N–M" range instead of the raw `@@ -..,.. +..,.. @@` line.
   const lastNewNo = (() => {
@@ -771,24 +785,38 @@ function Hunk({ hunk, hideHeader, cp }: { hunk: DiffHunk; hideHeader?: boolean; 
                   : undefined
               }
             />
-            {cp && lineComments.map((c) => (
-              <CommentCard
-                key={c.id}
-                comment={c}
-                collapsed={cp.isCollapsed(c)}
-                onToggleCollapsed={(next) => cp.onToggleCollapsed(c.id, next)}
-              />
-            ))}
-            {composing && cp && (
-              <CommentComposer
-                phaseId={cp.phaseId}
-                filePath={cp.composeAt!.file}
-                lineStart={cp.composeAt!.line}
-                lineEnd={cp.composeAt!.line}
-                side={cp.composeAt!.side}
-                snippet={cp.composeAt!.snippet}
-                onDone={cp.onCancelCompose}
-              />
+            {cp && (lineComments.length > 0 || composing) && (
+              // Pin to the scroller's visible width so a long reply wraps
+              // instead of stretching the max-content diff area. Sticky
+              // left:0 keeps it aligned when the diff is scrolled sideways.
+              <Box
+                sx={{
+                  position: "sticky",
+                  left: 0,
+                  width: pinWidth ? `${pinWidth}px` : "100%",
+                  maxWidth: pinWidth ? `${pinWidth}px` : "100%",
+                }}
+              >
+                {lineComments.map((c) => (
+                  <CommentCard
+                    key={c.id}
+                    comment={c}
+                    collapsed={cp.isCollapsed(c)}
+                    onToggleCollapsed={(next) => cp.onToggleCollapsed(c.id, next)}
+                  />
+                ))}
+                {composing && (
+                  <CommentComposer
+                    phaseId={cp.phaseId}
+                    filePath={cp.composeAt!.file}
+                    lineStart={cp.composeAt!.line}
+                    lineEnd={cp.composeAt!.line}
+                    side={cp.composeAt!.side}
+                    snippet={cp.composeAt!.snippet}
+                    onDone={cp.onCancelCompose}
+                  />
+                )}
+              </Box>
             )}
           </Box>
         );
