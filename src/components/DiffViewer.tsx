@@ -46,10 +46,13 @@ export function DiffViewer({ phaseId, phaseStatus }: { phaseId: string; phaseSta
   const canComment = phaseStatus === "waiting";
   const [commentMode, setCommentMode] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
-  // Active inline composer anchor, or null.
+  // Active inline composer anchor (a line range), or null.
   const [composeAt, setComposeAt] = useState<{
-    file: string; line: number; side: string; snippet: string;
+    file: string; lineStart: number; lineEnd: number; side: string; snippet: string;
   } | null>(null);
+  // In-progress drag selection over the gutter, or null.
+  const [dragSel, setDragSel] = useState<{ side: string; a: number; b: number } | null>(null);
+  const draggingRef = useRef(false);
   // Per-comment collapse overrides; default derives from status (accepted
   // comments start collapsed). Highlighting only reflects expanded cards.
   const [collapsedOverrides, setCollapsedOverrides] = useState<Record<string, boolean>>({});
@@ -162,6 +165,35 @@ export function DiffViewer({ phaseId, phaseStatus }: { phaseId: string; phaseSta
     () => files.find((f) => f.path === selectedFile) ?? null,
     [files, selectedFile],
   );
+
+  // Gutter drag-select handlers. Press a line's "+" to begin, drag across
+  // lines to extend, release to open a range composer.
+  const onAnchorDown = useCallback((no: number, side: string) => {
+    draggingRef.current = true;
+    setComposeAt(null);
+    setDragSel({ side, a: no, b: no });
+  }, []);
+  const onAnchorEnter = useCallback((no: number, side: string) => {
+    if (!draggingRef.current) return;
+    setDragSel((s) => (s && s.side === side ? { ...s, b: no } : s));
+  }, []);
+  useEffect(() => {
+    const onUp = () => {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      setDragSel((sel) => {
+        if (sel && activeFile) {
+          const lo = Math.min(sel.a, sel.b);
+          const hi = Math.max(sel.a, sel.b);
+          const snippet = rangeSnippet(activeFile, sel.side, lo, hi);
+          setComposeAt({ file: activeFile.path, lineStart: lo, lineEnd: hi, side: sel.side, snippet });
+        }
+        return null;
+      });
+    };
+    window.addEventListener("mouseup", onUp);
+    return () => window.removeEventListener("mouseup", onUp);
+  }, [activeFile]);
 
   if (loading) {
     return (
@@ -286,12 +318,12 @@ export function DiffViewer({ phaseId, phaseStatus }: { phaseId: string; phaseSta
                 commentMode={commentMode}
                 comments={comments.filter((c) => c.file_path === activeFile.path)}
                 composeAt={composeAt && composeAt.file === activeFile.path ? composeAt : null}
-                onStartCompose={(line, side, snippet) =>
-                  setComposeAt({ file: activeFile.path, line, side, snippet })
-                }
                 onCancelCompose={() => setComposeAt(null)}
                 isCollapsed={isCollapsed}
                 onToggleCollapsed={setCollapsed}
+                dragSel={dragSel}
+                onAnchorDown={onAnchorDown}
+                onAnchorEnter={onAnchorEnter}
               />
             ) : (
               <Text sx={{ color: "fg.muted" }}>Select a file to view its diff.</Text>
@@ -628,11 +660,25 @@ interface CommentProps {
   phaseId: string;
   commentMode: boolean;
   comments: Comment[];
-  composeAt: { file: string; line: number; side: string; snippet: string } | null;
-  onStartCompose: (line: number, side: string, snippet: string) => void;
+  composeAt: { file: string; lineStart: number; lineEnd: number; side: string; snippet: string } | null;
   onCancelCompose: () => void;
   isCollapsed: (c: Comment) => boolean;
   onToggleCollapsed: (id: string, next: boolean) => void;
+  dragSel: { side: string; a: number; b: number } | null;
+  onAnchorDown: (no: number, side: string) => void;
+  onAnchorEnter: (no: number, side: string) => void;
+}
+
+/** Gather the text of all lines in [lo,hi] on a side, for the snippet. */
+function rangeSnippet(file: DiffFile, side: string, lo: number, hi: number): string {
+  const texts: string[] = [];
+  for (const h of file.hunks) {
+    for (const l of h.lines) {
+      const a = lineAnchor(l);
+      if (a && a.side === side && a.no >= lo && a.no <= hi) texts.push(l.text);
+    }
+  }
+  return texts.join("\n");
 }
 
 function FileDiff({
@@ -642,13 +688,15 @@ function FileDiff({
   commentMode,
   comments,
   composeAt,
-  onStartCompose,
   onCancelCompose,
   isCollapsed,
   onToggleCollapsed,
+  dragSel,
+  onAnchorDown,
+  onAnchorEnter,
 }: { file: DiffFile; mode: "inline" | "split" } & CommentProps) {
   const statusBg = STATUS_BG[file.status];
-  const cp: CommentProps = { phaseId, commentMode, comments, composeAt, onStartCompose, onCancelCompose, isCollapsed, onToggleCollapsed };
+  const cp: CommentProps = { phaseId, commentMode, comments, composeAt, onCancelCompose, isCollapsed, onToggleCollapsed, dragSel, onAnchorDown, onAnchorEnter };
   // Measure the inline scroller's visible width so comment cards can be
   // pinned to it (sticky + fixed width) instead of stretching the
   // max-content scroll area with a long unwrapped reply.
@@ -764,26 +812,35 @@ function Hunk({ hunk, hideHeader, cp, pinWidth }: { hunk: DiffHunk; hideHeader?:
       )}
       {hunk.lines.map((l, i) => {
         const anchor = lineAnchor(l);
+        // Comments whose range starts on this line (card anchors at start).
         const lineComments = cp && anchor
           ? cp.comments.filter((c) => c.side === anchor.side && c.line_start === anchor.no)
           : [];
+        // Composer anchors at the END of the selected range.
         const composing =
-          cp?.composeAt != null &&
-          anchor != null &&
+          cp?.composeAt != null && anchor != null &&
+          cp.composeAt.side === anchor.side && cp.composeAt.lineEnd === anchor.no;
+        // Is this line covered by an expanded comment / the compose range /
+        // the active drag selection? Any of those highlights it.
+        const inExpandedComment = cp && anchor
+          ? cp.comments.some((c) =>
+              !cp.isCollapsed(c) && c.side === anchor.side &&
+              anchor.no >= (c.line_start ?? -1) && anchor.no <= (c.line_end ?? c.line_start ?? -1))
+          : false;
+        const inComposeRange = cp?.composeAt != null && anchor != null &&
           cp.composeAt.side === anchor.side &&
-          cp.composeAt.line === anchor.no;
-        const hasExpanded = cp ? lineComments.some((c) => !cp.isCollapsed(c)) : false;
+          anchor.no >= cp.composeAt.lineStart && anchor.no <= cp.composeAt.lineEnd;
+        const inDrag = cp?.dragSel != null && anchor != null && cp.dragSel.side === anchor.side &&
+          anchor.no >= Math.min(cp.dragSel.a, cp.dragSel.b) &&
+          anchor.no <= Math.max(cp.dragSel.a, cp.dragSel.b);
         return (
           <Box key={i}>
             <DiffLineRow
               line={l}
               commentMode={cp?.commentMode ?? false}
-              highlighted={hasExpanded || composing}
-              onAdd={
-                cp && anchor
-                  ? () => cp.onStartCompose(anchor.no, anchor.side, l.text)
-                  : undefined
-              }
+              highlighted={inExpandedComment || inComposeRange || inDrag}
+              onAnchorDown={cp && anchor ? () => cp.onAnchorDown(anchor.no, anchor.side) : undefined}
+              onAnchorEnter={cp && anchor ? () => cp.onAnchorEnter(anchor.no, anchor.side) : undefined}
             />
             {cp && (lineComments.length > 0 || composing) && (
               // Pin to the scroller's visible width so a long reply wraps
@@ -809,8 +866,8 @@ function Hunk({ hunk, hideHeader, cp, pinWidth }: { hunk: DiffHunk; hideHeader?:
                   <CommentComposer
                     phaseId={cp.phaseId}
                     filePath={cp.composeAt!.file}
-                    lineStart={cp.composeAt!.line}
-                    lineEnd={cp.composeAt!.line}
+                    lineStart={cp.composeAt!.lineStart}
+                    lineEnd={cp.composeAt!.lineEnd}
                     side={cp.composeAt!.side}
                     snippet={cp.composeAt!.snippet}
                     onDone={cp.onCancelCompose}
@@ -975,14 +1032,25 @@ function SideBySideFile({
           const r = right[i];
           const sep = hunkSeparators.has(i);
           const anchor = sbsAnchor(l, r);
+          // Card anchors at range start; composer at range end.
           const lineComments = cp && anchor
             ? cp.comments.filter((c) => c.side === anchor.side && c.line_start === anchor.no)
             : [];
           const composing =
             cp?.composeAt != null && anchor != null &&
-            cp.composeAt.side === anchor.side && cp.composeAt.line === anchor.no;
-          const hasExpanded = cp ? lineComments.some((c) => !cp.isCollapsed(c)) : false;
-          const highlighted = hasExpanded || composing;
+            cp.composeAt.side === anchor.side && cp.composeAt.lineEnd === anchor.no;
+          const inExpandedComment = cp && anchor
+            ? cp.comments.some((c) =>
+                !cp.isCollapsed(c) && c.side === anchor.side &&
+                anchor.no >= (c.line_start ?? -1) && anchor.no <= (c.line_end ?? c.line_start ?? -1))
+            : false;
+          const inComposeRange = cp?.composeAt != null && anchor != null &&
+            cp.composeAt.side === anchor.side &&
+            anchor.no >= cp.composeAt.lineStart && anchor.no <= cp.composeAt.lineEnd;
+          const inDrag = cp?.dragSel != null && anchor != null && cp.dragSel.side === anchor.side &&
+            anchor.no >= Math.min(cp.dragSel.a, cp.dragSel.b) &&
+            anchor.no <= Math.max(cp.dragSel.a, cp.dragSel.b);
+          const highlighted = inExpandedComment || inComposeRange || inDrag;
           // Comments are new-side (right) only; cards/composer render in
           // the right column with the left column blank.
           const sideExtras = (cp && (lineComments.length > 0 || composing)) ? (
@@ -993,11 +1061,12 @@ function SideBySideFile({
                   <CommentCard key={c.id} comment={c} collapsed={cp.isCollapsed(c)} onToggleCollapsed={(n) => cp.onToggleCollapsed(c.id, n)} />
                 ))}
                 {composing && (
-                  <CommentComposer phaseId={cp.phaseId} filePath={cp.composeAt!.file} lineStart={cp.composeAt!.line} lineEnd={cp.composeAt!.line} side={cp.composeAt!.side} snippet={cp.composeAt!.snippet} onDone={cp.onCancelCompose} />
+                  <CommentComposer phaseId={cp.phaseId} filePath={cp.composeAt!.file} lineStart={cp.composeAt!.lineStart} lineEnd={cp.composeAt!.lineEnd} side={cp.composeAt!.side} snippet={cp.composeAt!.snippet} onDone={cp.onCancelCompose} />
                 )}
               </Box>
             </Box>
           ) : null;
+          const rightAnchorOk = cp && (r.kind === "add" || r.kind === "context") && typeof r.newNo === "number";
           return (
             <Box key={i}>
               <Box sx={{ display: "flex", minWidth: "100%" }}>
@@ -1011,9 +1080,8 @@ function SideBySideFile({
                     separator={sep}
                     highlighted={highlighted}
                     commentMode={cp?.commentMode ?? false}
-                    onAdd={cp && (r.kind === "add" || r.kind === "context") && typeof r.newNo === "number"
-                      ? () => cp.onStartCompose(r.newNo!, "new", r.text)
-                      : undefined}
+                    onAnchorDown={rightAnchorOk ? () => cp!.onAnchorDown(r.newNo!, "new") : undefined}
+                    onAnchorEnter={rightAnchorOk ? () => cp!.onAnchorEnter(r.newNo!, "new") : undefined}
                   />
                 </Box>
               </Box>
@@ -1042,14 +1110,16 @@ function SideCell({
   separator,
   commentMode,
   highlighted,
-  onAdd,
+  onAnchorDown,
+  onAnchorEnter,
 }: {
   line: PairedLine;
   side: "left" | "right";
   separator: boolean;
   commentMode?: boolean;
   highlighted?: boolean;
-  onAdd?: () => void;
+  onAnchorDown?: () => void;
+  onAnchorEnter?: () => void;
 }) {
   if (line.kind === "empty") {
     return (
@@ -1074,6 +1144,7 @@ function SideCell({
   const lineNo = side === "left" ? line.oldNo : line.newNo;
   return (
     <Box
+      onMouseEnter={onAnchorEnter}
       sx={{
         display: "flex",
         minWidth: "max-content",
@@ -1086,12 +1157,12 @@ function SideCell({
         "&:hover .conveyer-add-comment": { opacity: 1 },
       }}
     >
-      {commentMode && onAdd && (
+      {commentMode && onAnchorDown && (
         <Box
           className="conveyer-add-comment"
           role="button"
-          aria-label="Add comment on this line"
-          onClick={onAdd}
+          aria-label="Add comment — drag to select multiple lines"
+          onMouseDown={(e) => { e.preventDefault(); onAnchorDown(); }}
           sx={{
             position: "absolute", left: "2px", top: "1px",
             width: 16, height: 16, borderRadius: 1,
@@ -1128,12 +1199,14 @@ function DiffLineRow({
   line,
   commentMode,
   highlighted,
-  onAdd,
+  onAnchorDown,
+  onAnchorEnter,
 }: {
   line: DiffLine;
   commentMode?: boolean;
   highlighted?: boolean;
-  onAdd?: () => void;
+  onAnchorDown?: () => void;
+  onAnchorEnter?: () => void;
 }) {
   const bg = line.kind === "add" ? "success.subtle"
     : line.kind === "del" ? "danger.subtle"
@@ -1144,6 +1217,7 @@ function DiffLineRow({
   const lineNo = line.kind === "del" ? undefined : (line.newNo ?? line.oldNo);
   return (
     <Box
+      onMouseEnter={onAnchorEnter}
       sx={{
         display: "flex",
         bg,
@@ -1154,16 +1228,16 @@ function DiffLineRow({
               bg: "attention.subtle",
             }
           : {}),
-        "&:hover": { bg: line.kind === "context" ? "canvas.subtle" : bg },
+        "&:hover": { bg: highlighted ? "attention.subtle" : (line.kind === "context" ? "canvas.subtle" : bg) },
         "&:hover .conveyer-add-comment": { opacity: 1 },
       }}
     >
-      {commentMode && onAdd && (
+      {commentMode && onAnchorDown && (
         <Box
           className="conveyer-add-comment"
           role="button"
-          aria-label="Add comment on this line"
-          onClick={onAdd}
+          aria-label="Add comment — drag to select multiple lines"
+          onMouseDown={(e) => { e.preventDefault(); onAnchorDown(); }}
           sx={{
             position: "absolute",
             left: "2px",

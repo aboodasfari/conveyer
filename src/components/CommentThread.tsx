@@ -119,6 +119,7 @@ export function CommentCard({
       >
         <ChevronDownIcon size={14} />
         {statusLabel}
+        <Text sx={{ fontSize: 0, color: "fg.muted" }}>{lineLabel(comment)}</Text>
         <Box sx={{ flex: 1 }} />
         {comment.status !== "working" && (
           <Button
@@ -234,6 +235,12 @@ function firstLine(s: string): string {
   return s.split("\n").find((l) => l.trim().length > 0)?.trim() ?? "(comment)";
 }
 
+function lineLabel(c: Comment): string {
+  if (c.line_start == null) return "";
+  if (c.line_end != null && c.line_end !== c.line_start) return `L${c.line_start}–${c.line_end}`;
+  return `L${c.line_start}`;
+}
+
 /** Inline composer for a new comment anchored to a diff line/range. */
 export function CommentComposer({
   phaseId,
@@ -296,6 +303,11 @@ export function CommentComposer({
         fontFamily: "normal",
       }}
     >
+      <Text sx={{ fontSize: 0, color: "fg.muted" }}>
+        Commenting on {lineStart != null && lineEnd != null && lineStart !== lineEnd
+          ? `lines ${lineStart}–${lineEnd}`
+          : `line ${lineStart ?? lineEnd}`}
+      </Text>
       <Textarea
         autoFocus
         value={body}
