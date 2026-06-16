@@ -1,3 +1,4 @@
+pub mod comments;
 pub mod diff;
 pub mod gates;
 pub mod runs;

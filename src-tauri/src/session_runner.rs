@@ -29,6 +29,11 @@ use uuid::Uuid;
 pub struct RunnerRegistry {
     inner: Mutex<HashMap<String, RunnerHandle>>,
     chats: Mutex<HashMap<String, ChatHandle>>,
+    /// Phases with a live comment processor (so kicks are idempotent).
+    comment_procs: Mutex<std::collections::HashSet<String>>,
+    /// Per-phase broadcast that fires once each chat turn completes;
+    /// the comment processor subscribes to await its turn.
+    turn_chans: Mutex<HashMap<String, tokio::sync::broadcast::Sender<()>>>,
 }
 
 struct RunnerHandle {
@@ -59,6 +64,8 @@ impl RunnerRegistry {
         Self {
             inner: Mutex::new(HashMap::new()),
             chats: Mutex::new(HashMap::new()),
+            comment_procs: Mutex::new(std::collections::HashSet::new()),
+            turn_chans: Mutex::new(HashMap::new()),
         }
     }
 
@@ -137,6 +144,34 @@ impl RunnerRegistry {
 
     fn unregister_chat(&self, phase_id: &str) -> Option<String> {
         self.chats.lock().unwrap().remove(phase_id).map(|h| h.session_id)
+    }
+
+    /// Try to claim the comment processor for a phase. Returns true if the
+    /// caller should run it (it wasn't already running). The processor
+    /// drains all queued comments, so a second kick while one is active is
+    /// a no-op — the running processor will pick up newly-queued comments.
+    fn try_start_comment_proc(&self, phase_id: &str) -> bool {
+        self.comment_procs.lock().unwrap().insert(phase_id.to_string())
+    }
+
+    fn end_comment_proc(&self, phase_id: &str) {
+        self.comment_procs.lock().unwrap().remove(phase_id);
+    }
+
+    /// Get-or-create the per-phase turn-done broadcast sender.
+    fn turn_sender(&self, phase_id: &str) -> tokio::sync::broadcast::Sender<()> {
+        let mut map = self.turn_chans.lock().unwrap();
+        map.entry(phase_id.to_string())
+            .or_insert_with(|| tokio::sync::broadcast::channel(8).0)
+            .clone()
+    }
+
+    /// Fire a turn-done signal for a phase (best-effort; no-op if no
+    /// subscribers).
+    fn notify_turn(&self, phase_id: &str) {
+        if let Some(tx) = self.turn_chans.lock().unwrap().get(phase_id) {
+            let _ = tx.send(());
+        }
     }
 }
 
@@ -731,6 +766,213 @@ pub async fn chat_heartbeat(app: &AppHandle, phase_id: &str) {
     let _ = tx.send("{\"type\":\"ping\"}".to_string()).await;
 }
 
+/* -------------------------------------------------------------------------- */
+/*                           Review-comment processor                         */
+/* -------------------------------------------------------------------------- */
+
+/// A queued review comment, minimal projection for processing.
+#[derive(sqlx::FromRow)]
+struct QueuedComment {
+    id: String,
+    file_path: String,
+    line_start: Option<i64>,
+    line_end: Option<i64>,
+    snippet: Option<String>,
+    body: String,
+    commit_marker: String,
+}
+
+/// Kick the per-phase comment processor. Idempotent: if one is already
+/// running for the phase it returns immediately (the running processor
+/// drains newly-queued comments), so this can be called on every
+/// comment_create / comment_reopen without piling up workers.
+pub fn kick_comment_processor(app: AppHandle, phase_id: String) {
+    tauri::async_runtime::spawn(async move {
+        let registry = app.state::<RunnerRegistry>();
+        if !registry.try_start_comment_proc(&phase_id) {
+            return; // already draining
+        }
+        if let Err(e) = run_comment_processor(&app, &phase_id).await {
+            tracing::error!("comment processor for {phase_id} failed: {e}");
+        }
+        registry.end_comment_proc(&phase_id);
+        // A comment may have been queued in the tiny window between the
+        // loop seeing an empty queue and us releasing the claim; re-kick
+        // so it isn't stranded.
+        let has_more: Option<(i64,)> = sqlx::query_as(
+            "SELECT 1 FROM comments WHERE phase_id = ? AND status = 'queued' LIMIT 1",
+        )
+        .bind(&phase_id)
+        .fetch_optional(&app.state::<AppState>().db)
+        .await
+        .ok()
+        .flatten();
+        if has_more.is_some() {
+            kick_comment_processor(app.clone(), phase_id);
+        }
+    });
+}
+
+async fn run_comment_processor(app: &AppHandle, phase_id: &str) -> AppResult<()> {
+    let state = app.state::<AppState>();
+    let registry = app.state::<RunnerRegistry>();
+
+    loop {
+        // Next queued comment (FIFO).
+        let next: Option<QueuedComment> = sqlx::query_as(
+            "SELECT id, file_path, line_start, line_end, snippet, body, commit_marker
+             FROM comments WHERE phase_id = ? AND status = 'queued'
+             ORDER BY created_at, id LIMIT 1",
+        )
+        .bind(phase_id)
+        .fetch_optional(&state.db)
+        .await?;
+        let Some(c) = next else { break };
+
+        // Mark working.
+        sqlx::query("UPDATE comments SET status='working', updated_at=datetime('now') WHERE id=?")
+            .bind(&c.id)
+            .execute(&state.db)
+            .await?;
+        let _ = app.emit("comments_changed", serde_json::json!({ "phase_id": phase_id }));
+
+        // Ensure a warm chat sidecar (resumes the SDK session).
+        let (session_id, tx) = match ensure_chat_spawned(app, phase_id).await {
+            Ok(v) => v,
+            Err(e) => {
+                // Couldn't reach the agent; surface on the comment and stop.
+                sqlx::query(
+                    "UPDATE comments SET status='addressed',
+                     agent_reply=?, updated_at=datetime('now') WHERE id=?",
+                )
+                .bind(format!("Couldn't reach the agent: {e}. Reopen to retry."))
+                .bind(&c.id)
+                .execute(&state.db)
+                .await?;
+                let _ = app.emit("comments_changed", serde_json::json!({ "phase_id": phase_id }));
+                break;
+            }
+        };
+
+        // Subscribe to turn-done BEFORE sending so we don't miss it.
+        let mut turn_rx = registry.turn_sender(phase_id).subscribe();
+
+        // Snapshot the latest message id so we can scoop up just this
+        // turn's assistant output as the reply.
+        let snap: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(id), 0) FROM messages WHERE session_id = ?",
+        )
+        .bind(&session_id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
+
+        // Persist a concise user message so the chat transcript reads
+        // sensibly alongside the diff comment.
+        let loc = comment_loc(&c.file_path, c.line_start, c.line_end);
+        let user_note = format!("Review comment on {loc}: {}", first_line(&c.body));
+        let _ = persist_message(&state, &session_id, "user", &user_note).await;
+        let _ = app.emit("message_appended", serde_json::json!({
+            "session_id": session_id, "role": "user", "content": user_note,
+        }));
+
+        // Send the framed comment as a chat turn.
+        let prompt = frame_comment(&c, &loc);
+        let cmd = serde_json::json!({ "type": "reply", "content": prompt }).to_string();
+        if tx.send(cmd).await.is_err() {
+            sqlx::query(
+                "UPDATE comments SET status='addressed',
+                 agent_reply='The agent process closed before this could be sent. Reopen to retry.',
+                 updated_at=datetime('now') WHERE id=?",
+            )
+            .bind(&c.id)
+            .execute(&state.db)
+            .await?;
+            let _ = app.emit("comments_changed", serde_json::json!({ "phase_id": phase_id }));
+            break;
+        }
+
+        // Wait for the turn to finish (cap so a wedged turn can't hang the
+        // processor forever).
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(30 * 60),
+            turn_rx.recv(),
+        )
+        .await;
+
+        // Capture this turn's assistant output as the reply.
+        let replies: Vec<(String,)> = sqlx::query_as(
+            "SELECT content FROM messages
+             WHERE session_id = ? AND id > ? AND role = 'assistant'
+             ORDER BY id",
+        )
+        .bind(&session_id)
+        .bind(snap)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+        let reply_text = if replies.is_empty() {
+            "Addressed.".to_string()
+        } else {
+            replies.into_iter().map(|(c,)| c).collect::<Vec<_>>().join("\n\n")
+        };
+
+        sqlx::query(
+            "UPDATE comments SET status='addressed', agent_reply=?, updated_at=datetime('now')
+             WHERE id=?",
+        )
+        .bind(&reply_text)
+        .bind(&c.id)
+        .execute(&state.db)
+        .await?;
+        let _ = app.emit("comments_changed", serde_json::json!({ "phase_id": phase_id }));
+        // The agent committed a change; refresh the diff.
+        emit_run_updated(app, &state, phase_id).await;
+    }
+
+    Ok(())
+}
+
+fn comment_loc(file: &str, start: Option<i64>, end: Option<i64>) -> String {
+    match (start, end) {
+        (Some(a), Some(b)) if a != b => format!("{file}:{a}-{b}"),
+        (Some(a), _) => format!("{file}:{a}"),
+        _ => file.to_string(),
+    }
+}
+
+fn first_line(s: &str) -> String {
+    s.lines().next().unwrap_or("").trim().to_string()
+}
+
+fn frame_comment(c: &QueuedComment, loc: &str) -> String {
+    let snippet = c.snippet.as_deref().unwrap_or("").trim_end();
+    let snippet_block = if snippet.is_empty() {
+        String::new()
+    } else {
+        format!("\n\nThe commented lines:\n```\n{snippet}\n```")
+    };
+    format!(
+        "You are addressing a code-review comment left on the diff for this phase.\n\n\
+         Location: `{loc}`{snippet_block}\n\n\
+         Comment(s):\n{body}\n\n\
+         Instructions:\n\
+         - Make the requested change in the worktree.\n\
+         - COMMIT it. Put the marker `[conveyer-comment:{marker}]` at the END of the \
+         commit message.\n\
+         - If a commit already exists with that marker (this is a follow-up on the \
+         same thread), AMEND that commit (use fixup + autosquash if it is not HEAD) so \
+         the thread stays one logical commit — do NOT add a separate commit.\n\
+         - Keep changes scoped to this comment.\n\
+         - Then reply with ONE or TWO sentences describing what you changed. No preamble.",
+        loc = loc,
+        snippet_block = snippet_block,
+        body = c.body,
+        marker = c.commit_marker,
+    )
+}
+
+
 /// Deliver a user's answer to a pending `ask_user` / needs_input request.
 /// Writes `{type:"answer", request_id, content}` to the live sidecar's
 /// stdin so the blocked tool handler resolves and the agent continues.
@@ -934,6 +1176,9 @@ async fn chat_reader_loop(
                                 "phase_id": &phase_id,
                                 "busy": false,
                             }));
+                            // Wake the comment processor if it's awaiting
+                            // this turn's completion.
+                            app.state::<RunnerRegistry>().notify_turn(&phase_id);
                             emit_run_updated(&app, &state, &phase_id).await;
                             continue;
                         }
