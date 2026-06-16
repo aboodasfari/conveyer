@@ -4,6 +4,7 @@ const variantMap: Record<string, "default" | "accent" | "success" | "attention" 
   pending: "default",
   running: "accent",
   waiting: "attention",
+  needs_input: "attention",
   done: "done",
   failed: "danger",
   cancelled: "default",
@@ -14,6 +15,7 @@ const labelMap: Record<string, string> = {
   pending: "Pending",
   running: "Running",
   waiting: "Awaiting Approval",
+  needs_input: "Needs Your Input",
   done: "Done",
   failed: "Failed",
   cancelled: "Cancelled",
@@ -42,9 +44,14 @@ export function StatusBadge({
 }) {
   if (!status) return <Label variant="default">Not Tackled</Label>;
   const v = variantMap[status] ?? "default";
-  if (phase && (status === "running" || status === "waiting")) {
+  if (phase && (status === "running" || status === "waiting" || status === "needs_input")) {
     const phaseLabel = PHASE_TITLE[phase] ?? phase;
-    const suffix = status === "waiting" ? "Awaiting Approval" : "In Progress";
+    const suffix =
+      status === "waiting"
+        ? "Awaiting Approval"
+        : status === "needs_input"
+          ? "Needs Your Input"
+          : "In Progress";
     return <Label variant={v}>{`${phaseLabel} · ${suffix}`}</Label>;
   }
   return <Label variant={v}>{labelMap[status] ?? status}</Label>;

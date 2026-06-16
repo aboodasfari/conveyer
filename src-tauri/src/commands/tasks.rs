@@ -81,15 +81,25 @@ pub async fn tasks_list(state: State<'_, AppState>) -> AppResult<Vec<TaskSummary
         .await?;
         let (run_status, current_phase) = if let Some((run_id, status)) = row {
             // For active runs, surface the currently-running/awaiting phase.
-            let phase: Option<(String,)> = sqlx::query_as(
-                "SELECT kind FROM phases
-                 WHERE run_id = ? AND status IN ('running','waiting')
+            // Include needs_input so the badge can show the agent is blocked
+            // on the user, not merely "running".
+            let phase: Option<(String, String)> = sqlx::query_as(
+                "SELECT kind, status FROM phases
+                 WHERE run_id = ? AND status IN ('running','waiting','needs_input')
                  ORDER BY ord LIMIT 1",
             )
             .bind(&run_id)
             .fetch_optional(&state.db)
             .await?;
-            (Some(status), phase.map(|(k,)| k))
+            match phase {
+                // A phase awaiting the user's answer overrides the run's
+                // 'running' status for display purposes.
+                Some((kind, pstatus)) if pstatus == "needs_input" => {
+                    (Some("needs_input".to_string()), Some(kind))
+                }
+                Some((kind, _)) => (Some(status), Some(kind)),
+                None => (Some(status), None),
+            }
         } else {
             (None, None)
         };

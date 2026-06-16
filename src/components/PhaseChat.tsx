@@ -579,7 +579,9 @@ function NeedsInputForm({
       <Text sx={{ fontSize: 0, fontWeight: 600, color: "attention.fg" }}>
         The agent needs your input
       </Text>
-      <Text sx={{ fontSize: 1, whiteSpace: "pre-wrap" }}>{prompt}</Text>
+      <Box sx={{ fontSize: 1 }}>
+        <RichText content={prompt} />
+      </Box>
       {choices && choices.length > 0 && (
         <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
           {choices.map((c) => (
