@@ -705,7 +705,7 @@ function PhaseContent({
             pendingInput={phase.pending_input}
           />
         ) : tab === "diff" ? (
-          <DiffViewer phaseId={phase.id} />
+          <DiffViewer phaseId={phase.id} phaseStatus={phase.status} />
         ) : tab === "prompt" ? (
           <PromptView phaseId={phase.id} />
         ) : (

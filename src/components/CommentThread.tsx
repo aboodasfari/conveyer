@@ -1,0 +1,235 @@
+import { useState } from "react";
+import { Box, Button, Spinner, Text, Textarea, Label } from "@primer/react";
+import { CheckIcon, TrashIcon, ReplyIcon } from "@primer/octicons-react";
+import { Comment } from "../types";
+import { api } from "../api";
+import { formatError } from "../errors";
+import { RichText } from "./RichText";
+
+const STATUS_META: Record<string, { label: string; variant: "default" | "accent" | "success" | "attention" | "done" }> = {
+  queued: { label: "Queued", variant: "default" },
+  working: { label: "Working", variant: "accent" },
+  addressed: { label: "Addressed", variant: "attention" },
+  accepted: { label: "Accepted", variant: "done" },
+};
+
+/** A single review-comment thread card, anchored under its diff line. */
+export function CommentCard({ comment }: { comment: Comment }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reopening, setReopening] = useState(false);
+  const [followUp, setFollowUp] = useState("");
+  const meta = STATUS_META[comment.status] ?? STATUS_META.queued;
+
+  const act = async (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await fn();
+    } catch (e) {
+      setError(formatError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Box
+      sx={{
+        border: "1px solid",
+        borderColor: "border.default",
+        borderRadius: 2,
+        bg: "canvas.overlay",
+        my: 2,
+        mx: 2,
+        fontFamily: "normal",
+      }}
+    >
+      <Box sx={{ display: "flex", alignItems: "center", gap: 2, px: 3, py: 2, borderBottom: "1px solid", borderColor: "border.muted" }}>
+        <Label variant={meta.variant} size="small">
+          {comment.status === "working" ? (
+            <Box sx={{ display: "inline-flex", alignItems: "center", gap: 1 }}>
+              <Spinner size="small" sx={{ width: 10, height: 10 }} /> {meta.label}
+            </Box>
+          ) : (
+            meta.label
+          )}
+        </Label>
+        <Box sx={{ flex: 1 }} />
+        {comment.status !== "working" && (
+          <Button
+            size="small"
+            variant="invisible"
+            leadingVisual={TrashIcon}
+            disabled={busy}
+            onClick={() => void act(() => api.commentDelete(comment.id))}
+            aria-label="Delete comment"
+          />
+        )}
+      </Box>
+
+      <Box sx={{ px: 3, py: 2 }}>
+        <Text sx={{ fontSize: 1, whiteSpace: "pre-wrap", display: "block" }}>{comment.body}</Text>
+      </Box>
+
+      {comment.agent_reply && (
+        <Box sx={{ px: 3, py: 2, borderTop: "1px solid", borderColor: "border.muted", bg: "canvas.subtle" }}>
+          <Text sx={{ fontSize: 0, fontWeight: 600, color: "fg.muted", display: "block", mb: 1 }}>
+            Agent
+          </Text>
+          <Box sx={{ fontSize: 1 }}>
+            <RichText content={comment.agent_reply} />
+          </Box>
+        </Box>
+      )}
+
+      {error && (
+        <Text sx={{ color: "danger.fg", fontSize: 0, px: 3, py: 1, display: "block" }}>{error}</Text>
+      )}
+
+      {comment.status === "addressed" && !reopening && (
+        <Box sx={{ display: "flex", gap: 2, px: 3, py: 2, borderTop: "1px solid", borderColor: "border.muted" }}>
+          <Button
+            size="small"
+            variant="primary"
+            leadingVisual={CheckIcon}
+            disabled={busy}
+            onClick={() => void act(() => api.commentAccept(comment.id))}
+          >
+            Accept
+          </Button>
+          <Button
+            size="small"
+            leadingVisual={ReplyIcon}
+            disabled={busy}
+            onClick={() => setReopening(true)}
+          >
+            Reopen
+          </Button>
+        </Box>
+      )}
+
+      {comment.status === "addressed" && reopening && (
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 2, px: 3, py: 2, borderTop: "1px solid", borderColor: "border.muted" }}>
+          <Textarea
+            value={followUp}
+            onChange={(e) => setFollowUp(e.target.value)}
+            placeholder="What still needs changing?"
+            rows={2}
+            disabled={busy}
+            sx={{ width: "100%" }}
+          />
+          <Box sx={{ display: "flex", gap: 2 }}>
+            <Button
+              size="small"
+              variant="primary"
+              disabled={busy || followUp.trim().length === 0}
+              onClick={() =>
+                void act(async () => {
+                  await api.commentReopen(comment.id, followUp.trim());
+                  setReopening(false);
+                  setFollowUp("");
+                })
+              }
+            >
+              Send back
+            </Button>
+            <Button size="small" disabled={busy} onClick={() => { setReopening(false); setFollowUp(""); }}>
+              Cancel
+            </Button>
+          </Box>
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+/** Inline composer for a new comment anchored to a diff line/range. */
+export function CommentComposer({
+  phaseId,
+  filePath,
+  lineStart,
+  lineEnd,
+  side,
+  snippet,
+  onDone,
+}: {
+  phaseId: string;
+  filePath: string;
+  lineStart: number | null;
+  lineEnd: number | null;
+  side: string | null;
+  snippet: string | null;
+  onDone: () => void;
+}) {
+  const [body, setBody] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    const trimmed = body.trim();
+    if (!trimmed || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.commentCreate({
+        phase_id: phaseId,
+        file_path: filePath,
+        line_start: lineStart,
+        line_end: lineEnd,
+        side,
+        snippet,
+        body: trimmed,
+      });
+      setBody("");
+      onDone();
+    } catch (e) {
+      setError(formatError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Box
+      sx={{
+        border: "1px solid",
+        borderColor: "accent.emphasis",
+        borderRadius: 2,
+        bg: "canvas.overlay",
+        my: 2,
+        mx: 2,
+        p: 2,
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+        fontFamily: "normal",
+      }}
+    >
+      <Textarea
+        autoFocus
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            void submit();
+          }
+          if (e.key === "Escape") onDone();
+        }}
+        placeholder="Leave a comment for the agent to address."
+        rows={3}
+        disabled={busy}
+        sx={{ width: "100%" }}
+      />
+      {error && <Text sx={{ color: "danger.fg", fontSize: 0 }}>{error}</Text>}
+      <Box sx={{ display: "flex", gap: 2, justifyContent: "flex-end", alignItems: "center" }}>
+        <Text sx={{ color: "fg.muted", fontSize: 0, mr: "auto" }}>⌘/Ctrl + Enter</Text>
+        <Button size="small" disabled={busy} onClick={onDone}>Cancel</Button>
+        <Button size="small" variant="primary" disabled={busy || body.trim().length === 0} onClick={() => void submit()}>
+          {busy ? "Adding…" : "Comment"}
+        </Button>
+      </Box>
+    </Box>
+  );
+}

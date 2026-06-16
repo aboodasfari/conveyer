@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActionList, ActionMenu, Box, Flash, IconButton, SegmentedControl, Spinner, Text } from "@primer/react";
+import { ActionList, ActionMenu, Box, Button, Flash, IconButton, SegmentedControl, Spinner, Text } from "@primer/react";
 import {
   CheckIcon,
   ColumnsIcon,
+  CommentIcon,
   CopyIcon,
   DiffAddedIcon,
   DiffIcon,
@@ -11,12 +12,14 @@ import {
   DiffRenamedIcon,
   FileBinaryIcon,
   GitCommitIcon,
+  PlusIcon,
 } from "@primer/octicons-react";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { api } from "../api";
-import { DiffSummary } from "../types";
+import { Comment, DiffSummary } from "../types";
 import { formatError } from "../errors";
 import { TabPlaceholder } from "./TabPlaceholder";
+import { CommentCard, CommentComposer } from "./CommentThread";
 
 const LEFT_PANE_DEFAULT = 260;
 const LEFT_PANE_MIN = 180;
@@ -28,7 +31,7 @@ const LEFT_PANE_MAX = 520;
  * left = file list (status icon + path + ± counts), right = the selected
  * file's diff. Click a file to focus it; drag the divider to resize.
  */
-export function DiffViewer({ phaseId }: { phaseId: string }) {
+export function DiffViewer({ phaseId, phaseStatus }: { phaseId: string; phaseStatus?: string }) {
   const [summary, setSummary] = useState<DiffSummary | null>(null);
   const [diffText, setDiffText] = useState<string>("");
   const [selectedCommit, setSelectedCommit] = useState<string | null>(null); // null = overall
@@ -38,6 +41,23 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
   const [loadingDiff, setLoadingDiff] = useState(false);
   const [leftWidth, setLeftWidth] = useState<number>(LEFT_PANE_DEFAULT);
   const [viewMode, setViewMode] = useState<"inline" | "split">("inline");
+
+  // Review comments. Only usable while the phase is gated (waiting).
+  const canComment = phaseStatus === "waiting";
+  const [commentMode, setCommentMode] = useState(false);
+  const [comments, setComments] = useState<Comment[]>([]);
+  // Active inline composer anchor, or null.
+  const [composeAt, setComposeAt] = useState<{
+    file: string; line: number; side: string; snippet: string;
+  } | null>(null);
+
+  const loadComments = useCallback(async () => {
+    try {
+      setComments(await api.commentsForPhase(phaseId));
+    } catch {
+      // non-fatal
+    }
+  }, [phaseId]);
 
   const loadSummary = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true);
@@ -68,6 +88,29 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
 
   useEffect(() => { void loadSummary(); }, [loadSummary]);
   useEffect(() => { void loadDiff(selectedCommit); }, [selectedCommit, loadDiff]);
+  useEffect(() => { void loadComments(); }, [loadComments]);
+
+  // Comment mode forces inline view (the SBS path doesn't render
+  // comment anchors). Turn it off if the phase leaves the gated state.
+  useEffect(() => {
+    if (commentMode) setViewMode("inline");
+  }, [commentMode]);
+  useEffect(() => {
+    if (!canComment) { setCommentMode(false); setComposeAt(null); }
+  }, [canComment]);
+
+  // Reload comments when the processor changes them.
+  useEffect(() => {
+    let unlisten: UnlistenFn | null = null;
+    let cancelled = false;
+    void (async () => {
+      unlisten = await listen<{ phase_id?: string }>("comments_changed", (e) => {
+        if (!e.payload?.phase_id || e.payload.phase_id === phaseId) void loadComments();
+      });
+      if (cancelled) unlisten();
+    })();
+    return () => { cancelled = true; if (unlisten) unlisten(); };
+  }, [phaseId, loadComments]);
 
   // Light poll so newly-made commits appear without waiting for the next
   // phase transition. Silent: doesn't flash the loading spinner.
@@ -180,6 +223,17 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
           </ActionMenu.Overlay>
         </ActionMenu>
         <Box sx={{ flex: 1 }} />
+        {canComment && (
+          <Button
+            size="small"
+            leadingVisual={CommentIcon}
+            variant={commentMode ? "primary" : "default"}
+            onClick={() => setCommentMode((v) => !v)}
+          >
+            {commentMode ? "Commenting" : "Comment"}
+            {comments.length > 0 ? ` · ${commentRollup(comments)}` : ""}
+          </Button>
+        )}
         <SegmentedControl aria-label="Diff view mode" size="small">
           <SegmentedControl.IconButton
             icon={DiffIcon}
@@ -192,6 +246,7 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
             aria-label="Side-by-side view"
             selected={viewMode === "split"}
             onClick={() => setViewMode("split")}
+            disabled={commentMode}
           />
         </SegmentedControl>
       </Box>
@@ -219,7 +274,18 @@ export function DiffViewer({ phaseId }: { phaseId: string }) {
           }
           right={
             activeFile ? (
-              <FileDiff file={activeFile} mode={viewMode} />
+              <FileDiff
+                file={activeFile}
+                mode={viewMode}
+                phaseId={phaseId}
+                commentMode={commentMode}
+                comments={comments.filter((c) => c.file_path === activeFile.path)}
+                composeAt={composeAt && composeAt.file === activeFile.path ? composeAt : null}
+                onStartCompose={(line, side, snippet) =>
+                  setComposeAt({ file: activeFile.path, line, side, snippet })
+                }
+                onCancelCompose={() => setComposeAt(null)}
+              />
             ) : (
               <Text sx={{ color: "fg.muted" }}>Select a file to view its diff.</Text>
             )
@@ -551,8 +617,27 @@ function parseFileSection(section: string): DiffFile | null {
 /*                              File rendering                                */
 /* -------------------------------------------------------------------------- */
 
-function FileDiff({ file, mode }: { file: DiffFile; mode: "inline" | "split" }) {
+interface CommentProps {
+  phaseId: string;
+  commentMode: boolean;
+  comments: Comment[];
+  composeAt: { file: string; line: number; side: string; snippet: string } | null;
+  onStartCompose: (line: number, side: string, snippet: string) => void;
+  onCancelCompose: () => void;
+}
+
+function FileDiff({
+  file,
+  mode,
+  phaseId,
+  commentMode,
+  comments,
+  composeAt,
+  onStartCompose,
+  onCancelCompose,
+}: { file: DiffFile; mode: "inline" | "split" } & CommentProps) {
   const statusBg = STATUS_BG[file.status];
+  const cp: CommentProps = { phaseId, commentMode, comments, composeAt, onStartCompose, onCancelCompose };
   // With full-context diffs (-U99999) the common case is a single hunk
   // starting at line 1, which is just "the whole file" — don't bother
   // showing a hunk header for that.
@@ -604,7 +689,7 @@ function FileDiff({ file, mode }: { file: DiffFile; mode: "inline" | "split" }) 
         <Box sx={{ flex: 1, minHeight: 0, overflowX: "auto", overflowY: "auto", fontFamily: "mono", fontSize: 0 }}>
           <Box sx={{ minWidth: "max-content" }}>
             {file.hunks.map((h, i) => (
-              <Hunk key={i} hunk={h} hideHeader={hideHunkHeaders} />
+              <Hunk key={i} hunk={h} hideHeader={hideHunkHeaders} cp={cp} />
             ))}
           </Box>
         </Box>
@@ -621,7 +706,7 @@ const STATUS_BG: Record<DiffFile["status"], string> = {
   binary: "neutral.subtle",
 };
 
-function Hunk({ hunk, hideHeader }: { hunk: DiffHunk; hideHeader?: boolean }) {
+function Hunk({ hunk, hideHeader, cp }: { hunk: DiffHunk; hideHeader?: boolean; cp?: CommentProps }) {
   // Compute the last new-file line number this hunk covers, so we can show
   // a friendly "Lines N–M" range instead of the raw `@@ -..,.. +..,.. @@` line.
   const lastNewNo = (() => {
@@ -652,11 +737,55 @@ function Hunk({ hunk, hideHeader }: { hunk: DiffHunk; hideHeader?: boolean }) {
           {label}
         </Box>
       )}
-      {hunk.lines.map((l, i) => (
-        <DiffLineRow key={i} line={l} />
-      ))}
+      {hunk.lines.map((l, i) => {
+        const anchor = lineAnchor(l);
+        const lineComments = cp && anchor
+          ? cp.comments.filter((c) => c.side === anchor.side && c.line_start === anchor.no)
+          : [];
+        const composing =
+          cp?.composeAt != null &&
+          anchor != null &&
+          cp.composeAt.side === anchor.side &&
+          cp.composeAt.line === anchor.no;
+        return (
+          <Box key={i}>
+            <DiffLineRow
+              line={l}
+              commentMode={cp?.commentMode ?? false}
+              onAdd={
+                cp && anchor
+                  ? () => cp.onStartCompose(anchor.no, anchor.side, l.text)
+                  : undefined
+              }
+            />
+            {lineComments.map((c) => (
+              <CommentCard key={c.id} comment={c} />
+            ))}
+            {composing && cp && (
+              <CommentComposer
+                phaseId={cp.phaseId}
+                filePath={cp.composeAt!.file}
+                lineStart={cp.composeAt!.line}
+                lineEnd={cp.composeAt!.line}
+                side={cp.composeAt!.side}
+                snippet={cp.composeAt!.snippet}
+                onDone={cp.onCancelCompose}
+              />
+            )}
+          </Box>
+        );
+      })}
     </Box>
   );
+}
+
+/** The anchor (line number + side) a comment attaches to for a diff line. */
+function lineAnchor(line: DiffLine): { no: number; side: string } | null {
+  if (line.kind === "del") {
+    return typeof line.oldNo === "number" ? { no: line.oldNo, side: "old" } : null;
+  }
+  const no = line.newNo ?? line.oldNo;
+  return typeof no === "number" ? { no, side: "new" } : null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -911,7 +1040,15 @@ function hunkHeaderLabel(hunk: DiffHunk): string {
     : `Line ${hunk.newStart}`;
 }
 
-function DiffLineRow({ line }: { line: DiffLine }) {
+function DiffLineRow({
+  line,
+  commentMode,
+  onAdd,
+}: {
+  line: DiffLine;
+  commentMode?: boolean;
+  onAdd?: () => void;
+}) {
   const bg = line.kind === "add" ? "success.subtle"
     : line.kind === "del" ? "danger.subtle"
     : "transparent";
@@ -920,7 +1057,42 @@ function DiffLineRow({ line }: { line: DiffLine }) {
   // don't exist in the new file, so leave the column blank for them.
   const lineNo = line.kind === "del" ? undefined : (line.newNo ?? line.oldNo);
   return (
-    <Box sx={{ display: "flex", bg, "&:hover": { bg: line.kind === "context" ? "canvas.subtle" : bg } }}>
+    <Box
+      sx={{
+        display: "flex",
+        bg,
+        position: "relative",
+        "&:hover": { bg: line.kind === "context" ? "canvas.subtle" : bg },
+        "&:hover .conveyer-add-comment": { opacity: 1 },
+      }}
+    >
+      {commentMode && onAdd && (
+        <Box
+          className="conveyer-add-comment"
+          role="button"
+          aria-label="Add comment on this line"
+          onClick={onAdd}
+          sx={{
+            position: "absolute",
+            left: "2px",
+            top: "1px",
+            width: 16,
+            height: 16,
+            borderRadius: 1,
+            bg: "accent.emphasis",
+            color: "fg.onEmphasis",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            opacity: 0,
+            transition: "opacity 80ms",
+            zIndex: 1,
+          }}
+        >
+          <PlusIcon size={12} />
+        </Box>
+      )}
       <Box sx={{ width: 48, textAlign: "right", pr: 2, color: "fg.muted", userSelect: "none", flexShrink: 0 }}>
         {lineNo ?? ""}
       </Box>
@@ -928,6 +1100,18 @@ function DiffLineRow({ line }: { line: DiffLine }) {
       <Box sx={{ flex: 1, whiteSpace: "pre", color: "fg.default", pr: 2 }}>{line.text || " "}</Box>
     </Box>
   );
+}
+
+/** Short rollup like "2 working · 1 open" for the header button. */
+function commentRollup(comments: Comment[]): string {
+  const open = comments.filter((c) => c.status === "queued").length;
+  const working = comments.filter((c) => c.status === "working").length;
+  const addressed = comments.filter((c) => c.status === "addressed").length;
+  const parts: string[] = [];
+  if (working > 0) parts.push(`${working} working`);
+  if (open > 0) parts.push(`${open} queued`);
+  if (addressed > 0) parts.push(`${addressed} to review`);
+  return parts.length > 0 ? parts.join(" · ") : `${comments.length}`;
 }
 
 /* -------------------------------------------------------------------------- */

@@ -75,6 +75,22 @@ export interface PendingInput {
   kind?: string | null;
 }
 
+export interface Comment {
+  id: string;
+  phase_id: string;
+  file_path: string;
+  line_start: number | null;
+  line_end: number | null;
+  side: string | null;
+  snippet: string | null;
+  body: string;
+  status: string; // queued | working | addressed | accepted
+  agent_reply: string | null;
+  commit_marker: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface RunDetail {
   run: Run;
   phases: Phase[];

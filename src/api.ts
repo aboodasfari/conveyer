@@ -78,6 +78,25 @@ export const api = {
     invoke<void>("chat_warm", { phaseId }),
   phaseSubmitInput: (phaseId: string, content: string) =>
     invoke<void>("phase_submit_input", { phaseId, content }),
+
+  // review comments
+  commentsForPhase: (phaseId: string) =>
+    invoke<import("./types").Comment[]>("comments_for_phase", { phaseId }),
+  commentCreate: (input: {
+    phase_id: string;
+    file_path: string;
+    line_start: number | null;
+    line_end: number | null;
+    side: string | null;
+    snippet: string | null;
+    body: string;
+  }) => invoke<import("./types").Comment>("comment_create", { input }),
+  commentAccept: (commentId: string) =>
+    invoke<import("./types").Comment>("comment_accept", { commentId }),
+  commentReopen: (commentId: string, followUp: string) =>
+    invoke<import("./types").Comment>("comment_reopen", { input: { comment_id: commentId, follow_up: followUp } }),
+  commentDelete: (commentId: string) =>
+    invoke<void>("comment_delete", { commentId }),
   modelsList: () => invoke<import("./types").ModelInfo[]>("models_list"),
 
   // diff

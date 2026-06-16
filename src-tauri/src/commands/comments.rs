@@ -10,7 +10,7 @@ use crate::error::{AppError, AppResult};
 use crate::session_runner;
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -90,6 +90,7 @@ pub async fn comment_create(
     .await?;
 
     let comment = load_comment(&state, &id).await?;
+    let _ = app.emit("comments_changed", serde_json::json!({ "phase_id": input.phase_id }));
     // Kick the processor; it's idempotent and drains the queue.
     session_runner::kick_comment_processor(app.clone(), input.phase_id.clone());
     Ok(comment)
@@ -97,6 +98,7 @@ pub async fn comment_create(
 
 #[tauri::command]
 pub async fn comment_accept(
+    app: AppHandle,
     state: State<'_, AppState>,
     comment_id: String,
 ) -> AppResult<Comment> {
@@ -107,7 +109,9 @@ pub async fn comment_accept(
     .bind(&comment_id)
     .execute(&state.db)
     .await?;
-    load_comment(&state, &comment_id).await
+    let c = load_comment(&state, &comment_id).await?;
+    let _ = app.emit("comments_changed", serde_json::json!({ "phase_id": c.phase_id }));
+    Ok(c)
 }
 
 #[derive(Debug, Deserialize)]
@@ -138,20 +142,31 @@ pub async fn comment_reopen(
     .execute(&state.db)
     .await?;
     let comment = load_comment(&state, &input.comment_id).await?;
+    let _ = app.emit("comments_changed", serde_json::json!({ "phase_id": existing.phase_id }));
     session_runner::kick_comment_processor(app.clone(), existing.phase_id.clone());
     Ok(comment)
 }
 
 #[tauri::command]
 pub async fn comment_delete(
+    app: AppHandle,
     state: State<'_, AppState>,
     comment_id: String,
 ) -> AppResult<()> {
+    // Capture phase before delete so we can notify the right viewer.
+    let phase: Option<(String,)> =
+        sqlx::query_as("SELECT phase_id FROM comments WHERE id = ?")
+            .bind(&comment_id)
+            .fetch_optional(&state.db)
+            .await?;
     // Only allow deleting comments that aren't mid-flight.
     sqlx::query("DELETE FROM comments WHERE id=? AND status != 'working'")
         .bind(&comment_id)
         .execute(&state.db)
         .await?;
+    if let Some((phase_id,)) = phase {
+        let _ = app.emit("comments_changed", serde_json::json!({ "phase_id": phase_id }));
+    }
     Ok(())
 }
 
