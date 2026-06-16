@@ -48,6 +48,85 @@ function msg(role, content) {
   emit({ type: "message", role, content });
 }
 
+/* -------------------------------------------------------------------------- */
+/*                          Shared stdin dispatcher                            */
+/* -------------------------------------------------------------------------- */
+
+// A single readline over process.stdin, shared by the chat REPL loop and
+// the `ask_user` tool. Each incoming NDJSON command is dispatched to the
+// handlers registered for its `type`. Having one reader avoids two
+// readline interfaces fighting over stdin (which drops data).
+const stdinHandlers = new Map(); // type -> Set<fn(cmd)>
+let stdinStarted = false;
+
+function onStdin(type, handler) {
+  let set = stdinHandlers.get(type);
+  if (!set) { set = new Set(); stdinHandlers.set(type, set); }
+  set.add(handler);
+  return () => set.delete(handler);
+}
+
+async function startStdin() {
+  if (stdinStarted) return;
+  stdinStarted = true;
+  const { default: readline } = await import("node:readline");
+  const rl = readline.createInterface({ input: process.stdin });
+  rl.on("line", (line) => {
+    if (!line.trim()) return;
+    let cmd;
+    try { cmd = JSON.parse(line); } catch { return; }
+    const set = stdinHandlers.get(cmd?.type);
+    if (set) for (const h of Array.from(set)) { try { h(cmd); } catch { /* noop */ } }
+  });
+}
+
+// Pending ask_user requests: request_id -> resolve(answerString).
+const pendingInputs = new Map();
+let askSeq = 0;
+
+// Register the answer listener once. Resolves the matching pending
+// ask_user promise when Rust writes {type:"answer", request_id, content}.
+let answerListenerWired = false;
+async function wireAnswerListener() {
+  if (answerListenerWired) return;
+  answerListenerWired = true;
+  await startStdin();
+  onStdin("answer", (cmd) => {
+    const id = String(cmd.request_id ?? "");
+    const resolve = pendingInputs.get(id);
+    if (resolve) {
+      pendingInputs.delete(id);
+      resolve(String(cmd.content ?? ""));
+    }
+  });
+}
+
+/**
+ * The `ask_user` tool handler. Emits a needs_input event and blocks
+ * until the user's answer arrives over stdin. Returns the answer as the
+ * tool result so the agent continues with it in context.
+ */
+async function askUserHandler(args) {
+  const prompt = String(args?.question ?? args?.prompt ?? "").trim();
+  if (!prompt) return { ok: false, error: "question is required" };
+  const choices = Array.isArray(args?.choices)
+    ? args.choices.map((c) => String(c)).filter(Boolean)
+    : null;
+  await wireAnswerListener();
+  const requestId = `ask-${process.pid}-${++askSeq}`;
+  emit({
+    type: "needs_input",
+    request_id: requestId,
+    prompt,
+    kind: choices && choices.length > 0 ? "multi" : "open",
+    choices,
+  });
+  const answer = await new Promise((resolve) => {
+    pendingInputs.set(requestId, resolve);
+  });
+  return { ok: true, answer };
+}
+
 async function readFileOr(filePath, fallback = "") {
   if (!filePath) return fallback;
   try {
@@ -247,6 +326,35 @@ function phaseTools() {
         return { ok: true, queued: true };
       },
     },
+    {
+      name: "ask_user",
+      description:
+        "Ask the human operator a question and wait for their answer. Use ONLY when " +
+        "you genuinely cannot proceed without a decision that can't be inferred from " +
+        "the task, the codebase, or the provided context — e.g. a genuine ambiguity " +
+        "with materially different outcomes. Prefer making a reasonable assumption and " +
+        "noting it over asking. The phase pauses until the user answers, so don't ask " +
+        "for things you could look up yourself. Provide `choices` for a multiple-choice " +
+        "question (the user can still override with free text), or omit them for an " +
+        "open-ended question. Returns { answer } with the user's response.",
+      parameters: {
+        type: "object",
+        properties: {
+          question: {
+            type: "string",
+            description: "The question to ask. Be specific and self-contained.",
+          },
+          choices: {
+            type: "array",
+            items: { type: "string" },
+            description: "Optional list of suggested answers for a multiple-choice question.",
+          },
+        },
+        required: ["question"],
+      },
+      skipPermission: true,
+      handler: askUserHandler,
+    },
   ];
 }
 
@@ -404,10 +512,10 @@ async function runCopilotChatRepl(sessionId, idleMs) {
  * idle timeout.
  */
 async function runReplLoop({ session, flush, idleMs }) {
+  await startStdin();
+  await wireAnswerListener();
   emit({ type: "ready" });
 
-  const { default: readline } = await import("node:readline");
-  const rl = readline.createInterface({ input: process.stdin });
   const TURN_TIMEOUT_MS = 30 * 60 * 1000;
   let busy = false;
 
@@ -425,23 +533,41 @@ async function runReplLoop({ session, flush, idleMs }) {
     idleTimer = setTimeout(shutdownIdle, idleMs);
   }
 
-  for await (const line of rl) {
-    if (!line.trim()) continue;
-    let cmd;
-    try { cmd = JSON.parse(line); } catch { continue; }
-    if (cmd.type === "shutdown") break;
-    if (cmd.type === "ping") {
-      resetIdle();
-      continue;
+  // Serialise reply turns through a queue; the shared stdin dispatcher
+  // is event-based (not an async iterator), so we bridge to a Promise
+  // the loop awaits. `shutdown` / EOF resolves with null to break.
+  const queue = [];
+  let wake = null;
+  const offReply = onStdin("reply", (cmd) => {
+    queue.push({ kind: "reply", content: String(cmd.content ?? "") });
+    if (wake) { wake(); wake = null; }
+  });
+  const offPing = onStdin("ping", () => resetIdle());
+  let stopped = false;
+  const offShutdown = onStdin("shutdown", () => {
+    stopped = true;
+    if (wake) { wake(); wake = null; }
+  });
+  process.stdin.on("end", () => {
+    stopped = true;
+    if (wake) { wake(); wake = null; }
+  });
+
+  while (!stopped) {
+    if (queue.length === 0) {
+      await new Promise((r) => { wake = r; });
+      if (stopped) break;
+      if (queue.length === 0) continue;
     }
-    if (cmd.type !== "reply") continue;
-    if (busy) {
-      emit({ type: "turn_done", ok: false, error: "Previous reply still running." });
-      continue;
-    }
-    const content = String(cmd.content ?? "").trim();
+    const item = queue.shift();
+    if (!item || item.kind !== "reply") continue;
+    const content = item.content.trim();
     if (!content) {
       emit({ type: "turn_done", ok: false, error: "empty reply" });
+      continue;
+    }
+    if (busy) {
+      emit({ type: "turn_done", ok: false, error: "Previous reply still running." });
       continue;
     }
     busy = true;
@@ -461,6 +587,7 @@ async function runReplLoop({ session, flush, idleMs }) {
   }
 
   clearTimeout(idleTimer);
+  offReply(); offPing(); offShutdown();
 }
 
 async function runCopilotSession({ phase, prompt, resume }) {

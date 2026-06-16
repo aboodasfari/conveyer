@@ -158,6 +158,22 @@ pub async fn chat_warm(app: AppHandle, phase_id: String) -> AppResult<()> {
     Ok(())
 }
 
+/// Answer a pending `ask_user` / needs_input request raised by the agent
+/// mid-phase. Delivers the answer to the live sidecar, records it in the
+/// transcript, and resumes the phase.
+#[tauri::command]
+pub async fn phase_submit_input(
+    app: AppHandle,
+    phase_id: String,
+    content: String,
+) -> AppResult<()> {
+    let trimmed = content.trim().to_string();
+    if trimmed.is_empty() {
+        return Err(crate::error::AppError::Config("Answer is empty.".into()));
+    }
+    session_runner::submit_input(&app, &phase_id, &trimmed).await
+}
+
 #[derive(Debug, Serialize)]
 pub struct ModelInfo {
     pub id: String,

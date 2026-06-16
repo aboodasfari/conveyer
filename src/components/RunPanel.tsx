@@ -56,6 +56,7 @@ const STATE_COLORS: Record<string, string> = {
   pending: "#6e7681",
   running: "#1f6feb",
   waiting: "#d29922",
+  needs_input: "#d29922",
   done: "#3fb950",
   failed: "#f85149",
   skipped: "#6e7681",
@@ -65,6 +66,7 @@ const STATE_LABELS: Record<string, string> = {
   pending: "Pending",
   running: "In Progress",
   waiting: "Done, Awaiting Approval",
+  needs_input: "Waiting on Your Input",
   done: "Done",
   failed: "Failed",
   skipped: "Skipped",
@@ -696,7 +698,12 @@ function PhaseContent({
       </Box>
       <Box sx={{ p: 4, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         {tab === "chat" ? (
-          <PhaseChat phaseId={phase.id} phaseStatus={phase.status} runStatus={runStatus} />
+          <PhaseChat
+            phaseId={phase.id}
+            phaseStatus={phase.status}
+            runStatus={runStatus}
+            pendingInput={phase.pending_input}
+          />
         ) : tab === "diff" ? (
           <DiffViewer phaseId={phase.id} />
         ) : tab === "prompt" ? (

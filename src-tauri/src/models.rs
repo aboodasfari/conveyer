@@ -59,6 +59,9 @@ pub struct Phase {
     pub artifact_path: Option<String>,
     pub review_verdict: Option<String>,
     pub review_reason: Option<String>,
+    /// JSON blob describing a pending `ask_user` request when status is
+    /// 'needs_input': {request_id, prompt, choices, kind}.
+    pub pending_input: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

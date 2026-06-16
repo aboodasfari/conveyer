@@ -38,6 +38,9 @@ struct RunnerHandle {
     /// during the review phase. On clean phase completion the runner reads
     /// this to decide whether to advance or rewind.
     review_send_back: Option<String>,
+    /// Writes lines to the sidecar's stdin. Used to deliver answers to
+    /// `ask_user` / needs_input requests during the main phase run.
+    stdin_tx: Option<mpsc::Sender<String>>,
 }
 
 /// A warm chat REPL sidecar bound to a phase. Replies are written to
@@ -66,8 +69,27 @@ impl RunnerRegistry {
                 session_id,
                 cancel: Some(cancel),
                 review_send_back: None,
+                stdin_tx: None,
             },
         );
+    }
+
+    /// Attach the sidecar stdin sender to an already-registered runner
+    /// handle (set after the child is spawned and the writer task is up).
+    fn set_runner_stdin(&self, phase_id: &str, tx: mpsc::Sender<String>) {
+        if let Some(h) = self.inner.lock().unwrap().get_mut(phase_id) {
+            h.stdin_tx = Some(tx);
+        }
+    }
+
+    /// Get a stdin sender for delivering a needs_input answer. Prefers a
+    /// warm chat handle (replies during a chat turn) and falls back to
+    /// the main runner handle.
+    fn stdin_sender(&self, phase_id: &str) -> Option<mpsc::Sender<String>> {
+        if let Some(tx) = self.chats.lock().unwrap().get(phase_id).map(|h| h.stdin_tx.clone()) {
+            return Some(tx);
+        }
+        self.inner.lock().unwrap().get(phase_id).and_then(|h| h.stdin_tx.clone())
     }
 
     fn unregister(&self, phase_id: &str) -> Option<String> {
@@ -153,6 +175,8 @@ enum SidecarEvent {
         error: Option<String>,
     },
     NeedsInput {
+        #[serde(default)]
+        request_id: Option<String>,
         prompt: String,
         #[serde(default)]
         kind: Option<String>,
@@ -689,6 +713,96 @@ pub async fn chat_heartbeat(app: &AppHandle, phase_id: &str) {
     let _ = tx.send("{\"type\":\"ping\"}".to_string()).await;
 }
 
+/// Deliver a user's answer to a pending `ask_user` / needs_input request.
+/// Writes `{type:"answer", request_id, content}` to the live sidecar's
+/// stdin so the blocked tool handler resolves and the agent continues.
+/// Persists the answer into the transcript, clears the pending state,
+/// and flips the phase back to 'running'.
+pub async fn submit_input(
+    app: &AppHandle,
+    phase_id: &str,
+    content: &str,
+) -> AppResult<()> {
+    let state = app.state::<AppState>();
+
+    // Read + validate the pending request on this phase.
+    let row: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT status, pending_input FROM phases WHERE id = ?",
+    )
+    .bind(phase_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let (status, pending) = match row {
+        Some((s, p)) => (s, p),
+        None => return Err(AppError::Config("Phase not found.".into())),
+    };
+    if status != "needs_input" {
+        return Err(AppError::Config(
+            "This phase is not waiting for input.".into(),
+        ));
+    }
+    let Some(pending_json) = pending else {
+        return Err(AppError::Config("No pending question to answer.".into()));
+    };
+    let parsed: serde_json::Value = serde_json::from_str(&pending_json)
+        .map_err(|e| AppError::Other(format!("corrupt pending_input: {e}")))?;
+    let request_id = parsed.get("request_id").and_then(|v| v.as_str()).unwrap_or("");
+    if request_id.is_empty() {
+        return Err(AppError::Other("pending_input missing request_id".into()));
+    }
+    // Status to restore once the answer is delivered. 'running' for the
+    // main phase run; 'waiting'/'done' if the agent asked mid chat-reply.
+    let prior_status = parsed
+        .get("prior_status")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("running")
+        .to_string();
+
+    // Find the live sidecar stdin sender (chat handle or main runner).
+    let registry = app.state::<RunnerRegistry>();
+    let Some(tx) = registry.stdin_sender(phase_id) else {
+        return Err(AppError::Config(
+            "The agent process is no longer running. Restart the phase to continue.".into(),
+        ));
+    };
+
+    // Deliver the answer.
+    let answer_cmd = serde_json::json!({
+        "type": "answer",
+        "request_id": request_id,
+        "content": content,
+    });
+    tx.send(answer_cmd.to_string())
+        .await
+        .map_err(|_| AppError::Other("Failed to deliver answer to the agent.".into()))?;
+
+    // Persist the answer into the transcript on the phase's latest session.
+    let sess: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM sessions WHERE phase_id = ? ORDER BY started_at DESC LIMIT 1",
+    )
+    .bind(phase_id)
+    .fetch_optional(&state.db)
+    .await?;
+    if let Some((sid,)) = sess {
+        let _ = persist_message(&state, &sid, "user", content).await;
+        let _ = app.emit("message_appended", serde_json::json!({
+            "session_id": sid,
+            "role": "user",
+            "content": content,
+        }));
+    }
+
+    // Clear pending state + restore the interrupted status.
+    sqlx::query("UPDATE phases SET status=?, pending_input=NULL WHERE id=?")
+        .bind(&prior_status)
+        .bind(phase_id)
+        .execute(&state.db)
+        .await?;
+    emit_run_updated(app, &state, phase_id).await;
+    Ok(())
+}
+
 /// Long-running reader for a warm chat sidecar. Forwards regular
 /// events through `handle_line` and watches for the chat-specific
 /// `ready` / `turn_done` events. Owns the Child so it can clean up
@@ -778,8 +892,9 @@ async fn handoff_to_chat(
     state: &AppState,
     phase_id: &str,
     main_session_id: &str,
-    mut child: Child,
+    child: Child,
     reader: tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+    stdin_tx: Option<mpsc::Sender<String>>,
 ) -> Result<(), (Child, tokio::io::Lines<BufReader<tokio::process::ChildStdout>>, AppError)> {
     let registry = app.state::<RunnerRegistry>();
 
@@ -790,6 +905,15 @@ async fn handoff_to_chat(
             "Chat handle already exists for this phase; declining handoff.".into(),
         )));
     }
+
+    // The main run owns the child's stdin via a writer task; reuse that
+    // sender for chat replies. If it's missing we can't drive the REPL,
+    // so decline and fall back to the normal exit path.
+    let Some(stdin_tx) = stdin_tx else {
+        return Err((child, reader, AppError::Other(
+            "Main sidecar stdin sender missing; can't hand off.".into(),
+        )));
+    };
 
     // The SDK session id was stashed onto the main session row when
     // the SDK emitted session_started. Reuse it for the chat session.
@@ -808,15 +932,6 @@ async fn handoff_to_chat(
         }
     };
 
-    // Verify stdin was piped (must have been: main runner spawns with
-    // stdin=piped specifically for this handoff). Check without taking
-    // so we can return child intact on the next failure.
-    if child.stdin.is_none() {
-        return Err((child, reader, AppError::Other(
-            "Main sidecar stdin not piped; can't hand off.".into(),
-        )));
-    }
-
     // Create the chat session row that the REPL turns will append into.
     let chat_session_id = Uuid::new_v4().to_string();
     if let Err(e) = sqlx::query(
@@ -832,10 +947,6 @@ async fn handoff_to_chat(
         return Err((child, reader, AppError::from(e)));
     }
 
-    // Everything past this point is infallible (channel + spawn).
-    // Safe to start consuming the live child.
-    let stdin = child.stdin.take().expect("checked is_some above");
-
     // Mark the main session row done — its turn is over, the REPL
     // takes over from here.
     let _ = sqlx::query("UPDATE sessions SET status='done', finished_at=datetime('now') WHERE id=?")
@@ -843,13 +954,9 @@ async fn handoff_to_chat(
         .execute(&state.db)
         .await;
 
-    // Wire up the writer + reader tasks.
-    let (stdin_tx, stdin_rx) = mpsc::channel::<String>(8);
-    tauri::async_runtime::spawn(chat_stdin_writer(stdin, stdin_rx));
-
-    // Register the chat handle BEFORE spawning the reader, so a
-    // chat_warm() called while the sidecar is still emitting `ready`
-    // finds it immediately.
+    // Register the chat handle (reusing the existing stdin writer) BEFORE
+    // spawning the reader, so a chat_warm() called while the sidecar is
+    // still emitting `ready` finds it immediately.
     registry.register_chat(phase_id.to_string(), chat_session_id.clone(), stdin_tx);
 
     let app_clone = app.clone();
@@ -1087,6 +1194,19 @@ async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
         }
     });
 
+    // stdin writer for the main run, so we can deliver answers to any
+    // `ask_user` / needs_input request the agent makes mid-phase. The
+    // sender is kept here (and on the runner handle) so phase_submit_input
+    // can reach it; on handoff to chat REPL the SAME sender is reused.
+    let main_stdin_tx = if let Some(stdin) = child.stdin.take() {
+        let (tx, rx) = mpsc::channel::<String>(8);
+        tauri::async_runtime::spawn(chat_stdin_writer(stdin, rx));
+        registry.set_runner_stdin(phase_id, tx.clone());
+        Some(tx)
+    } else {
+        None
+    };
+
     let mut ok = false;
     let mut error_msg: Option<String> = None;
     let mut keep_alive = false;
@@ -1126,7 +1246,7 @@ async fn run_one(app: &AppHandle, phase_id: &str) -> AppResult<()> {
     // If anything in the handoff fails, we fall back to the original
     // wait-for-exit path — no regression.
     if ok && keep_alive {
-        match handoff_to_chat(app, &state, phase_id, &session_id, child, reader).await {
+        match handoff_to_chat(app, &state, phase_id, &session_id, child, reader, main_stdin_tx.clone()).await {
             Ok(()) => {
                 // Main session row marked done inside handoff_to_chat
                 // so the chat session can begin its own lifecycle.
@@ -1317,12 +1437,43 @@ async fn handle_line(
             .execute(&state.db)
             .await;
         }
-        SidecarEvent::NeedsInput { prompt, kind, choices } => {
-            let payload = serde_json::json!({
+        SidecarEvent::NeedsInput { request_id, prompt, kind, choices } => {
+            let request_id = request_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+            // Capture the status we're interrupting so we can restore it
+            // after the answer — 'running' during the main phase run, but
+            // 'waiting'/'done' when the agent asks mid chat-reply.
+            let prior_status: String = sqlx::query_scalar("SELECT status FROM phases WHERE id = ?")
+                .bind(phase_id)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "running".to_string());
+            // Persist the question as a chat message so it shows in the
+            // transcript, and stash the structured request on the phase so
+            // the UI can render the answer widget (and recover on reload).
+            let pending = serde_json::json!({
+                "request_id": request_id,
                 "prompt": prompt,
                 "kind": kind,
                 "choices": choices,
+                "prior_status": prior_status,
             });
+            let _ = persist_message(state, session_id, "system", &format!("[ask] {prompt}")).await;
+            let _ = app.emit("message_appended", serde_json::json!({
+                "session_id": session_id,
+                "role": "system",
+                "content": format!("[ask] {prompt}"),
+            }));
+            let _ = sqlx::query(
+                "UPDATE phases SET status='needs_input', pending_input=? WHERE id=?",
+            )
+            .bind(pending.to_string())
+            .bind(phase_id)
+            .execute(&state.db)
+            .await;
+            // Surface a notification too (drives the desktop notif + any
+            // dashboard badge), mirroring the gate-pending flow.
             let _ = sqlx::query(
                 "INSERT INTO notifications(id, task_id, session_id, kind, payload_json)
                  SELECT ?, t.id, ?, 'needs_input', ?
@@ -1333,10 +1484,11 @@ async fn handle_line(
             )
             .bind(Uuid::new_v4().to_string())
             .bind(session_id)
-            .bind(payload.to_string())
+            .bind(pending.to_string())
             .bind(phase_id)
             .execute(&state.db)
             .await;
+            emit_run_updated(app, state, phase_id).await;
         }
         SidecarEvent::Ready | SidecarEvent::TurnDone { .. } => {
             // Chat-REPL-only events; the chat reader loop intercepts
@@ -1376,7 +1528,7 @@ async fn persist_message(
 
 async fn mark_phase_failed(state: &AppState, phase_id: &str) -> AppResult<()> {
     sqlx::query(
-        "UPDATE phases SET status='failed', finished_at=datetime('now') WHERE id=?",
+        "UPDATE phases SET status='failed', finished_at=datetime('now'), pending_input=NULL WHERE id=?",
     )
     .bind(phase_id)
     .execute(&state.db)

@@ -24,7 +24,7 @@ Treat the chosen workspace as the only source of truth for the existing code. Do
 - Make precise, scoped changes. Don't fix unrelated issues.
 - Don't run E2E tests.
 - If a question can be answered by reading the code, read it — don't ask the user.
-- Only stop to ask the user if information is absolutely necessary and cannot be inferred.
+- Only stop to ask the user if information is absolutely necessary and cannot be inferred. When you must, call the `ask_user` tool (optionally with `choices`); the phase pauses until they answer and their reply comes back as the tool result. Prefer a reasonable, clearly-noted assumption over asking.
 
 ## Task you are working on
 

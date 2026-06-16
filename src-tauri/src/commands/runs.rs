@@ -27,7 +27,7 @@ pub struct RunDetail {
 const RUN_COLS: &str = "id, task_id, status, started_at, finished_at";
 const PHASE_COLS: &str =
     "id, run_id, kind, ord, status, started_at, finished_at, artifact_path, \
-     review_verdict, review_reason";
+     review_verdict, review_reason, pending_input";
 
 #[tauri::command]
 pub async fn runs_start(
@@ -276,7 +276,7 @@ pub async fn phase_rewind(
     sqlx::query(
         "UPDATE phases SET status='running', started_at=datetime('now'),
                             finished_at=NULL,
-                            review_verdict=NULL, review_reason=NULL
+                            review_verdict=NULL, review_reason=NULL, pending_input=NULL
          WHERE id=?",
     )
     .bind(&target.id)
@@ -285,7 +285,7 @@ pub async fn phase_rewind(
     // Clear all phases after the target.
     sqlx::query(
         "UPDATE phases SET status='pending', started_at=NULL, finished_at=NULL,
-                            review_verdict=NULL, review_reason=NULL
+                            review_verdict=NULL, review_reason=NULL, pending_input=NULL
          WHERE run_id=? AND ord > ?",
     )
     .bind(&target.run_id)
@@ -379,7 +379,7 @@ pub async fn review_send_back_internal(
             .await?;
             sqlx::query(
                 "UPDATE phases SET status='pending', started_at=NULL, finished_at=NULL,
-                                    review_verdict=NULL, review_reason=NULL
+                                    review_verdict=NULL, review_reason=NULL, pending_input=NULL
                  WHERE run_id=? AND id != ? AND kind != 'implementation'
                        AND ord > (SELECT ord FROM phases WHERE id = ?)",
             )
@@ -454,7 +454,7 @@ pub async fn phase_restart(
     sqlx::query(
         "UPDATE phases SET status='running', started_at=datetime('now'),
                             finished_at=NULL,
-                            review_verdict=NULL, review_reason=NULL
+                            review_verdict=NULL, review_reason=NULL, pending_input=NULL
          WHERE id=?",
     )
     .bind(&target.id)

@@ -64,6 +64,15 @@ export interface Phase {
   review_verdict: string | null;
   /** Free-text reason supplied with a request_changes verdict. */
   review_reason: string | null;
+  /** JSON string {request_id, prompt, choices, kind} when status is "needs_input". */
+  pending_input: string | null;
+}
+
+export interface PendingInput {
+  request_id: string;
+  prompt: string;
+  choices?: string[] | null;
+  kind?: string | null;
 }
 
 export interface RunDetail {

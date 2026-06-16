@@ -224,9 +224,18 @@ export function useRunNotifications() {
 
       const becameWaiting = phase.status === "waiting" && prev !== "waiting";
       const becameFailed = phase.status === "failed" && prev !== "failed";
-      if (!becameWaiting && !becameFailed) return;
+      const becameNeedsInput = phase.status === "needs_input" && prev !== "needs_input";
+      if (!becameWaiting && !becameFailed && !becameNeedsInput) return;
 
       const phaseLabel = labelFor(phase.kind);
+      if (becameNeedsInput) {
+        void maybeNotify(
+          "waiting",
+          `${phaseLabel} needs your input`,
+          `“${task.title}” has a question for you.`,
+        );
+        return;
+      }
       const title = becameWaiting
         ? `${phaseLabel} ready for review`
         : `${phaseLabel} failed`;

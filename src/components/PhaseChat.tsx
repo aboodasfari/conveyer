@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Box, Spinner, Text, Textarea } from "@primer/react";
+import { Box, Button, Spinner, Text, Textarea } from "@primer/react";
 import {
   CheckCircleIcon,
   ChevronDownIcon,
@@ -8,7 +8,7 @@ import {
 } from "@primer/octicons-react";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { api } from "../api";
-import { Message, Session } from "../types";
+import { Message, PendingInput, Session } from "../types";
 import { RichText } from "./RichText";
 import { formatError } from "../errors";
 
@@ -160,10 +160,12 @@ export function PhaseChat({
   phaseId,
   phaseStatus,
   runStatus,
+  pendingInput,
 }: {
   phaseId: string;
   phaseStatus: string;
   runStatus: string;
+  pendingInput?: string | null;
 }) {
   const [runs, setRuns] = useState<{ session: Session; messages: Message[] }[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
@@ -400,6 +402,15 @@ export function PhaseChat({
     () => computeChatMode(phaseStatus, runStatus, latestSession),
     [phaseStatus, runStatus, latestSession],
   );
+  // Parse the pending ask_user request (if any) for the answer widget.
+  const pending = useMemo<PendingInput | null>(() => {
+    if (!pendingInput) return null;
+    try {
+      return JSON.parse(pendingInput) as PendingInput;
+    } catch {
+      return null;
+    }
+  }, [pendingInput]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -470,7 +481,23 @@ export function PhaseChat({
         )}
       </Box>
 
-      {chatMode.kind !== "hidden" && (
+      {phaseStatus === "needs_input" && pending ? (
+        <Box
+          sx={{
+            mt: 3,
+            pt: 3,
+            borderTopWidth: 1,
+            borderTopStyle: "solid",
+            borderTopColor: "attention.muted",
+          }}
+        >
+          <NeedsInputForm
+            phaseId={phaseId}
+            prompt={pending.prompt}
+            choices={pending.choices ?? null}
+          />
+        </Box>
+      ) : chatMode.kind !== "hidden" ? (
         <Box
           sx={{
             mt: 3,
@@ -506,7 +533,87 @@ export function PhaseChat({
             </Box>
           )}
         </Box>
+      ) : null}
+    </Box>
+  );
+}
+
+/**
+ * Answer widget shown when the agent has called `ask_user` and the phase
+ * is paused on 'needs_input'. Multiple-choice buttons (when provided)
+ * plus a free-text field that always works as an override / open answer.
+ */
+function NeedsInputForm({
+  phaseId,
+  prompt,
+  choices,
+}: {
+  phaseId: string;
+  prompt: string;
+  choices: string[] | null;
+}) {
+  const [draft, setDraft] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = useCallback(
+    async (content: string) => {
+      const trimmed = content.trim();
+      if (!trimmed || submitting) return;
+      setSubmitting(true);
+      setError(null);
+      try {
+        await api.phaseSubmitInput(phaseId, trimmed);
+        setDraft("");
+      } catch (e) {
+        setError(formatError(e));
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [phaseId, submitting],
+  );
+
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <Text sx={{ fontSize: 0, fontWeight: 600, color: "attention.fg" }}>
+        The agent needs your input
+      </Text>
+      <Text sx={{ fontSize: 1, whiteSpace: "pre-wrap" }}>{prompt}</Text>
+      {choices && choices.length > 0 && (
+        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
+          {choices.map((c) => (
+            <Button
+              key={c}
+              size="small"
+              disabled={submitting}
+              onClick={() => void submit(c)}
+            >
+              {c}
+            </Button>
+          ))}
+        </Box>
       )}
+      <Textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            void submit(draft);
+          }
+        }}
+        placeholder={
+          choices && choices.length > 0
+            ? "Or type your own answer."
+            : "Type your answer."
+        }
+        rows={2}
+        resize="vertical"
+        disabled={submitting}
+        sx={{ width: "100%", fontFamily: "mono", fontSize: 1 }}
+      />
+      {error && <Text sx={{ color: "danger.fg", fontSize: 0 }}>{error}</Text>}
     </Box>
   );
 }

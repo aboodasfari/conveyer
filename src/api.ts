@@ -76,6 +76,8 @@ export const api = {
     invoke<void>("chat_heartbeat", { phaseId }),
   chatWarm: (phaseId: string) =>
     invoke<void>("chat_warm", { phaseId }),
+  phaseSubmitInput: (phaseId: string, content: string) =>
+    invoke<void>("phase_submit_input", { phaseId, content }),
   modelsList: () => invoke<import("./types").ModelInfo[]>("models_list"),
 
   // diff
