@@ -781,6 +781,7 @@ struct QueuedComment {
     body: String,
     commit_marker: String,
     thread_json: Option<String>,
+    agent_reply: Option<String>,
 }
 
 /// Kick the per-phase comment processor. Idempotent: if one is already
@@ -821,7 +822,7 @@ async fn run_comment_processor(app: &AppHandle, phase_id: &str) -> AppResult<()>
     loop {
         // Next queued comment (FIFO).
         let next: Option<QueuedComment> = sqlx::query_as(
-            "SELECT id, file_path, line_start, line_end, snippet, body, commit_marker, thread_json
+            "SELECT id, file_path, line_start, line_end, snippet, body, commit_marker, thread_json, agent_reply
              FROM comments WHERE phase_id = ? AND status = 'queued'
              ORDER BY created_at, id LIMIT 1",
         )
@@ -924,7 +925,13 @@ async fn run_comment_processor(app: &AppHandle, phase_id: &str) -> AppResult<()>
 
         // Append the agent's reply to the thread so the UI renders it as
         // its own bubble, and keep agent_reply as the latest for rollup.
-        let new_thread = append_thread_message(c.thread_json.as_deref(), "agent", &reply_text);
+        let mut thread = crate::commands::comments::thread_or_synthesize(
+            c.thread_json.as_deref(),
+            &c.body,
+            c.agent_reply.as_deref(),
+        );
+        thread.push(serde_json::json!({ "role": "agent", "content": reply_text }));
+        let new_thread = serde_json::to_string(&thread).unwrap_or_default();
         sqlx::query(
             "UPDATE comments SET status='addressed', agent_reply=?, thread_json=?, updated_at=datetime('now')
              WHERE id=?",
@@ -994,16 +1001,6 @@ fn latest_user_message(thread_json: Option<&str>) -> Option<String> {
         }
     }
     None
-}
-
-/// Append a {role, content} message to a thread_json array (creating the
-/// array if absent) and return the serialized result.
-fn append_thread_message(thread_json: Option<&str>, role: &str, content: &str) -> String {
-    let mut arr: Vec<serde_json::Value> = thread_json
-        .and_then(|s| serde_json::from_str(s).ok())
-        .unwrap_or_default();
-    arr.push(serde_json::json!({ "role": role, "content": content }));
-    serde_json::to_string(&arr).unwrap_or_default()
 }
 
 /// Strip internal plumbing (the conveyer-comment marker, commit SHAs we

@@ -136,11 +136,11 @@ pub async fn comment_reopen(
     // Append the follow-up as a new user message in the thread and
     // re-queue. Body is left as the original first-line preview.
     let existing = load_comment(&state, &input.comment_id).await?;
-    let mut thread: Vec<serde_json::Value> = existing
-        .thread_json
-        .as_deref()
-        .and_then(|s| serde_json::from_str(s).ok())
-        .unwrap_or_default();
+    let mut thread = thread_or_synthesize(
+        existing.thread_json.as_deref(),
+        &existing.body,
+        existing.agent_reply.as_deref(),
+    );
     thread.push(serde_json::json!({ "role": "user", "content": follow_up }));
     let thread_str = serde_json::to_string(&thread).unwrap_or_default();
     sqlx::query(
@@ -188,4 +188,28 @@ pub async fn load_comment(state: &AppState, id: &str) -> AppResult<Comment> {
     .fetch_optional(&state.db)
     .await?;
     row.ok_or_else(|| AppError::Config("Comment not found.".into()))
+}
+
+/// Return the thread as a Vec of {role, content}. Prefers thread_json;
+/// when absent (comments created before the thread_json column existed),
+/// synthesizes it from the legacy body + agent_reply so nothing is lost.
+pub fn thread_or_synthesize(
+    thread_json: Option<&str>,
+    body: &str,
+    agent_reply: Option<&str>,
+) -> Vec<serde_json::Value> {
+    if let Some(s) = thread_json {
+        if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(s) {
+            if !arr.is_empty() {
+                return arr;
+            }
+        }
+    }
+    let mut out = vec![serde_json::json!({ "role": "user", "content": body })];
+    if let Some(reply) = agent_reply {
+        if !reply.is_empty() {
+            out.push(serde_json::json!({ "role": "agent", "content": reply }));
+        }
+    }
+    out
 }
