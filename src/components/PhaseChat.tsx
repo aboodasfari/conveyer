@@ -481,17 +481,20 @@ export function PhaseChat({
             );
           })
         )}
+        {/* The needs-input form lives at the end of the scroll content
+            so the user can scroll up through the conversation above it. */}
+        {phaseStatus === "needs_input" && pending && (
+          <Box sx={{ mt: 2, fontFamily: "normal" }}>
+            <NeedsInputForm
+              phaseId={phaseId}
+              prompt={pending.prompt}
+              choices={pending.choices ?? null}
+            />
+          </Box>
+        )}
       </Box>
 
-      {phaseStatus === "needs_input" && pending ? (
-        <Box sx={{ mt: 3 }}>
-          <NeedsInputForm
-            phaseId={phaseId}
-            prompt={pending.prompt}
-            choices={pending.choices ?? null}
-          />
-        </Box>
-      ) : chatMode.kind !== "hidden" ? (
+      {phaseStatus !== "needs_input" && chatMode.kind !== "hidden" ? (
         <Box
           sx={{
             mt: 3,
