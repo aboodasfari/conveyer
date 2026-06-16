@@ -634,16 +634,15 @@ function NeedsInputForm({
                 <Box
                   sx={{
                     flexShrink: 0,
-                    width: 22, height: 22,
-                    borderRadius: "50%",
-                    border: "1px solid",
-                    borderColor: "border.muted",
+                    width: 18,
                     color: "fg.muted",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 0, fontWeight: 600,
+                    textAlign: "right",
+                    fontSize: 1,
+                    fontWeight: 600,
+                    fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  {String.fromCharCode(65 + i)}
+                  {i + 1}.
                 </Box>
                 <Text sx={{ flex: 1, minWidth: 0, fontSize: 1, color: "fg.default" }}>{c}</Text>
                 {isSubmitting ? (
@@ -679,12 +678,12 @@ function NeedsInputForm({
           sx={{ width: "100%", fontSize: 1 }}
         />
         <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <Text sx={{ fontSize: 0, color: "fg.muted", mr: "auto" }}>Enter to send</Text>
           <Button
             variant="primary"
             size="small"
             disabled={submitting || draft.trim().length === 0}
             onClick={() => void submit(draft)}
+            sx={{ ml: "auto" }}
           >
             {submitting && submittingChoice === null ? "Sending…" : "Send"}
           </Button>
