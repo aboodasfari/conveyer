@@ -473,7 +473,14 @@ function ExecutionSection() {
 
   const toggleGate = async (kind: string, current: number) => {
     const next = current === 0 ? 1 : 0;
-    setGates((gs) => gs.map((g) => g.phase_kind === kind ? { ...g, auto_advance: next } : g));
+    // Upsert: virtual gates like `review_rewind` may not be in the list
+    // yet (they're created on first toggle), so a plain map() would drop
+    // the change. Insert the row if it's missing.
+    setGates((gs) =>
+      gs.some((g) => g.phase_kind === kind)
+        ? gs.map((g) => (g.phase_kind === kind ? { ...g, auto_advance: next } : g))
+        : [...gs, { phase_kind: kind, auto_advance: next }],
+    );
     try {
       await api.gatesSet(kind, next === 1);
     } catch (e) {
