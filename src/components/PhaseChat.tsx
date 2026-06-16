@@ -4,6 +4,8 @@ import {
   CheckCircleIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  ChevronRightIcon as OptionChevron,
+  CommentDiscussionIcon,
   XCircleIcon,
 } from "@primer/octicons-react";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
@@ -482,15 +484,7 @@ export function PhaseChat({
       </Box>
 
       {phaseStatus === "needs_input" && pending ? (
-        <Box
-          sx={{
-            mt: 3,
-            pt: 3,
-            borderTopWidth: 1,
-            borderTopStyle: "solid",
-            borderTopColor: "attention.muted",
-          }}
-        >
+        <Box sx={{ mt: 3 }}>
           <NeedsInputForm
             phaseId={phaseId}
             prompt={pending.prompt}
@@ -574,47 +568,129 @@ function NeedsInputForm({
     [phaseId, submitting],
   );
 
+  const hasChoices = !!choices && choices.length > 0;
+  const [submittingChoice, setSubmittingChoice] = useState<string | null>(null);
+
+  const pick = (c: string) => {
+    setSubmittingChoice(c);
+    void submit(c);
+  };
+
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <Text sx={{ fontSize: 0, fontWeight: 600, color: "attention.fg" }}>
-        The agent needs your input
-      </Text>
-      <Box sx={{ fontSize: 1 }}>
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 3,
+        border: "1px solid",
+        borderColor: "attention.muted",
+        borderRadius: 2,
+        bg: "attention.subtle",
+        p: 3,
+      }}
+    >
+      <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+        <Box sx={{ color: "attention.fg", display: "flex" }}>
+          <CommentDiscussionIcon size={16} />
+        </Box>
+        <Text sx={{ fontSize: 1, fontWeight: 600, color: "fg.default" }}>
+          The agent needs your input
+        </Text>
+      </Box>
+
+      <Box sx={{ fontSize: 1, color: "fg.default" }}>
         <RichText content={prompt} />
       </Box>
-      {choices && choices.length > 0 && (
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-          {choices.map((c) => (
-            <Button
-              key={c}
-              disabled={submitting}
-              onClick={() => void submit(c)}
-              sx={{ width: "100%", justifyContent: "flex-start", textAlign: "left" }}
-            >
-              {c}
-            </Button>
-          ))}
+
+      {hasChoices && (
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          {choices!.map((c, i) => {
+            const isSubmitting = submittingChoice === c;
+            return (
+              <Box
+                key={c}
+                role="button"
+                aria-disabled={submitting}
+                onClick={() => { if (!submitting) pick(c); }}
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 2,
+                  width: "100%",
+                  px: 3,
+                  py: 2,
+                  borderRadius: 2,
+                  border: "1px solid",
+                  borderColor: "border.default",
+                  bg: "canvas.default",
+                  cursor: submitting ? "default" : "pointer",
+                  opacity: submitting && !isSubmitting ? 0.6 : 1,
+                  transition: "border-color 80ms, background-color 80ms",
+                  "&:hover": submitting
+                    ? {}
+                    : { borderColor: "accent.emphasis", bg: "canvas.subtle" },
+                }}
+              >
+                <Box
+                  sx={{
+                    flexShrink: 0,
+                    width: 22, height: 22,
+                    borderRadius: "50%",
+                    border: "1px solid",
+                    borderColor: "border.muted",
+                    color: "fg.muted",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 0, fontWeight: 600,
+                  }}
+                >
+                  {String.fromCharCode(65 + i)}
+                </Box>
+                <Text sx={{ flex: 1, minWidth: 0, fontSize: 1, color: "fg.default" }}>{c}</Text>
+                {isSubmitting ? (
+                  <Spinner size="small" sx={{ width: 14, height: 14 }} />
+                ) : (
+                  <Box sx={{ color: "fg.muted", display: "flex" }}>
+                    <OptionChevron size={14} />
+                  </Box>
+                )}
+              </Box>
+            );
+          })}
         </Box>
       )}
-      <Textarea
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            void submit(draft);
-          }
-        }}
-        placeholder={
-          choices && choices.length > 0
-            ? "Or type your own answer."
-            : "Type your answer."
-        }
-        rows={2}
-        resize="vertical"
-        disabled={submitting}
-        sx={{ width: "100%", fontFamily: "mono", fontSize: 1 }}
-      />
+
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+        {hasChoices && (
+          <Text sx={{ fontSize: 0, color: "fg.muted" }}>Or write your own answer</Text>
+        )}
+        <Textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              void submit(draft);
+            }
+          }}
+          placeholder={hasChoices ? "Type a custom answer…" : "Type your answer…"}
+          rows={2}
+          resize="vertical"
+          disabled={submitting}
+          sx={{ width: "100%", fontSize: 1 }}
+        />
+        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+          <Text sx={{ fontSize: 0, color: "fg.muted", mr: "auto" }}>Enter to send</Text>
+          <Button
+            variant="primary"
+            size="small"
+            disabled={submitting || draft.trim().length === 0}
+            onClick={() => void submit(draft)}
+          >
+            {submitting && submittingChoice === null ? "Sending…" : "Send"}
+          </Button>
+        </Box>
+      </Box>
+
       {error && <Text sx={{ color: "danger.fg", fontSize: 0 }}>{error}</Text>}
     </Box>
   );
