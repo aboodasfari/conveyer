@@ -955,57 +955,33 @@ function SideBySideFile({
             cp.composeAt.side === anchor.side && cp.composeAt.line === anchor.no;
           const hasExpanded = cp ? lineComments.some((c) => !cp.isCollapsed(c)) : false;
           const highlighted = hasExpanded || composing;
-          // Comments/composer render on the anchored side only (ADO-style):
-          // left cell for old-side anchors, right cell for new-side.
-          const anchorSide = anchor?.side === "old" ? "left" : "right";
+          // Comments are new-side (right) only; cards/composer render in
+          // the right column with the left column blank.
           const sideExtras = (cp && (lineComments.length > 0 || composing)) ? (
             <Box sx={{ display: "flex", minWidth: "100%" }}>
-              {anchorSide === "left" ? (
-                <>
-                  <Box sx={{ width: `${leftFrac * 100}%`, flexShrink: 0 }}>
-                    {lineComments.map((c) => (
-                      <CommentCard key={c.id} comment={c} collapsed={cp.isCollapsed(c)} onToggleCollapsed={(n) => cp.onToggleCollapsed(c.id, n)} />
-                    ))}
-                    {composing && (
-                      <CommentComposer phaseId={cp.phaseId} filePath={cp.composeAt!.file} lineStart={cp.composeAt!.line} lineEnd={cp.composeAt!.line} side={cp.composeAt!.side} snippet={cp.composeAt!.snippet} onDone={cp.onCancelCompose} />
-                    )}
-                  </Box>
-                  <Box sx={{ flex: 1 }} />
-                </>
-              ) : (
-                <>
-                  <Box sx={{ width: `${leftFrac * 100}%`, flexShrink: 0 }} />
-                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                    {lineComments.map((c) => (
-                      <CommentCard key={c.id} comment={c} collapsed={cp.isCollapsed(c)} onToggleCollapsed={(n) => cp.onToggleCollapsed(c.id, n)} />
-                    ))}
-                    {composing && (
-                      <CommentComposer phaseId={cp.phaseId} filePath={cp.composeAt!.file} lineStart={cp.composeAt!.line} lineEnd={cp.composeAt!.line} side={cp.composeAt!.side} snippet={cp.composeAt!.snippet} onDone={cp.onCancelCompose} />
-                    )}
-                  </Box>
-                </>
-              )}
+              <Box sx={{ width: `${leftFrac * 100}%`, flexShrink: 0 }} />
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                {lineComments.map((c) => (
+                  <CommentCard key={c.id} comment={c} collapsed={cp.isCollapsed(c)} onToggleCollapsed={(n) => cp.onToggleCollapsed(c.id, n)} />
+                ))}
+                {composing && (
+                  <CommentComposer phaseId={cp.phaseId} filePath={cp.composeAt!.file} lineStart={cp.composeAt!.line} lineEnd={cp.composeAt!.line} side={cp.composeAt!.side} snippet={cp.composeAt!.snippet} onDone={cp.onCancelCompose} />
+                )}
+              </Box>
             </Box>
           ) : null;
           return (
             <Box key={i}>
-              <Box sx={{ display: "flex", minWidth: "100%", ...(highlighted ? { boxShadow: "inset 3px 0 0 var(--bgColor-accent-emphasis, #4493f8)" } : {}) }}>
+              <Box sx={{ display: "flex", minWidth: "100%" }}>
                 <Box sx={{ width: `${leftFrac * 100}%`, flexShrink: 0, overflowX: "auto" }}>
-                  <SideCell
-                    line={l}
-                    side="left"
-                    separator={sep}
-                    commentMode={cp?.commentMode ?? false}
-                    onAdd={cp && l.kind === "del" && typeof l.oldNo === "number"
-                      ? () => cp.onStartCompose(l.oldNo!, "old", l.text)
-                      : undefined}
-                  />
+                  <SideCell line={l} side="left" separator={sep} />
                 </Box>
                 <Box sx={{ flex: 1, minWidth: 0, overflowX: "auto" }}>
                   <SideCell
                     line={r}
                     side="right"
                     separator={sep}
+                    highlighted={highlighted}
                     commentMode={cp?.commentMode ?? false}
                     onAdd={cp && (r.kind === "add" || r.kind === "context") && typeof r.newNo === "number"
                       ? () => cp.onStartCompose(r.newNo!, "new", r.text)
@@ -1022,15 +998,13 @@ function SideBySideFile({
   );
 }
 
-/** Which line a comment anchors to in SBS: prefer the new (right) side. */
-function sbsAnchor(left: PairedLine, right: PairedLine): { no: number; side: string } | null {
+/** Which line a comment anchors to in SBS. New (right) side only —
+ *  commenting on deletions/old side is disabled to match the simpler
+ *  ADO-style review flow. */
+function sbsAnchor(_left: PairedLine, right: PairedLine): { no: number; side: string } | null {
   if (right.kind !== "empty" && typeof right.newNo === "number") {
     return { no: right.newNo, side: "new" };
   }
-  if (left.kind === "del" && typeof left.oldNo === "number") {
-    return { no: left.oldNo, side: "old" };
-  }
-  if (typeof right.newNo === "number") return { no: right.newNo, side: "new" };
   return null;
 }
 
@@ -1039,12 +1013,14 @@ function SideCell({
   side,
   separator,
   commentMode,
+  highlighted,
   onAdd,
 }: {
   line: PairedLine;
   side: "left" | "right";
   separator: boolean;
   commentMode?: boolean;
+  highlighted?: boolean;
   onAdd?: () => void;
 }) {
   if (line.kind === "empty") {
@@ -1073,11 +1049,12 @@ function SideCell({
       sx={{
         display: "flex",
         minWidth: "max-content",
-        bg,
+        bg: highlighted ? "attention.subtle" : bg,
         position: "relative",
         borderTop: separator ? "1px solid" : "none",
         borderTopColor: "border.muted",
-        "&:hover": { bg: line.kind === "context" ? "canvas.subtle" : bg },
+        ...(highlighted ? { boxShadow: "inset 3px 0 0 var(--bgColor-accent-emphasis, #4493f8)" } : {}),
+        "&:hover": { bg: highlighted ? "attention.subtle" : (line.kind === "context" ? "canvas.subtle" : bg) },
         "&:hover .conveyer-add-comment": { opacity: 1 },
       }}
     >
