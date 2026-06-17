@@ -889,7 +889,7 @@ function UserBubble({ content }: { content: string }) {
           </Box>
         }
       />
-      <Box sx={{ flex: 1, color: "fg.default", whiteSpace: "pre-wrap", minWidth: 0 }}>{content}</Box>
+      <Box sx={{ flex: 1, color: "fg.default", whiteSpace: "pre-wrap", overflowWrap: "anywhere", minWidth: 0 }}>{content}</Box>
     </Box>
   );
 }
@@ -906,6 +906,7 @@ function SystemBubble({ content }: { content: string }) {
           fontStyle: "italic",
           fontSize: 1,
           whiteSpace: "pre-wrap",
+          overflowWrap: "anywhere",
           minWidth: 0,
         }}
       >
@@ -927,6 +928,7 @@ function ThinkingBubble({ content, streaming }: { content: string; streaming: bo
           fontStyle: "italic",
           fontSize: 1,
           whiteSpace: "pre-wrap",
+          overflowWrap: "anywhere",
           minWidth: 0,
         }}
       >
