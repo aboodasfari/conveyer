@@ -18,7 +18,7 @@ import {
 } from "@primer/octicons-react";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { api } from "../api";
-import { Phase, RunDetail } from "../types";
+import { Phase, PullRequest, RunDetail } from "../types";
 import { formatError } from "../errors";
 import { TabStrip } from "./TabStrip";
 import { PhaseChat } from "./PhaseChat";
@@ -588,7 +588,12 @@ function PhaseRow({
             )}
           </Box>
         )}
-        {phase.status === "waiting" && (() => {
+        {phase.status === "waiting" && phase.kind === "submit" && (
+          <Box onClick={(e) => e.stopPropagation()}>
+            <SubmitPhaseAction phaseId={phase.id} busy={busy} />
+          </Box>
+        )}
+        {phase.status === "waiting" && phase.kind !== "submit" && (() => {
           const reviewerSaidSendBack =
             phase.kind === "review" && phase.review_verdict === "request_changes";
           // Re-order so the recommended action (matching the verdict) is
@@ -645,6 +650,70 @@ function PhaseRow({
           </Box>
         )}
       </Box>
+    </Box>
+  );
+}
+
+/**
+ * Sidebar action for a waiting submit phase: the PR has been proposed and is
+ * awaiting the user's go-ahead to actually create it. Shows "Create pull
+ * request" (or "Retry create" after a failure, or a "Creating…" spinner while
+ * in flight). Mirrors the PR status via the `pr_changed` event.
+ */
+function SubmitPhaseAction({ phaseId, busy }: { phaseId: string; busy: boolean }) {
+  const [pr, setPr] = useState<PullRequest | null>(null);
+  const [working, setWorking] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    api.pullRequestForPhase(phaseId).then(setPr).catch(() => {});
+  }, [phaseId]);
+
+  useEffect(() => {
+    load();
+    let un: UnlistenFn | undefined;
+    listen<{ phase_id: string }>("pr_changed", (ev) => {
+      if (ev.payload.phase_id === phaseId) load();
+    }).then((f) => (un = f));
+    return () => un?.();
+  }, [phaseId, load]);
+
+  const onCreate = useCallback(() => {
+    setWorking(true);
+    setErr(null);
+    api
+      .prCreate(phaseId)
+      .catch((e) => setErr(formatError(e)))
+      .finally(() => setWorking(false));
+  }, [phaseId]);
+
+  // No proposal yet, or it's already being created elsewhere.
+  if (!pr) return null;
+  if (pr.status === "creating") {
+    return (
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1, color: "fg.muted" }}>
+        <Spinner size="small" />
+        <Text sx={{ fontSize: 0 }}>Creating…</Text>
+      </Box>
+    );
+  }
+
+  const isFailed = pr.status === "failed";
+  return (
+    <Box>
+      <Button
+        leadingVisual={GitPullRequestIcon}
+        variant="primary"
+        size="small"
+        onClick={onCreate}
+        disabled={busy || working}
+        title="Create the pull request on the remote"
+      >
+        {isFailed ? "Retry create" : "Create pull request"}
+      </Button>
+      {err && (
+        <Text sx={{ display: "block", color: "danger.fg", fontSize: 0, mt: 1 }}>{err}</Text>
+      )}
     </Box>
   );
 }

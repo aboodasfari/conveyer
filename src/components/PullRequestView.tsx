@@ -1,24 +1,22 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Box, Button, Flash, Label, Link, Spinner, Text } from "@primer/react";
+import { useEffect, useMemo, useState } from "react";
+import { Box, Flash, Label, Link, Spinner, Text } from "@primer/react";
 import {
   ArrowRightIcon,
   CheckCircleIcon,
   GitPullRequestIcon,
-  GitPullRequestDraftIcon,
   PersonIcon,
   XCircleIcon,
 } from "@primer/octicons-react";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { api } from "../api";
 import { PrCheck, PullRequest } from "../types";
-import { formatError } from "../errors";
 import { TabPlaceholder } from "./TabPlaceholder";
 import { RichText } from "./RichText";
 
 type LabelVariant = "default" | "accent" | "success" | "danger" | "attention";
 
 const STATUS_META: Record<string, { label: string; variant: LabelVariant }> = {
-  draft: { label: "Draft", variant: "attention" },
+  draft: { label: "Proposed", variant: "attention" },
   creating: { label: "Creating…", variant: "accent" },
   created: { label: "Created", variant: "success" },
   failed: { label: "Failed", variant: "danger" },
@@ -56,39 +54,29 @@ function parseChecks(json: string | null): PrCheck[] {
 export function PullRequestView({ phaseId }: { phaseId: string }) {
   const [pr, setPr] = useState<PullRequest | null>(null);
   const [loading, setLoading] = useState(true);
-  const [creating, setCreating] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const row = await api.pullRequestForPhase(phaseId);
-      setPr(row);
-    } catch (e) {
-      setErr(formatError(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [phaseId]);
 
   useEffect(() => {
+    let active = true;
+    const load = () => {
+      api
+        .pullRequestForPhase(phaseId)
+        .then((row) => {
+          if (active) setPr(row);
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (active) setLoading(false);
+        });
+    };
     load();
     let un: UnlistenFn | undefined;
     listen<{ phase_id: string }>("pr_changed", (ev) => {
       if (ev.payload.phase_id === phaseId) load();
     }).then((f) => (un = f));
-    return () => un?.();
-  }, [phaseId, load]);
-
-  const onCreate = useCallback(async () => {
-    setCreating(true);
-    setErr(null);
-    try {
-      await api.prCreate(phaseId);
-    } catch (e) {
-      setErr(formatError(e));
-    } finally {
-      setCreating(false);
-    }
+    return () => {
+      active = false;
+      un?.();
+    };
   }, [phaseId]);
 
   const reviewers = useMemo(() => parseList(pr?.reviewers_json ?? null), [pr]);
@@ -113,16 +101,15 @@ export function PullRequestView({ phaseId }: { phaseId: string }) {
   }
 
   const meta = STATUS_META[pr.status] ?? { label: pr.status, variant: "default" as LabelVariant };
-  const isDraft = pr.status === "draft";
-  const isCreating = pr.status === "creating" || creating;
+  const isProposed = pr.status === "draft";
   const isFailed = pr.status === "failed";
 
   return (
     <Box sx={{ overflowY: "auto", maxWidth: 820 }}>
       {/* Title row */}
       <Box sx={{ display: "flex", alignItems: "flex-start", gap: 2, mb: 2 }}>
-        <Box sx={{ color: isDraft ? "attention.fg" : "success.fg", mt: "2px" }}>
-          {isDraft ? <GitPullRequestDraftIcon size={20} /> : <GitPullRequestIcon size={20} />}
+        <Box sx={{ color: isProposed ? "attention.fg" : "success.fg", mt: "2px" }}>
+          <GitPullRequestIcon size={20} />
         </Box>
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Text sx={{ fontSize: 3, fontWeight: "bold", lineHeight: 1.25 }}>
@@ -212,35 +199,6 @@ export function PullRequestView({ phaseId }: { phaseId: string }) {
             </Box>
           ))}
         </Box>
-      )}
-
-      {/* Action */}
-      {isDraft && (
-        <Box sx={{ display: "flex", alignItems: "center", gap: 3, mt: 2 }}>
-          <Button variant="primary" onClick={onCreate} disabled={creating}>
-            Create pull request
-          </Button>
-          <Text sx={{ color: "fg.muted", fontSize: 0 }}>
-            Creates a draft PR on the remote and queues required checks.
-          </Text>
-        </Box>
-      )}
-      {isCreating && (
-        <Box sx={{ display: "flex", alignItems: "center", gap: 2, mt: 2 }}>
-          <Spinner size="small" />
-          <Text sx={{ color: "fg.muted" }}>Creating the pull request…</Text>
-        </Box>
-      )}
-      {isFailed && (
-        <Button variant="default" onClick={onCreate} disabled={creating} sx={{ mt: 2 }}>
-          Retry create
-        </Button>
-      )}
-
-      {err && (
-        <Flash variant="danger" sx={{ mt: 3 }}>
-          {err}
-        </Flash>
       )}
     </Box>
   );
