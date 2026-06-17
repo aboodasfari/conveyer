@@ -338,6 +338,13 @@ struct PhaseContext {
     task_title: String,
     task_state: String,
     task_description: String,
+    /// Source kind: 'ado', 'github', or 'local'.
+    source_kind: String,
+    /// Source-native identifier: ADO work item id (e.g. "12345") or GitHub
+    /// issue ref (e.g. "owner/repo#42"). Empty for local tasks.
+    source_ref: String,
+    /// Web URL of the work item / issue.
+    task_url: String,
     parent_title: Option<String>,
     parent_description: Option<String>,
     codebase_path: String,
@@ -352,18 +359,19 @@ struct PhaseContext {
 
 async fn load_phase_context(state: &AppState, phase_id: &str) -> AppResult<(PhaseContext, String, String)> {
     // Returns (ctx, run_id, phase_kind).
-    let row: (String, String, String, String, String, Option<String>, String, Option<String>) = sqlx::query_as(
+    let row: (String, String, String, String, String, Option<String>, String, Option<String>, String, String, String) = sqlx::query_as(
         "SELECT t.id, t.title, t.state, COALESCE(t.description,''), t.source_id,
-                t.parent_ref, p.kind, t.workspace_path
+                t.parent_ref, p.kind, t.workspace_path, t.source_ref, t.url, s.kind
          FROM phases p
          JOIN runs r  ON r.id = p.run_id
          JOIN tasks t ON t.id = r.task_id
+         JOIN sources s ON s.id = t.source_id
          WHERE p.id = ?",
     )
     .bind(phase_id)
     .fetch_one(&state.db)
     .await?;
-    let (task_id, task_title, task_state, task_description, source_id, parent_ref, phase_kind, task_workspace_path) = row;
+    let (task_id, task_title, task_state, task_description, source_id, parent_ref, phase_kind, task_workspace_path, source_ref, task_url, source_kind) = row;
 
     // Optional parent story title + description.
     let (parent_title, parent_description) = if let Some(pr) = parent_ref {
@@ -439,6 +447,9 @@ async fn load_phase_context(state: &AppState, phase_id: &str) -> AppResult<(Phas
             task_title,
             task_state,
             task_description,
+            source_kind,
+            source_ref,
+            task_url,
             parent_title,
             parent_description,
             codebase_path,
@@ -679,6 +690,9 @@ async fn ensure_chat_spawned(
         .env("CONVEYER_TASK_TITLE", &ctx.task_title)
         .env("CONVEYER_TASK_STATE", &ctx.task_state)
         .env("CONVEYER_TASK_DESCRIPTION", &ctx.task_description)
+        .env("CONVEYER_SOURCE_KIND", &ctx.source_kind)
+        .env("CONVEYER_TASK_REF", &ctx.source_ref)
+        .env("CONVEYER_TASK_URL", &ctx.task_url)
         .env("CONVEYER_RUN_ID", &run_id)
         .env("CONVEYER_CODEBASE_PATH", &effective_codebase)
         .env("CONVEYER_PROMPTS_DIR", prompts.display().to_string())
@@ -1537,6 +1551,9 @@ async fn run_one(
         .env("CONVEYER_TASK_TITLE", &ctx.task_title)
         .env("CONVEYER_TASK_STATE", &ctx.task_state)
         .env("CONVEYER_TASK_DESCRIPTION", &ctx.task_description)
+        .env("CONVEYER_SOURCE_KIND", &ctx.source_kind)
+        .env("CONVEYER_TASK_REF", &ctx.source_ref)
+        .env("CONVEYER_TASK_URL", &ctx.task_url)
         .env("CONVEYER_RUN_ID", &run_id)
         .env("CONVEYER_CODEBASE_PATH", &effective_codebase)
         .env("CONVEYER_PROMPTS_DIR", prompts.display().to_string())
@@ -1599,6 +1616,9 @@ async fn run_one(
             .env("CONVEYER_TASK_TITLE", &ctx.task_title)
             .env("CONVEYER_TASK_STATE", &ctx.task_state)
             .env("CONVEYER_TASK_DESCRIPTION", &ctx.task_description)
+            .env("CONVEYER_SOURCE_KIND", &ctx.source_kind)
+            .env("CONVEYER_TASK_REF", &ctx.source_ref)
+            .env("CONVEYER_TASK_URL", &ctx.task_url)
             .env("CONVEYER_CODEBASE_PATH", &effective_codebase)
             .env("CONVEYER_PROMPTS_DIR", prompts.display().to_string())
             .env("CONVEYER_ARTIFACT_PATH", artifact_path.display().to_string())

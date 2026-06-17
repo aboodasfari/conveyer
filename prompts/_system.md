@@ -1,12 +1,15 @@
 <!--
 Available substitution variables (provided by sidecar/conveyer-agent.mjs):
   {{TASK_TITLE}}, {{TASK_STATE}}, {{TASK_DESCRIPTION}}
+  {{SOURCE_KIND}}, {{TASK_REF}}, {{TASK_URL}}
   {{PARENT_TITLE}}, {{PARENT_DESCRIPTION}}
   {{CODEBASE_PATH}}, {{ARTIFACT_PATH}}
   {{WORKSPACES_HINT}}
   {{CONTEXT_DOCUMENT}}, {{PLAN_DOCUMENT}}, {{DIFF}}
 Conditional blocks:
   {{#PARENT_TITLE}}…{{/PARENT_TITLE}}  (rendered only when PARENT_TITLE is set)
+  {{#TASK_REF}}…{{/TASK_REF}}          (rendered only when TASK_REF is set)
+  {{^TASK_REF}}…{{/TASK_REF}}          (rendered only when TASK_REF is empty)
 -->
 
 # Shared system instructions

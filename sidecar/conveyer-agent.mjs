@@ -21,6 +21,9 @@
  *   CONVEYER_TASK_TITLE
  *   CONVEYER_TASK_STATE
  *   CONVEYER_TASK_DESCRIPTION
+ *   CONVEYER_SOURCE_KIND         (ado | github | local)
+ *   CONVEYER_TASK_REF            (ADO work item id, or GitHub "owner/repo#n")
+ *   CONVEYER_TASK_URL            (web URL of the work item / issue)
  *   CONVEYER_PARENT_TITLE        (optional)
  *   CONVEYER_PARENT_DESCRIPTION  (optional)
  *   CONVEYER_RUN_ID
@@ -143,9 +146,11 @@ async function readFileOr(filePath, fallback = "") {
  */
 function renderTemplate(tpl, vars) {
   // {{#KEY}}…{{/KEY}} — keep only if KEY is truthy.
-  tpl = tpl.replace(/\{\{#(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}/g, (_, k, body) =>
-    vars[k] ? body : "",
-  );
+  // {{^KEY}}…{{/KEY}} — keep only if KEY is falsy (inverted section).
+  tpl = tpl.replace(/\{\{([#^])(\w+)\}\}([\s\S]*?)\{\{\/\2\}\}/g, (_, sigil, k, body) => {
+    const truthy = Boolean(vars[k]);
+    return (sigil === "#" ? truthy : !truthy) ? body : "";
+  });
   return tpl.replace(/\{\{(\w+)\}\}/g, (_, k) =>
     vars[k] !== undefined && vars[k] !== null ? String(vars[k]) : "",
   );
@@ -160,6 +165,9 @@ async function buildPrompt(phase) {
     TASK_TITLE: env.CONVEYER_TASK_TITLE || "",
     TASK_STATE: env.CONVEYER_TASK_STATE || "",
     TASK_DESCRIPTION: env.CONVEYER_TASK_DESCRIPTION || "",
+    SOURCE_KIND: env.CONVEYER_SOURCE_KIND || "",
+    TASK_REF: env.CONVEYER_TASK_REF || "",
+    TASK_URL: env.CONVEYER_TASK_URL || "",
     PARENT_TITLE: env.CONVEYER_PARENT_TITLE || "",
     PARENT_DESCRIPTION: env.CONVEYER_PARENT_DESCRIPTION || "",
     CODEBASE_PATH: env.CONVEYER_CODEBASE_PATH || "",
