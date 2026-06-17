@@ -6,7 +6,38 @@ on:
       - 'v*'
 
 jobs:
-  release:
+  # Pre-create the GitHub release once so the parallel build jobs all upload
+  # to a single, fixed release id. This avoids the tauri-action matrix race
+  # where concurrent jobs each try to create the release / replace the shared
+  # latest.json asset, producing "Not Found - update-a-release-asset" (404).
+  create-release:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create-release.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create draft release
+        id: create-release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = context.ref.replace('refs/tags/', '');
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: `Conveyer ${tag}`,
+              body: 'See the assets to download and install this version.',
+              draft: true,
+              prerelease: false,
+            });
+            return data.id;
+
+  build-tauri:
+    needs: create-release
     permissions:
       contents: write
     strategy:
@@ -41,7 +72,7 @@ jobs:
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
-        
+
       - name: Add Rust target (macOS)
         if: matrix.platform == 'macos-latest'
         run: rustup target add ${{ contains(matrix.args, 'aarch64') && 'aarch64-apple-darwin' || 'x86_64-apple-darwin' }}
@@ -56,9 +87,26 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'Conveyer ${{ github.ref_name }}'
-          releaseBody: 'See the assets to download and install this version.'
-          releaseDraft: false
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
+
+  # Flip the release from draft to published once every platform has uploaded.
+  publish-release:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    needs: [create-release, build-tauri]
+    steps:
+      - name: Publish release
+        uses: actions/github-script@v7
+        env:
+          release_id: ${{ needs.create-release.outputs.release_id }}
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: Number(process.env.release_id),
+              draft: false,
+              prerelease: false,
+            });
