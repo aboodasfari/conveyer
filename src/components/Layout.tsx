@@ -1,9 +1,7 @@
-import { Box } from "@primer/react";
-import { DownloadIcon, GearIcon } from "@primer/octicons-react";
+import { Box, Text } from "@primer/react";
+import { DownloadIcon, GearIcon, SyncIcon, CheckIcon } from "@primer/octicons-react";
 import { Link, Outlet, useLocation } from "react-router-dom";
-import { useState } from "react";
-import { useUpdateStatus } from "../updater";
-import { UpdateDialog } from "./UpdateDialog";
+import { useUpdateStatus, installAndRelaunch } from "../updater";
 
 interface NavItem {
   to: string;
@@ -157,25 +155,71 @@ function IconNavLink({
 
 function UpdateButton() {
   const update = useUpdateStatus();
-  const [open, setOpen] = useState(false);
   const visible =
     update.status === "available" ||
     update.status === "downloading" ||
     update.status === "ready";
   if (!visible) return null;
-  const spinning = update.status === "downloading";
-  const label =
-    update.status === "downloading"
-      ? "Installing update…"
-      : update.status === "ready"
-        ? "Update installed — restarting"
-        : `Update available${update.version ? ` — v${update.version}` : ""}`;
+
+  const downloading = update.status === "downloading";
+  const ready = update.status === "ready";
+  const errored = update.status === "error";
+
+  const pct = (() => {
+    const p = update.progress;
+    if (!p || !p.total) return null;
+    return Math.min(100, Math.round((p.downloaded / p.total) * 100));
+  })();
+
+  const label = downloading
+    ? `Downloading update… ${pct !== null ? `${pct}%` : ""}`.trim()
+    : ready
+      ? "Update installed — restarting"
+      : errored
+        ? `Update failed — ${update.error ?? "click to retry"}`
+        : `Update available${update.version ? ` — v${update.version}` : ""} — click to install`;
+
+  // No modal: clicking auto-downloads, installs, and relaunches.
+  const onClick = () => {
+    if (downloading || ready) return;
+    void installAndRelaunch();
+  };
+
   return (
-    <>
+    <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+      {downloading && (
+        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+          <Box
+            sx={{
+              width: 96,
+              height: 4,
+              borderRadius: 999,
+              bg: "neutral.muted",
+              overflow: "hidden",
+            }}
+          >
+            <Box
+              sx={{
+                width: pct !== null ? `${pct}%` : "40%",
+                height: "100%",
+                bg: "accent.fg",
+                transition: "width 120ms linear",
+                animation: pct === null ? "conveyer-updater-indeterminate 1.1s ease-in-out infinite" : undefined,
+              }}
+            />
+          </Box>
+          {pct !== null && (
+            <Text sx={{ fontSize: 0, color: "fg.muted", fontVariantNumeric: "tabular-nums", minWidth: 28 }}>
+              {pct}%
+            </Text>
+          )}
+        </Box>
+      )}
       <Box
         as="button"
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={onClick}
+        disabled={downloading || ready}
         aria-label={label}
         title={label}
         data-tauri-drag-region={false}
@@ -186,32 +230,40 @@ function UpdateButton() {
           alignItems: "center",
           justifyContent: "center",
           border: "none",
-          cursor: "pointer",
+          cursor: downloading || ready ? "default" : "pointer",
           borderRadius: 2,
-          color: "accent.fg",
+          color: errored ? "danger.fg" : "accent.fg",
           bg: "transparent",
-          transition: "background-color 80ms",
-          "&:hover": {
-            bg: "neutral.subtle",
-          },
-          "& > span": spinning
+          opacity: downloading || ready ? 0.6 : 1,
+          transition: "background-color 80ms, opacity 80ms",
+          "&:hover": { bg: downloading || ready ? "transparent" : "neutral.subtle" },
+          "& > span": downloading || ready
             ? {
                 display: "inline-flex",
                 transform: "translateY(1px)",
-                animation: "conveyer-updater-spin 1.2s linear infinite",
+                animation: ready ? undefined : "conveyer-updater-spin 1.2s linear infinite",
               }
             : { display: "inline-flex", transform: "translateY(1px)" },
           "@keyframes conveyer-updater-spin": {
             from: { transform: "rotate(0deg)" },
             to: { transform: "rotate(360deg)" },
           },
+          "@keyframes conveyer-updater-indeterminate": {
+            "0%": { transform: "translateX(-100%)" },
+            "100%": { transform: "translateX(250%)" },
+          },
         }}
       >
         <span>
-          <DownloadIcon size={16} />
+          {downloading ? (
+            <SyncIcon size={16} />
+          ) : ready ? (
+            <CheckIcon size={16} />
+          ) : (
+            <DownloadIcon size={16} />
+          )}
         </span>
       </Box>
-      <UpdateDialog isOpen={open} onClose={() => setOpen(false)} />
-    </>
+    </Box>
   );
 }
