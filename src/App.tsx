@@ -8,6 +8,7 @@ import { useScrollRestoration } from "./scrollRestoration";
 import { useRunNotifications } from "./runNotifications";
 import { useAutoRefresh } from "./autoRefresh";
 import { useFocusRefresh } from "./focusRefresh";
+import { useNativeContextMenu } from "./useNativeContextMenu";
 
 function ScrollAwareLayout() {
   useScrollRestoration();
@@ -25,6 +26,7 @@ function ScrollAwareLayout() {
 }
 
 export default function App() {
+  useNativeContextMenu();
   return (
     <AppTheme>
       <BrowserRouter>
