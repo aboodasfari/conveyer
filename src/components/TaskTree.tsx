@@ -42,6 +42,14 @@ const isActionable = (t: TaskSummary) =>
 /** Stop a click inside an interactive control from triggering the parent card link. */
 const stop = (e: MouseEvent) => e.stopPropagation();
 
+/**
+ * Human-readable task ref. ADO refs are bare numbers (e.g. "12345") so we
+ * prefix "#". GitHub refs already include a "#" (e.g. "owner/repo#7"), so we
+ * show them as-is rather than double-prefixing.
+ */
+const formatRef = (sourceRef: string) =>
+  sourceRef.includes("#") ? sourceRef : `#${sourceRef}`;
+
 export function TaskTree({
   tasks,
   onMove,
@@ -215,9 +223,9 @@ function StoryHeader({
               flexShrink: 1,
             }}
           >
-            {task.title || `#${task.source_ref}`}
+            {task.title || formatRef(task.source_ref)}
           </Text>
-          <Text sx={{ color: "fg.subtle", fontSize: 0, flexShrink: 0 }}>#{task.source_ref}</Text>
+          <Text sx={{ color: "fg.subtle", fontSize: 0, flexShrink: 0 }}>{formatRef(task.source_ref)}</Text>
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 3 }}>
           <StateChip state={task.state} />
@@ -298,9 +306,9 @@ function ChildRow({ task, last }: { task: TaskSummary; last: boolean }) {
               flexShrink: 1,
             }}
           >
-            {task.title || `#${task.source_ref}`}
+            {task.title || formatRef(task.source_ref)}
           </Text>
-          <Text sx={{ color: "fg.subtle", fontSize: 0, flexShrink: 0 }}>#{task.source_ref}</Text>
+          <Text sx={{ color: "fg.subtle", fontSize: 0, flexShrink: 0 }}>{formatRef(task.source_ref)}</Text>
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 3 }}>
           <StateChip state={task.state} />

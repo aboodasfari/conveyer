@@ -120,6 +120,21 @@ fn repo_full_name(repository_url: &str) -> Option<String> {
     Some(format!("{owner}/{repo}"))
 }
 
+/// Title-case a GitHub state ("open" -> "Open", "closed" -> "Closed") so it
+/// reads consistently with ADO states, which are already title-cased.
+fn title_case(s: &str) -> String {
+    s.split_whitespace()
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn raw_to_issue(raw: RawIssue) -> Option<GithubIssue> {
     // Exclude pull requests — we only track issues.
     if raw.pull_request.is_some() {
@@ -130,7 +145,7 @@ fn raw_to_issue(raw: RawIssue) -> Option<GithubIssue> {
         number: raw.number,
         repo_full_name,
         title: raw.title,
-        state: raw.state,
+        state: title_case(&raw.state),
         body: raw.body,
         html_url: raw.html_url,
     })
@@ -406,5 +421,12 @@ mod tests {
             extract_issue_ref("https://github.acme.com/team/app/issues/9"),
             Some(("team".into(), "app".into(), 9))
         );
+    }
+
+    #[test]
+    fn title_cases_state() {
+        assert_eq!(title_case("open"), "Open");
+        assert_eq!(title_case("CLOSED"), "Closed");
+        assert_eq!(title_case(""), "");
     }
 }

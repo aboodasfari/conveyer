@@ -21,6 +21,11 @@ import { WorkspacePicker } from "../components/WorkspacePicker";
 
 type Tab = "description" | "run";
 
+/** ADO refs are bare numbers ("12345" -> "#12345"); GitHub refs already
+ *  contain "#" ("owner/repo#7"), so show those as-is. */
+const formatRef = (sourceRef: string) =>
+  sourceRef.includes("#") ? sourceRef : `#${sourceRef}`;
+
 export function TaskDetail() {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
@@ -109,7 +114,7 @@ export function TaskDetail() {
 
       <Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
-          <Text sx={{ color: "fg.muted", fontSize: 0 }}>#{task.source_ref}</Text>
+          <Text sx={{ color: "fg.muted", fontSize: 0 }}>{formatRef(task.source_ref)}</Text>
           <Text sx={{ color: "fg.muted", fontSize: 0 }}>·</Text>
           <Text sx={{ color: "fg.muted", fontSize: 0 }}>{task.state}</Text>
           <StatusBadge status={task.run_status} phase={task.current_phase} />
@@ -134,7 +139,7 @@ export function TaskDetail() {
           <Text sx={{ display: "block", color: "fg.muted", fontSize: 0, mt: 1 }}>
             Under{" "}
             <PrimerLink as={Link} to={`/tasks/${parent.id}`}>
-              {parent.title} (#{parent.source_ref})
+              {parent.title} ({formatRef(parent.source_ref)})
             </PrimerLink>
           </Text>
         )}
