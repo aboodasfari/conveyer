@@ -40,8 +40,18 @@ echo "✓ Updated Cargo.lock"
 
 # Commit and tag
 git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
-git commit -m "chore: release v$VERSION"
-git tag -a "$TAG" -m "Release $TAG"
+if git diff --cached --quiet; then
+  echo "ℹ️  No version changes to commit (already at $VERSION) — skipping commit."
+else
+  git commit -m "chore: release v$VERSION"
+fi
+
+# Create the tag if it doesn't already exist.
+if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+  echo "ℹ️  Tag $TAG already exists — leaving it as-is."
+else
+  git tag -a "$TAG" -m "Release $TAG"
+fi
 
 echo ""
 echo "✅ Version bumped to $VERSION and tagged as $TAG"
