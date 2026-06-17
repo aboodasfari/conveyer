@@ -117,6 +117,7 @@ pub async fn sources_test(input: SourceInput) -> AppResult<()> {
             let token = github::auth::token(
                 github::auth::GithubAuthKind::parse(&input.auth_kind),
                 &input.pat_env,
+                cfg.host.as_deref(),
             )
             .await?;
             github::ping(&cfg, &token).await

@@ -25,6 +25,11 @@ pub struct GithubSourceConfig {
     pub owner: String,
     #[serde(default)]
     pub repo: Option<String>,
+    /// GitHub host. Empty / "github.com" = public GitHub. For GitHub
+    /// Enterprise set the instance host (e.g. "github.acme.com" for a
+    /// self-hosted server, or "acme.ghe.com" for data residency).
+    #[serde(default)]
+    pub host: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

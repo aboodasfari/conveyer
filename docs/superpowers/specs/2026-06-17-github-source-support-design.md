@@ -44,7 +44,11 @@ see GitHub issues assigned to them on the dashboard and tackle them.
 - Returns the raw token; the client adds the `Bearer ` prefix.
 
 ### `src-tauri/src/github/mod.rs`
-- `GithubSourceConfig { owner: String, repo: Option<String> }`.
+- `GithubSourceConfig { owner: String, repo: Option<String>, host: Option<String> }`.
+- `api_base(host)` builds the REST base URL: `https://api.github.com` for
+  public GitHub, `https://api.<sub>.ghe.com` for data residency, and
+  `https://<host>/api/v3` for a self-hosted GitHub Enterprise Server. Host is
+  normalised (scheme/trailing-slash stripped; github.com → public).
 - `GithubIssue { number, repo_full_name, title, state, body, html_url }`.
 - `source_ref(issue) -> String` = `"{repo_full_name}#{number}"` (stable, unique
   per source).
@@ -111,4 +115,8 @@ Dashboard lists them ──► Tackle ──► existing run pipeline
 ## Out of scope (future)
 
 - Owner/org-wide scoping via a single qualifier; sub-issue hierarchy; pulling
-  PRs as tasks; GitHub Enterprise Server hosts; webhooks/live updates.
+  PRs as tasks; webhooks/live updates.
+
+GitHub Enterprise hosts ARE supported via the source `host` field (public
+GitHub, `*.ghe.com` data residency, and self-hosted GHES `/api/v3`); the gh
+token is fetched per-host via `gh auth token --hostname`.

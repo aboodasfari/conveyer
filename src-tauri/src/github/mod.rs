@@ -9,10 +9,34 @@ use crate::models::GithubSourceConfig;
 use serde::Deserialize;
 use serde_json::Value;
 
-const API_BASE: &str = "https://api.github.com";
 /// Hard cap on Search API pages (100/page) so a noisy account can't spin
 /// forever. 5 pages = up to 500 assigned issues, far more than realistic.
 const MAX_PAGES: u32 = 5;
+
+/// Normalise a configured host to a bare hostname (no scheme / trailing slash).
+/// Empty / unset means public GitHub.
+fn normalize_host(host: Option<&str>) -> Option<String> {
+    let h = host?.trim().trim_end_matches('/');
+    let h = h.strip_prefix("https://").or_else(|| h.strip_prefix("http://")).unwrap_or(h);
+    let h = h.trim();
+    if h.is_empty() || h.eq_ignore_ascii_case("github.com") || h.eq_ignore_ascii_case("api.github.com") {
+        None
+    } else {
+        Some(h.to_string())
+    }
+}
+
+/// REST API base URL for a host.
+/// - public GitHub:            https://api.github.com
+/// - data residency (*.ghe.com): https://api.<sub>.ghe.com
+/// - GitHub Enterprise Server: https://<host>/api/v3
+fn api_base(host: Option<&str>) -> String {
+    match normalize_host(host) {
+        None => "https://api.github.com".to_string(),
+        Some(h) if h.to_ascii_lowercase().ends_with(".ghe.com") => format!("https://api.{h}"),
+        Some(h) => format!("https://{h}/api/v3"),
+    }
+}
 
 fn client() -> reqwest::Client {
     reqwest::Client::builder()
@@ -134,11 +158,12 @@ pub async fn fetch_assigned_issues(
     cfg: &GithubSourceConfig,
     token: &str,
 ) -> AppResult<Vec<GithubIssue>> {
+    let base = api_base(cfg.host.as_deref());
     let c = client();
     let mut out = Vec::new();
     for page in 1..=MAX_PAGES {
         let url = format!(
-            "{API_BASE}/search/issues?q=assignee:@me+is:issue+is:open&per_page=100&page={page}"
+            "{base}/search/issues?q=assignee:@me+is:issue+is:open&per_page=100&page={page}"
         );
         let resp = c
             .get(&url)
@@ -165,13 +190,15 @@ pub async fn fetch_assigned_issues(
 }
 
 /// Fetch a single issue by owner/repo/number (for add-by-url).
+/// `host` is the bare GitHub host; None = github.com.
 pub async fn fetch_issue(
     token: &str,
+    host: Option<&str>,
     owner: &str,
     repo: &str,
     number: i64,
 ) -> AppResult<GithubIssue> {
-    let url = format!("{API_BASE}/repos/{owner}/{repo}/issues/{number}");
+    let url = format!("{}/repos/{owner}/{repo}/issues/{number}", api_base(host));
     let resp = client()
         .get(&url)
         .header("Authorization", auth_header(token))
@@ -186,9 +213,10 @@ pub async fn fetch_issue(
 
 /// Validate the token (and repo access, if a repo is configured).
 pub async fn ping(cfg: &GithubSourceConfig, token: &str) -> AppResult<()> {
+    let base = api_base(cfg.host.as_deref());
     let c = client();
     let resp = c
-        .get(format!("{API_BASE}/user"))
+        .get(format!("{base}/user"))
         .header("Authorization", auth_header(token))
         .header("Accept", "application/vnd.github+json")
         .send()
@@ -196,7 +224,7 @@ pub async fn ping(cfg: &GithubSourceConfig, token: &str) -> AppResult<()> {
     let _ = check(resp, "auth probe").await?;
     if let Some(repo) = cfg.repo.as_deref().filter(|r| !r.is_empty()) {
         let resp = c
-            .get(format!("{API_BASE}/repos/{}/{}", cfg.owner, repo))
+            .get(format!("{base}/repos/{}/{}", cfg.owner, repo))
             .header("Authorization", auth_header(token))
             .header("Accept", "application/vnd.github+json")
             .send()
@@ -207,13 +235,17 @@ pub async fn ping(cfg: &GithubSourceConfig, token: &str) -> AppResult<()> {
 }
 
 /// Best-effort parse of a GitHub issue URL into (owner, repo, number).
-/// Accepts `https://github.com/<owner>/<repo>/issues/<n>` (with optional
+/// Host-agnostic: accepts public github.com and Enterprise hosts, e.g.
+/// `https://github.acme.com/<owner>/<repo>/issues/<n>` (with optional
 /// trailing path/query).
 pub fn extract_issue_ref(url: &str) -> Option<(String, String, i64)> {
-    let marker = "github.com/";
-    let idx = url.find(marker)? + marker.len();
-    let rest = &url[idx..];
-    let mut parts = rest.split('/');
+    // Strip scheme, then split the path. Expect <host>/<owner>/<repo>/issues/<n>.
+    let no_scheme = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+    let mut parts = no_scheme.split('/');
+    let _host = parts.next()?;
     let owner = parts.next()?;
     let repo = parts.next()?;
     let kind = parts.next()?; // "issues"
@@ -278,18 +310,40 @@ mod tests {
             html_url: "u".into(),
         };
         // Owner match (case-insensitive), no repo filter.
-        assert!(matches_scope(&issue, &GithubSourceConfig { owner: "octocat".into(), repo: None }));
+        assert!(matches_scope(&issue, &GithubSourceConfig { owner: "octocat".into(), repo: None, host: None }));
         // Owner + matching repo.
         assert!(matches_scope(
             &issue,
-            &GithubSourceConfig { owner: "octocat".into(), repo: Some("hello".into()) }
+            &GithubSourceConfig { owner: "octocat".into(), repo: Some("hello".into()), host: None }
         ));
         // Wrong repo.
         assert!(!matches_scope(
             &issue,
-            &GithubSourceConfig { owner: "octocat".into(), repo: Some("other".into()) }
+            &GithubSourceConfig { owner: "octocat".into(), repo: Some("other".into()), host: None }
         ));
         // Wrong owner.
-        assert!(!matches_scope(&issue, &GithubSourceConfig { owner: "someoneelse".into(), repo: None }));
+        assert!(!matches_scope(&issue, &GithubSourceConfig { owner: "someoneelse".into(), repo: None, host: None }));
+    }
+
+    #[test]
+    fn api_base_for_hosts() {
+        // Public GitHub (None / blank / github.com all normalise to public).
+        assert_eq!(api_base(None), "https://api.github.com");
+        assert_eq!(api_base(Some("")), "https://api.github.com");
+        assert_eq!(api_base(Some("github.com")), "https://api.github.com");
+        assert_eq!(api_base(Some("https://github.com/")), "https://api.github.com");
+        // Data residency.
+        assert_eq!(api_base(Some("acme.ghe.com")), "https://api.acme.ghe.com");
+        // Self-hosted GitHub Enterprise Server.
+        assert_eq!(api_base(Some("github.acme.com")), "https://github.acme.com/api/v3");
+        assert_eq!(api_base(Some("https://github.acme.com")), "https://github.acme.com/api/v3");
+    }
+
+    #[test]
+    fn extract_issue_ref_enterprise_host() {
+        assert_eq!(
+            extract_issue_ref("https://github.acme.com/team/app/issues/9"),
+            Some(("team".into(), "app".into(), 9))
+        );
     }
 }

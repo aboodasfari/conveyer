@@ -22,6 +22,7 @@ export interface AdoSourceConfig {
 export interface GithubSourceConfig {
   owner: string;
   repo?: string;
+  host?: string;
 }
 
 export type Bucket = "active" | "backlog" | "archive";

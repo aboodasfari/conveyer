@@ -25,18 +25,25 @@ impl GithubAuthKind {
 }
 
 /// Resolve a raw GitHub token (no `Bearer ` prefix). The caller adds it.
-pub async fn token(kind: GithubAuthKind, pat_env: &str) -> AppResult<String> {
+/// `host` is the bare GitHub host (e.g. "github.acme.com"); None = github.com.
+pub async fn token(kind: GithubAuthKind, pat_env: &str, host: Option<&str>) -> AppResult<String> {
     match kind {
         GithubAuthKind::Pat => std::env::var(pat_env)
             .map_err(|_| AppError::Config(format!("env var {pat_env} not set")))
             .map(|v| v.trim().to_string()),
-        GithubAuthKind::Gh => gh_token().await,
+        GithubAuthKind::Gh => gh_token(host).await,
     }
 }
 
-async fn gh_token() -> AppResult<String> {
-    let out = Command::new("gh")
-        .args(["auth", "token"])
+async fn gh_token(host: Option<&str>) -> AppResult<String> {
+    let mut cmd = Command::new("gh");
+    cmd.args(["auth", "token"]);
+    // Pin the host so Enterprise users get the right instance's token rather
+    // than whatever account happens to be active on github.com.
+    if let Some(h) = host.map(str::trim).filter(|h| !h.is_empty()) {
+        cmd.args(["--hostname", h]);
+    }
+    let out = cmd
         .output()
         .await
         .map_err(|e| {
@@ -46,8 +53,12 @@ async fn gh_token() -> AppResult<String> {
         })?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
+        let hint = match host.map(str::trim).filter(|h| !h.is_empty()) {
+            Some(h) => format!("run `gh auth login --hostname {h}`"),
+            None => "run `gh auth login`".to_string(),
+        };
         return Err(AppError::Config(format!(
-            "`gh auth token` failed (run `gh auth login`): {}",
+            "`gh auth token` failed ({hint}): {}",
             err.trim()
         )));
     }

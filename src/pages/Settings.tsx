@@ -250,7 +250,8 @@ function SourceRow({ source, onDelete }: { source: Source; onDelete: () => void 
       const cfg = JSON.parse(source.config_json) as GithubSourceConfig;
       const scope = cfg.repo ? `${cfg.owner}/${cfg.repo}` : cfg.owner;
       const auth = source.auth_kind === "pat" ? `PAT env: ${source.pat_env}` : "GitHub CLI";
-      detail = `${scope} · ${auth}`;
+      const host = cfg.host && cfg.host !== "github.com" ? `${cfg.host} · ` : "";
+      detail = `${host}${scope} · ${auth}`;
     } else {
       const cfg = JSON.parse(source.config_json) as AdoSourceConfig;
       const auth = source.auth_kind === "entra" ? "SSO (az)" : `PAT env: ${source.pat_env}`;
@@ -303,6 +304,7 @@ function AddSourceModal({
   // GitHub fields
   const [owner, setOwner] = useState("");
   const [repo, setRepo] = useState("");
+  const [ghHost, setGhHost] = useState("");
   // Shared
   const [authKind, setAuthKind] = useState<AuthKind>("entra");
   const [patEnv, setPatEnv] = useState("ADO_PAT");
@@ -314,7 +316,7 @@ function AddSourceModal({
     setStep("kind");
     setKind("ado");
     setOrg(""); setProject(""); setTeam(""); setName("");
-    setOwner(""); setRepo("");
+    setOwner(""); setRepo(""); setGhHost("");
     setAuthKind("entra"); setPatEnv("ADO_PAT");
     setError(null);
   };
@@ -338,7 +340,7 @@ function AddSourceModal({
     try {
       const config_json =
         kind === "github"
-          ? JSON.stringify({ owner, repo: repo || undefined } as GithubSourceConfig)
+          ? JSON.stringify({ owner, repo: repo || undefined, host: ghHost.trim() || undefined } as GithubSourceConfig)
           : JSON.stringify({ org, project, team: team || undefined } as AdoSourceConfig);
       const defaultName =
         kind === "github" ? (repo ? `${owner}/${repo}` : owner) : `${org}/${project}`;
@@ -424,6 +426,13 @@ function AddSourceModal({
             <FormControl>
               <FormControl.Label>Repo (optional)</FormControl.Label>
               <TextInput value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="all repos" />
+            </FormControl>
+            <FormControl>
+              <FormControl.Label>Host (optional)</FormControl.Label>
+              <TextInput value={ghHost} onChange={(e) => setGhHost(e.target.value)} placeholder="github.com" />
+              <FormControl.Caption>
+                For GitHub Enterprise, e.g. github.acme.com or acme.ghe.com.
+              </FormControl.Caption>
             </FormControl>
             <FormControl>
               <FormControl.Label>Auth</FormControl.Label>

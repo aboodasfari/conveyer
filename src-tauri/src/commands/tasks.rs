@@ -154,6 +154,7 @@ async fn tasks_refresh_github(state: &AppState, source_id: &str) -> AppResult<us
     let token = github::auth::token(
         github::auth::GithubAuthKind::parse(&src.auth_kind),
         &src.pat_env,
+        cfg.host.as_deref(),
     )
     .await?;
     let issues = github::fetch_assigned_issues(&cfg, &token).await?;
@@ -323,15 +324,17 @@ pub async fn tasks_add_by_url(
 }
 
 async fn add_github_issue_by_url(state: &AppState, src: &Source, url: &str) -> AppResult<Task> {
+    let cfg: GithubSourceConfig = serde_json::from_str(&src.config_json)?;
     let (owner, repo, number) = github::extract_issue_ref(url).ok_or_else(|| {
         AppError::Config("Could not parse a GitHub issue URL (expected .../<owner>/<repo>/issues/<n>).".into())
     })?;
     let token = github::auth::token(
         github::auth::GithubAuthKind::parse(&src.auth_kind),
         &src.pat_env,
+        cfg.host.as_deref(),
     )
     .await?;
-    let issue = github::fetch_issue(&token, &owner, &repo, number).await?;
+    let issue = github::fetch_issue(&token, cfg.host.as_deref(), &owner, &repo, number).await?;
     let row_id = Uuid::new_v4().to_string();
     sqlx::query(
         "INSERT INTO tasks(id, source_id, source_ref, title, state, url,
