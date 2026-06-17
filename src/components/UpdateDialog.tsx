@@ -1,4 +1,5 @@
-import { Box, Button, Dialog, Text } from "@primer/react";
+import { Box, Button, Text } from "@primer/react";
+import { Dialog } from "@primer/react/experimental";
 import { useUpdateStatus, installAndRelaunch } from "../updater";
 
 interface Props {
