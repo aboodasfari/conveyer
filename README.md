@@ -1,11 +1,32 @@
 # Conveyer
 
-Tauri app that orchestrates Copilot agents through phased work on Azure DevOps tasks.
+A desktop app that orchestrates AI coding agents through structured, phased workflows on your Azure DevOps and GitHub tasks.
 
-## Stack
-React + TypeScript (Vite) · Tauri 2 (Rust) · SQLite (sqlx) · Primer React + Octicons.
+## Features
 
-## Develop
+- **Phased development** — Break tasks into exploration, planning, implementation, review, and submit phases with human checkpoints
+- **Multiple agent backends** — Works with GitHub Copilot coding agents
+- **Azure DevOps & GitHub integration** — Pull work items and issues directly from your boards
+- **Auto-updates** — Get notified when new versions are available and update with one click
+
+## Download
+
+Grab the latest release for your platform from the [Releases](https://github.com/aboodasfari/conveyer/releases) page:
+
+- **macOS** — `.dmg` installer
+- **Windows** — `.exe` installer (NSIS)
+- **Linux** — `.AppImage` or `.deb`
+
+> **macOS note:** The app is not Apple-notarized. On first launch, right-click → Open to bypass Gatekeeper.
+
+## Getting Started
+
+1. Launch Conveyer
+2. Go to **Settings** and add a source (Azure DevOps or GitHub)
+3. For ADO: set your PAT in an environment variable (default `ADO_PAT`) before launching
+4. Tasks from your configured sources appear on the dashboard
+
+## Development
 
 Requirements: Node ≥20, Rust stable (via `rustup`).
 
@@ -14,19 +35,8 @@ npm install
 npm run tauri dev
 ```
 
-Set your ADO PAT in an env var (default name `ADO_PAT`) before launching, then add a source under Settings.
+See [RELEASING.md](RELEASING.md) for maintainer docs on publishing new versions.
 
-## Build
+## License
 
-```sh
-npm run tauri build           # full installer
-npm run tauri build -- --no-bundle  # just the binary
-```
-
-## Layout
-
-- `src-tauri/` — Rust core: db, IPC commands, ADO client.
-- `src/` — React UI (pages, components, typed `api.ts` wrappers).
-- Local DB lives at `~/Library/Application Support/conveyer/conveyer.db` (override with `CONVEYER_DB`).
-
-See the design + roadmap in `vaults/Abood Microsoft/conveyer/`.
+MIT

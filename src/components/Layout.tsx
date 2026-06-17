@@ -1,6 +1,9 @@
 import { Box } from "@primer/react";
-import { GearIcon } from "@primer/octicons-react";
+import { DownloadIcon, GearIcon } from "@primer/octicons-react";
 import { Link, Outlet, useLocation } from "react-router-dom";
+import { useState } from "react";
+import { useUpdateStatus } from "../updater";
+import { UpdateDialog } from "./UpdateDialog";
 
 interface NavItem {
   to: string;
@@ -62,6 +65,7 @@ export function Layout() {
             <NavLink key={item.to} to={item.to} label={item.label} active={isActive(item)} />
           ))}
         </Box>
+        <UpdateButton />
         <IconNavLink to="/settings" label="Settings" active={settingsActive}>
           <GearIcon size={16} />
         </IconNavLink>
@@ -148,5 +152,65 @@ function IconNavLink({
     >
       {children}
     </Box>
+  );
+}
+
+function UpdateButton() {
+  const update = useUpdateStatus();
+  const [open, setOpen] = useState(false);
+  const visible =
+    update.status === "available" ||
+    update.status === "downloading" ||
+    update.status === "ready";
+  if (!visible) return null;
+  const spinning = update.status === "downloading";
+  const label =
+    update.status === "downloading"
+      ? "Installing update…"
+      : update.status === "ready"
+        ? "Update installed — restarting"
+        : `Update available${update.version ? ` — v${update.version}` : ""}`;
+  return (
+    <>
+      <Box
+        as="button"
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-label={label}
+        title={label}
+        data-tauri-drag-region={false}
+        sx={{
+          width: 32,
+          height: 32,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          border: "none",
+          cursor: "pointer",
+          borderRadius: 2,
+          color: "accent.fg",
+          bg: "transparent",
+          transition: "background-color 80ms",
+          "&:hover": {
+            bg: "neutral.subtle",
+          },
+          "& > span": spinning
+            ? {
+                display: "inline-flex",
+                animation: "conveyer-updater-spin 1.2s linear infinite",
+              }
+            : { display: "inline-flex" },
+          "@keyframes conveyer-updater-spin": {
+            from: { transform: "rotate(0deg)" },
+            to: { transform: "rotate(360deg)" },
+          },
+        }}
+      >
+        <span>
+          <DownloadIcon size={16} />
+        </span>
+      </Box>
+      <UpdateDialog isOpen={open} onClose={() => setOpen(false)} />
+    </>
   );
 }
