@@ -213,8 +213,14 @@ async fn tasks_refresh_github(state: &AppState, source_id: &str) -> AppResult<us
         };
         match github::fetch_issue(&token, cfg.host.as_deref(), &owner, &repo, number).await {
             Ok(issue) => {
+                // When an issue transitions to closed, move it to the archive
+                // bucket so it drops off the active board. Only happens on this
+                // open->closed pass (closed rows are skipped above), so we don't
+                // override a user who later un-archives it.
+                let closed = issue.state.eq_ignore_ascii_case("closed");
                 let res = sqlx::query(
                     "UPDATE tasks SET title = ?, state = ?, url = ?, description = ?,
+                                      bucket = CASE WHEN ? = 1 THEN 'archive' ELSE bucket END,
                                       updated_at = datetime('now')
                      WHERE source_id = ? AND source_ref = ?",
                 )
@@ -222,6 +228,7 @@ async fn tasks_refresh_github(state: &AppState, source_id: &str) -> AppResult<us
                 .bind(&issue.state)
                 .bind(&issue.html_url)
                 .bind(&issue.body)
+                .bind(i32::from(closed))
                 .bind(&src.id)
                 .bind(&source_ref)
                 .execute(&state.db)
