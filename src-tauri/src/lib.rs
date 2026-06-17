@@ -16,11 +16,17 @@ use tracing_subscriber::EnvFilter;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let _ = tracing_subscriber::fmt()
+    // Use set_global_default (not try_init): try_init also installs the
+    // log->tracing bridge, which claims the global `log` logger and makes
+    // tauri-plugin-log panic ("attempted to set a logger after the logging
+    // system was already initialized"). Setting only the tracing dispatcher
+    // leaves the `log` logger free for tauri-plugin-log to own.
+    let subscriber = tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
-        .try_init();
+        .finish();
+    let _ = tracing::subscriber::set_global_default(subscriber);
 
     // GUI apps launched from the macOS Dock / Launchpad inherit a minimal
     // PATH that doesn't include the user's shell additions, so subprocess
