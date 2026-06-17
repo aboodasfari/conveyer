@@ -1,15 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Box, Flash, Label, Link, Spinner, Text } from "@primer/react";
-import {
-  ArrowRightIcon,
-  CheckCircleIcon,
-  GitPullRequestIcon,
-  PersonIcon,
-  XCircleIcon,
-} from "@primer/octicons-react";
+import { ArrowRightIcon, GitPullRequestIcon, PersonIcon } from "@primer/octicons-react";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { api } from "../api";
-import { PrCheck, PullRequest } from "../types";
+import { PullRequest } from "../types";
 import { TabPlaceholder } from "./TabPlaceholder";
 import { RichText } from "./RichText";
 
@@ -32,24 +26,11 @@ function parseList(json: string | null): string[] {
   }
 }
 
-function parseChecks(json: string | null): PrCheck[] {
-  if (!json) return [];
-  try {
-    const v = JSON.parse(json);
-    if (!Array.isArray(v)) return [];
-    return v
-      .map((c) => ({ name: String(c?.name ?? ""), status: String(c?.status ?? "") }))
-      .filter((c) => c.name);
-  } catch {
-    return [];
-  }
-}
-
 /**
  * Submit-phase PR preview. The agent first DRAFTS a PR (status 'draft'); we
  * show it here as if it were the real PR. The user clicks "Create pull
  * request" to approve, the agent creates it (status 'creating' -> 'created'),
- * and we then surface the live number/url/checks.
+ * and we then surface the live number/url.
  */
 export function PullRequestView({ phaseId }: { phaseId: string }) {
   const [pr, setPr] = useState<PullRequest | null>(null);
@@ -81,7 +62,6 @@ export function PullRequestView({ phaseId }: { phaseId: string }) {
 
   const reviewers = useMemo(() => parseList(pr?.reviewers_json ?? null), [pr]);
   const workItems = useMemo(() => parseList(pr?.work_items_json ?? null), [pr]);
-  const checks = useMemo(() => parseChecks(pr?.checks_json ?? null), [pr]);
 
   if (loading) {
     return (
@@ -183,23 +163,6 @@ export function PullRequestView({ phaseId }: { phaseId: string }) {
           )}
         </Box>
       )}
-
-      {/* Checks */}
-      {checks.length > 0 && (
-        <Box sx={{ mb: 3 }}>
-          <SectionLabel>Checks</SectionLabel>
-          {checks.map((c) => (
-            <Box
-              key={c.name}
-              sx={{ display: "flex", alignItems: "center", gap: 2, fontSize: 1, py: "2px" }}
-            >
-              <CheckStatusIcon status={c.status} />
-              <Text>{c.name}</Text>
-              <Text sx={{ color: "fg.muted" }}>{c.status}</Text>
-            </Box>
-          ))}
-        </Box>
-      )}
     </Box>
   );
 }
@@ -219,28 +182,5 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
     >
       {children}
     </Text>
-  );
-}
-
-function CheckStatusIcon({ status }: { status: string }) {
-  const s = status.toLowerCase();
-  if (s.includes("pass") || s.includes("success") || s.includes("succeed")) {
-    return (
-      <Box sx={{ color: "success.fg" }}>
-        <CheckCircleIcon size={14} />
-      </Box>
-    );
-  }
-  if (s.includes("fail") || s.includes("error") || s.includes("reject")) {
-    return (
-      <Box sx={{ color: "danger.fg" }}>
-        <XCircleIcon size={14} />
-      </Box>
-    );
-  }
-  return (
-    <Box sx={{ color: "attention.fg" }}>
-      <Spinner size="small" />
-    </Box>
   );
 }
