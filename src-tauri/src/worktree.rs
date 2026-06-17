@@ -84,7 +84,7 @@ pub async fn ensure_for_run(
     }
 
     let worktree = expected_worktree;
-    let base_sha = git_capture(codebase_path, &["rev-parse", "HEAD"])?;
+    let (base_branch, base_sha) = resolve_base(codebase_path);
 
     if !worktree.exists() {
         // Try to add the worktree with a new branch. If the branch already
@@ -122,16 +122,73 @@ pub async fn ensure_for_run(
     }
 
     sqlx::query(
-        "UPDATE runs SET worktree_path = ?, branch_name = ?, base_sha = ? WHERE id = ?",
+        "UPDATE runs SET worktree_path = ?, branch_name = ?, base_sha = ?, base_branch = ? WHERE id = ?",
     )
     .bind(worktree.to_string_lossy().to_string())
     .bind(&branch)
     .bind(&base_sha)
+    .bind(&base_branch)
     .bind(run_id)
     .execute(&state.db)
     .await?;
 
     Ok((worktree, branch, base_sha))
+}
+
+/// Resolve the remote default branch and ensure we have its latest commit, so
+/// every run is cut from up-to-date upstream rather than the user's possibly
+/// stale local checkout. Returns `(Some(branch), latest_sha)` when an origin
+/// default branch is found; falls back to `(None, local HEAD)` for repos with
+/// no usable remote (local-only / demo) so those runs still work unchanged.
+///
+/// The fetch is best-effort: offline or auth failures degrade to the remote
+/// tracking ref if present, else the local HEAD.
+fn resolve_base(codebase: &Path) -> (Option<String>, String) {
+    let local_head = git_capture(codebase, &["rev-parse", "HEAD"]).unwrap_or_default();
+    let Some(branch) = default_remote_branch(codebase) else {
+        return (None, local_head);
+    };
+    let fetched = Command::new("git")
+        .arg("-C").arg(codebase)
+        .args(["fetch", "origin", &branch])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    let tracking = format!("origin/{branch}");
+    let sha = if fetched {
+        git_capture(codebase, &["rev-parse", "FETCH_HEAD"])
+            .or_else(|_| git_capture(codebase, &["rev-parse", &tracking]))
+            .unwrap_or_else(|_| local_head.clone())
+    } else {
+        git_capture(codebase, &["rev-parse", &tracking]).unwrap_or_else(|_| local_head.clone())
+    };
+    (Some(branch), sha)
+}
+
+/// Best-effort lookup of origin's default branch name (e.g. "main").
+/// Prefers the local `origin/HEAD` symref (fast, no network); falls back to
+/// `git remote show origin` (network) for remotes added manually without a
+/// HEAD symref. Returns None when there's no origin.
+fn default_remote_branch(codebase: &Path) -> Option<String> {
+    if let Ok(s) = git_capture(codebase, &["symbolic-ref", "refs/remotes/origin/HEAD"]) {
+        if let Some(name) = s.rsplit('/').next() {
+            let name = name.trim();
+            if !name.is_empty() {
+                return Some(name.to_string());
+            }
+        }
+    }
+    if let Ok(s) = git_capture(codebase, &["remote", "show", "origin"]) {
+        for line in s.lines() {
+            if let Some(rest) = line.trim().strip_prefix("HEAD branch:") {
+                let name = rest.trim();
+                if !name.is_empty() && name != "(unknown)" {
+                    return Some(name.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Strip internal `[conveyer-comment:...]` markers from commit messages on
@@ -296,6 +353,81 @@ mod tests {
 
         // No marker present -> SHAs untouched.
         assert_eq!(git(&["rev-parse", "HEAD"]), head_before);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_base_returns_latest_upstream() {
+        use std::process::Command;
+        let root = std::env::temp_dir().join(format!("conveyer-base-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let remote = root.join("remote.git");
+        let a = root.join("a");
+        let b = root.join("b");
+        let git = |dir: &Path, args: &[&str]| {
+            let out = Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
+            assert!(out.status.success(), "git {:?}: {}", args, String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        // Bare remote with a `main` default branch.
+        let out = Command::new("git")
+            .args(["init", "--bare", "-b", "main"])
+            .arg(&remote)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+
+        // Clone A, seed first commit, push to remote/main.
+        assert!(Command::new("git").args(["clone", "-q"]).arg(&remote).arg(&a).output().unwrap().status.success());
+        git(&a, &["config", "user.email", "t@t.com"]);
+        git(&a, &["config", "user.name", "T"]);
+        std::fs::write(a.join("f"), "1").unwrap();
+        git(&a, &["add", "."]);
+        git(&a, &["commit", "-q", "-m", "c1"]);
+        git(&a, &["push", "-q", "origin", "main"]);
+
+        // Clone B (this is our "user checkout"): now origin/HEAD -> main and
+        // local main == c1.
+        assert!(Command::new("git").args(["clone", "-q"]).arg(&remote).arg(&b).output().unwrap().status.success());
+        let stale = git(&b, &["rev-parse", "HEAD"]);
+
+        // Upstream advances via A: push c2. B's local main is now stale.
+        std::fs::write(a.join("f"), "2").unwrap();
+        git(&a, &["add", "."]);
+        git(&a, &["commit", "-q", "-m", "c2"]);
+        git(&a, &["push", "-q", "origin", "main"]);
+        let latest = git(&a, &["rev-parse", "HEAD"]);
+
+        let (branch, sha) = resolve_base(&b);
+        assert_eq!(branch.as_deref(), Some("main"));
+        assert_eq!(sha, latest, "should resolve the up-to-date upstream tip, not stale local");
+        assert_ne!(sha, stale);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_base_no_remote_falls_back_to_head() {
+        use std::process::Command;
+        let dir = std::env::temp_dir().join(format!("conveyer-noremote-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| {
+            let out = Command::new("git").arg("-C").arg(&dir).args(args).output().unwrap();
+            assert!(out.status.success(), "git {:?}: {}", args, String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.email", "t@t.com"]);
+        git(&["config", "user.name", "T"]);
+        std::fs::write(dir.join("a"), "a").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "only"]);
+        let head = git(&["rev-parse", "HEAD"]);
+
+        let (branch, sha) = resolve_base(&dir);
+        assert_eq!(branch, None);
+        assert_eq!(sha, head);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

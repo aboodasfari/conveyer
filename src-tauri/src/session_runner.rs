@@ -1917,15 +1917,21 @@ async fn handle_line(
             .await;
         }
         SidecarEvent::ProposePr { title, target_branch, description, reviewers, work_items } => {
-            // Source branch comes from the run, not the agent.
-            let source_branch: Option<String> = sqlx::query_scalar(
-                "SELECT r.branch_name FROM phases p JOIN runs r ON r.id = p.run_id WHERE p.id = ?",
+            // Source + base branch come from the run, not the agent. The base
+            // branch is the remote default we cut from, so the PR target is
+            // deterministic; fall back to the agent's guess only if we somehow
+            // don't have one (e.g. a repo with no detectable origin).
+            let run_branches: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+                "SELECT r.branch_name, r.base_branch
+                 FROM phases p JOIN runs r ON r.id = p.run_id WHERE p.id = ?",
             )
             .bind(phase_id)
             .fetch_optional(&state.db)
             .await
             .ok()
             .flatten();
+            let (source_branch, base_branch) = run_branches.unwrap_or((None, None));
+            let target_branch = base_branch.or(target_branch);
             let reviewers_json = reviewers.map(|v| serde_json::to_string(&v).unwrap_or_default());
             let work_items_json = work_items.map(|v| serde_json::to_string(&v).unwrap_or_default());
             // Upsert as a draft. Don't clobber an already-created PR.
