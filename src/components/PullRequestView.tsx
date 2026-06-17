@@ -105,7 +105,7 @@ export function PullRequestView({ phaseId }: { phaseId: string }) {
   const isFailed = pr.status === "failed";
 
   return (
-    <Box sx={{ overflowY: "auto", maxWidth: 820 }}>
+    <Box sx={{ overflowY: "auto", pr: 3, maxWidth: 820 }}>
       {/* Title row */}
       <Box sx={{ display: "flex", alignItems: "flex-start", gap: 2, mb: 2 }}>
         <Box sx={{ color: isProposed ? "attention.fg" : "success.fg", mt: "2px" }}>

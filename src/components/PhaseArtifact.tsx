@@ -57,7 +57,7 @@ export function PhaseArtifact({
     return <TabPlaceholder title={emptyHint} />;
   }
   return (
-    <Box sx={{ height: "100%", overflowY: "auto" }}>
+    <Box sx={{ height: "100%", overflowY: "auto", pr: 3 }}>
       <RichText content={content} />
     </Box>
   );
