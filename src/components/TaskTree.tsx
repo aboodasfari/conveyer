@@ -278,7 +278,11 @@ function ChildRow({ task, last }: { task: TaskSummary; last: boolean }) {
         borderBottomStyle: "solid",
         borderBottomColor: "border.muted",
         transition: "background-color 80ms",
-        "&:hover": { bg: "canvas.subtle" },
+        // The child container sits on `canvas.inset`, which equals
+        // `canvas.subtle` in the light theme — so a `canvas.subtle` hover would
+        // be invisible there. `neutral.muted` is a translucent overlay that
+        // reads on any surface, matching Primer's own ActionList hover.
+        "&:hover": { bg: "neutral.muted" },
       }}
     >
       <Box sx={{ flex: 1, minWidth: 0 }}>
