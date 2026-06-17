@@ -108,7 +108,7 @@ export async function installAndRelaunch(): Promise<void> {
     await relaunch();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.debug("[updater] install failed", message);
+    console.error("[updater] install failed", message);
     setState({ status: "error", error: message });
   }
 }
