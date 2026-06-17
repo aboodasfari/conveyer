@@ -1,7 +1,8 @@
 use crate::ado;
 use crate::ado::auth::{header_value, AuthInputs, AuthKind};
 use crate::error::AppResult;
-use crate::models::{AdoSourceConfig, Source};
+use crate::github;
+use crate::models::{AdoSourceConfig, GithubSourceConfig, Source};
 use crate::state::AppState;
 use serde::Deserialize;
 use tauri::State;
@@ -100,18 +101,28 @@ pub async fn sources_delete(state: State<'_, AppState>, id: String) -> AppResult
 /// Used by the Settings form to give immediate feedback on Add.
 #[tauri::command]
 pub async fn sources_test(input: SourceInput) -> AppResult<()> {
-    if input.kind != "ado" {
-        return Err(crate::error::AppError::Config(format!(
-            "unsupported source kind {}",
-            input.kind
-        )));
+    match input.kind.as_str() {
+        "ado" => {
+            let cfg: AdoSourceConfig = serde_json::from_str(&input.config_json)?;
+            let auth = header_value(AuthInputs {
+                kind: AuthKind::parse(&input.auth_kind),
+                pat_env: &input.pat_env,
+                az_account: &input.az_account,
+            })
+            .await?;
+            ado::ping(&cfg, &auth).await
+        }
+        "github" => {
+            let cfg: GithubSourceConfig = serde_json::from_str(&input.config_json)?;
+            let token = github::auth::token(
+                github::auth::GithubAuthKind::parse(&input.auth_kind),
+                &input.pat_env,
+            )
+            .await?;
+            github::ping(&cfg, &token).await
+        }
+        other => Err(crate::error::AppError::Config(format!(
+            "unsupported source kind {other}"
+        ))),
     }
-    let cfg: AdoSourceConfig = serde_json::from_str(&input.config_json)?;
-    let auth = header_value(AuthInputs {
-        kind: AuthKind::parse(&input.auth_kind),
-        pat_env: &input.pat_env,
-        az_account: &input.az_account,
-    })
-    .await?;
-    ado::ping(&cfg, &auth).await
 }

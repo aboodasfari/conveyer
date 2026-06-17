@@ -20,6 +20,13 @@ pub struct AdoSourceConfig {
     pub team: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GithubSourceConfig {
+    pub owner: String,
+    #[serde(default)]
+    pub repo: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Task {
     pub id: String,

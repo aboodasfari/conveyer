@@ -2,7 +2,8 @@ use crate::ado;
 use crate::ado::auth::{header_value, AuthInputs, AuthKind};
 use crate::ado::{is_skip_type, is_story_type, WorkItem};
 use crate::error::{AppError, AppResult};
-use crate::models::{AdoSourceConfig, Source, Task};
+use crate::github;
+use crate::models::{AdoSourceConfig, GithubSourceConfig, Source, Task};
 use crate::state::AppState;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -33,6 +34,16 @@ async fn source_auth_header(src: &Source) -> AppResult<String> {
         az_account: &src.az_account,
     })
     .await
+}
+
+async fn load_source(state: &AppState, source_id: &str) -> AppResult<Source> {
+    sqlx::query_as::<_, Source>(&format!(
+        "SELECT {SOURCE_COLS} FROM sources WHERE id=?"
+    ))
+    .bind(source_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("source {source_id}")))
 }
 
 async fn load_ado_source(
@@ -123,19 +134,66 @@ pub async fn tasks_list(state: State<'_, AppState>) -> AppResult<Vec<TaskSummary
 /// Returns count of rows touched.
 #[tauri::command]
 pub async fn tasks_refresh(state: State<'_, AppState>, source_id: String) -> AppResult<usize> {
-    // Short-circuit for non-ADO sources (e.g. the demo source seeded from
-    // tasks_seed_demo): they don't pull from anywhere remote.
+    // Dispatch on the source kind. Local/demo sources don't pull remotely.
     let kind: Option<(String,)> = sqlx::query_as("SELECT kind FROM sources WHERE id = ?")
         .bind(&source_id)
         .fetch_optional(&state.db)
         .await?;
-    if let Some((k,)) = &kind {
-        if k != "ado" {
-            return Ok(0);
+    match kind.as_ref().map(|(k,)| k.as_str()) {
+        Some("ado") => tasks_refresh_ado(&state, &source_id).await,
+        Some("github") => tasks_refresh_github(&state, &source_id).await,
+        _ => Ok(0),
+    }
+}
+
+/// Refresh issues assigned to the user from a GitHub source. GitHub issues are
+/// flat (no parent hop), so each becomes a top-level, self-assigned task.
+async fn tasks_refresh_github(state: &AppState, source_id: &str) -> AppResult<usize> {
+    let src = load_source(state, source_id).await?;
+    let cfg: GithubSourceConfig = serde_json::from_str(&src.config_json)?;
+    let token = github::auth::token(
+        github::auth::GithubAuthKind::parse(&src.auth_kind),
+        &src.pat_env,
+    )
+    .await?;
+    let issues = github::fetch_assigned_issues(&cfg, &token).await?;
+
+    let mut changed = 0usize;
+    for issue in &issues {
+        let id = Uuid::new_v4().to_string();
+        let res = sqlx::query(
+            "INSERT INTO tasks(id, source_id, source_ref, title, state, url,
+                               source_meta_json, parent_ref, is_self_assigned,
+                               description, updated_at)
+             VALUES(?, ?, ?, ?, ?, ?, ?, NULL, 1, ?, datetime('now'))
+             ON CONFLICT(source_id, source_ref) DO UPDATE SET
+                title            = excluded.title,
+                state            = excluded.state,
+                url              = excluded.url,
+                source_meta_json = excluded.source_meta_json,
+                is_self_assigned = 1,
+                description      = excluded.description,
+                updated_at       = datetime('now')",
+        )
+        .bind(&id)
+        .bind(&src.id)
+        .bind(issue.source_ref())
+        .bind(&issue.title)
+        .bind(&issue.state)
+        .bind(&issue.html_url)
+        .bind("{}")
+        .bind(&issue.body)
+        .execute(&state.db)
+        .await?;
+        if res.rows_affected() > 0 {
+            changed += 1;
         }
     }
+    Ok(changed)
+}
 
-    let (src, cfg, auth) = load_ado_source(&state, &source_id).await?;
+async fn tasks_refresh_ado(state: &AppState, source_id: &str) -> AppResult<usize> {
+    let (src, cfg, auth) = load_ado_source(state, source_id).await?;
 
     // 1. WIQL → currently-assigned ids
     let assigned = ado::fetch_assigned_work_items(&cfg, &auth).await?;
@@ -256,8 +314,60 @@ pub async fn tasks_add_by_url(
     source_id: String,
     url: String,
 ) -> AppResult<Task> {
-    let (src, cfg, auth) = load_ado_source(&state, &source_id).await?;
-    let id_num = ado::extract_work_item_id(&url)
+    let src = load_source(&state, &source_id).await?;
+    match src.kind.as_str() {
+        "github" => add_github_issue_by_url(&state, &src, &url).await,
+        "ado" => add_ado_item_by_url(&state, &src, &url).await,
+        other => Err(AppError::Config(format!("unsupported source kind {other}"))),
+    }
+}
+
+async fn add_github_issue_by_url(state: &AppState, src: &Source, url: &str) -> AppResult<Task> {
+    let (owner, repo, number) = github::extract_issue_ref(url).ok_or_else(|| {
+        AppError::Config("Could not parse a GitHub issue URL (expected .../<owner>/<repo>/issues/<n>).".into())
+    })?;
+    let token = github::auth::token(
+        github::auth::GithubAuthKind::parse(&src.auth_kind),
+        &src.pat_env,
+    )
+    .await?;
+    let issue = github::fetch_issue(&token, &owner, &repo, number).await?;
+    let row_id = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO tasks(id, source_id, source_ref, title, state, url,
+                           source_meta_json, parent_ref, is_self_assigned,
+                           description, updated_at)
+         VALUES(?, ?, ?, ?, ?, ?, '{}', NULL, 1, ?, datetime('now'))
+         ON CONFLICT(source_id, source_ref) DO UPDATE SET
+            title            = excluded.title,
+            state            = excluded.state,
+            url              = excluded.url,
+            description      = excluded.description,
+            updated_at       = datetime('now')",
+    )
+    .bind(&row_id)
+    .bind(&src.id)
+    .bind(issue.source_ref())
+    .bind(&issue.title)
+    .bind(&issue.state)
+    .bind(&issue.html_url)
+    .bind(&issue.body)
+    .execute(&state.db)
+    .await?;
+    sqlx::query_as::<_, Task>(&format!(
+        "SELECT {TASK_COLS} FROM tasks WHERE source_id=? AND source_ref=?"
+    ))
+    .bind(&src.id)
+    .bind(issue.source_ref())
+    .fetch_one(&state.db)
+    .await
+    .map_err(Into::into)
+}
+
+async fn add_ado_item_by_url(state: &AppState, src: &Source, url: &str) -> AppResult<Task> {
+    let cfg: AdoSourceConfig = serde_json::from_str(&src.config_json)?;
+    let auth = source_auth_header(src).await?;
+    let id_num = ado::extract_work_item_id(url)
         .ok_or_else(|| AppError::Config("Could not parse work item ID from URL.".into()))?;
     let item = ado::fetch_work_item(&cfg, &auth, id_num).await?;
     let row_id = Uuid::new_v4().to_string();

@@ -11,11 +11,17 @@ export interface Source {
 }
 
 export type AuthKind = "pat" | "entra";
+export type GithubAuthKind = "gh" | "pat";
 
 export interface AdoSourceConfig {
   org: string;
   project: string;
   team?: string;
+}
+
+export interface GithubSourceConfig {
+  owner: string;
+  repo?: string;
 }
 
 export type Bucket = "active" | "backlog" | "archive";

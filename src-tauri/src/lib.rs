@@ -2,6 +2,7 @@ mod ado;
 mod commands;
 mod db;
 mod error;
+mod github;
 mod macos;
 mod models;
 mod session_runner;

@@ -20,6 +20,7 @@ import {
   AdoSourceConfig,
   AuthKind,
   Gate,
+  GithubSourceConfig,
   PHASE_KINDS,
   Source,
   Workspace,
@@ -243,9 +244,20 @@ function SourcesSection() {
 }
 
 function SourceRow({ source, onDelete }: { source: Source; onDelete: () => void }) {
-  let cfg: AdoSourceConfig | null = null;
-  try { cfg = JSON.parse(source.config_json); } catch { /* noop */ }
-  const auth = source.auth_kind === "entra" ? "SSO (az)" : `PAT env: ${source.pat_env}`;
+  let detail = "";
+  try {
+    if (source.kind === "github") {
+      const cfg = JSON.parse(source.config_json) as GithubSourceConfig;
+      const scope = cfg.repo ? `${cfg.owner}/${cfg.repo}` : cfg.owner;
+      const auth = source.auth_kind === "pat" ? `PAT env: ${source.pat_env}` : "GitHub CLI";
+      detail = `${scope} · ${auth}`;
+    } else {
+      const cfg = JSON.parse(source.config_json) as AdoSourceConfig;
+      const auth = source.auth_kind === "entra" ? "SSO (az)" : `PAT env: ${source.pat_env}`;
+      detail = `${cfg.org} / ${cfg.project}${cfg.team ? ` / ${cfg.team}` : ""} · ${auth}`;
+    }
+  } catch { /* noop */ }
+  const kindLabel = source.kind === "github" ? "GitHub" : "Azure DevOps";
   return (
     <Box
       sx={{
@@ -261,9 +273,9 @@ function SourceRow({ source, onDelete }: { source: Source; onDelete: () => void 
     >
       <Box>
         <Text sx={{ fontWeight: "bold" }}>{source.name}</Text>
-        {cfg && (
+        {detail && (
           <Text sx={{ display: "block", color: "fg.muted", fontSize: 0 }}>
-            {cfg.org} / {cfg.project}{cfg.team ? ` / ${cfg.team}` : ""} · {auth}
+            {kindLabel} · {detail}
           </Text>
         )}
       </Box>
@@ -282,11 +294,16 @@ function AddSourceModal({
   onAdded: () => void;
 }) {
   const [step, setStep] = useState<"kind" | "form">("kind");
-  const [kind, setKind] = useState<"ado">("ado");
+  const [kind, setKind] = useState<"ado" | "github">("ado");
 
+  // ADO fields
   const [org, setOrg] = useState("");
   const [project, setProject] = useState("");
   const [team, setTeam] = useState("");
+  // GitHub fields
+  const [owner, setOwner] = useState("");
+  const [repo, setRepo] = useState("");
+  // Shared
   const [authKind, setAuthKind] = useState<AuthKind>("entra");
   const [patEnv, setPatEnv] = useState("ADO_PAT");
   const [name, setName] = useState("");
@@ -295,20 +312,39 @@ function AddSourceModal({
 
   const reset = () => {
     setStep("kind");
+    setKind("ado");
     setOrg(""); setProject(""); setTeam(""); setName("");
+    setOwner(""); setRepo("");
     setAuthKind("entra"); setPatEnv("ADO_PAT");
     setError(null);
   };
 
   const close = () => { reset(); onClose(); };
 
+  // Auth defaults differ per kind: ADO uses Entra(az), GitHub uses the gh CLI.
+  const goToForm = () => {
+    if (kind === "github") {
+      setAuthKind("gh" as AuthKind);
+      setPatEnv("GITHUB_TOKEN");
+    } else {
+      setAuthKind("entra");
+      setPatEnv("ADO_PAT");
+    }
+    setStep("form");
+  };
+
   const submit = async () => {
     setError(null); setBusy(true);
     try {
-      const cfg: AdoSourceConfig = { org, project, team: team || undefined };
+      const config_json =
+        kind === "github"
+          ? JSON.stringify({ owner, repo: repo || undefined } as GithubSourceConfig)
+          : JSON.stringify({ org, project, team: team || undefined } as AdoSourceConfig);
+      const defaultName =
+        kind === "github" ? (repo ? `${owner}/${repo}` : owner) : `${org}/${project}`;
       const input = {
-        kind, name: name || `${org}/${project}`,
-        config_json: JSON.stringify(cfg),
+        kind, name: name || defaultName,
+        config_json,
         pat_env: patEnv, enabled: true,
         auth_kind: authKind, az_account: "",
       };
@@ -323,17 +359,25 @@ function AddSourceModal({
     }
   };
 
+  const canSubmit = kind === "github" ? !!owner : !!org && !!project;
+
   return (
     <Modal
       open={open}
       onClose={close}
-      title={step === "kind" ? "Add Source" : "Configure Azure DevOps Source"}
+      title={
+        step === "kind"
+          ? "Add Source"
+          : kind === "github"
+            ? "Configure GitHub Source"
+            : "Configure Azure DevOps Source"
+      }
       error={step === "form" ? error : null}
       footer={
         step === "kind" ? (
           <>
             <Button onClick={close}>Cancel</Button>
-            <Button variant="primary" onClick={() => setStep("form")}>Next</Button>
+            <Button variant="primary" onClick={goToForm}>Next</Button>
           </>
         ) : (
           <>
@@ -341,7 +385,7 @@ function AddSourceModal({
             <Button
               variant="primary"
               onClick={submit}
-              disabled={!org || !project || busy}
+              disabled={!canSubmit || busy}
             >
               {busy ? "Testing & Saving…" : "Add"}
             </Button>
@@ -350,12 +394,61 @@ function AddSourceModal({
       }
     >
       {step === "kind" ? (
-        <RadioGroup name="src-kind" onChange={(v) => setKind(v as "ado")}>
+        <RadioGroup name="src-kind" onChange={(v) => setKind(v as "ado" | "github")}>
           <FormControl>
             <Radio value="ado" checked={kind === "ado"} />
             <FormControl.Label>Azure DevOps</FormControl.Label>
           </FormControl>
+          <FormControl>
+            <Radio value="github" checked={kind === "github"} />
+            <FormControl.Label>GitHub</FormControl.Label>
+          </FormControl>
         </RadioGroup>
+      ) : kind === "github" ? (
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          <FormControl>
+            <FormControl.Label>Name</FormControl.Label>
+            <TextInput
+              block
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="My GitHub issues"
+            />
+          </FormControl>
+          <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3 }}>
+            <FormControl required>
+              <FormControl.Label>Owner</FormControl.Label>
+              <TextInput value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="org-or-user" />
+              <FormControl.Caption>Org or user login.</FormControl.Caption>
+            </FormControl>
+            <FormControl>
+              <FormControl.Label>Repo (optional)</FormControl.Label>
+              <TextInput value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="all repos" />
+            </FormControl>
+            <FormControl>
+              <FormControl.Label>Auth</FormControl.Label>
+              <RadioGroup name="gh-auth-kind" onChange={(v) => setAuthKind(v as AuthKind)}>
+                <FormControl>
+                  <Radio value="gh" checked={authKind === ("gh" as AuthKind)} />
+                  <FormControl.Label>GitHub CLI (via `gh`)</FormControl.Label>
+                </FormControl>
+                <FormControl>
+                  <Radio value="pat" checked={authKind === "pat"} />
+                  <FormControl.Label>Personal access token</FormControl.Label>
+                </FormControl>
+              </RadioGroup>
+            </FormControl>
+            {authKind === "pat" && (
+              <FormControl>
+                <FormControl.Label>PAT env var</FormControl.Label>
+                <TextInput value={patEnv} onChange={(e) => setPatEnv(e.target.value)} />
+                <FormControl.Caption>
+                  Conveyer reads this env var at refresh time.
+                </FormControl.Caption>
+              </FormControl>
+            )}
+          </Box>
+        </Box>
       ) : (
         <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
           <FormControl>
