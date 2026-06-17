@@ -421,7 +421,6 @@ function AddSourceModal({
             <FormControl required>
               <FormControl.Label>Owner</FormControl.Label>
               <TextInput value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="org-or-user" />
-              <FormControl.Caption>Org or user login.</FormControl.Caption>
             </FormControl>
             <FormControl>
               <FormControl.Label>Repo (optional)</FormControl.Label>
@@ -430,9 +429,6 @@ function AddSourceModal({
             <FormControl>
               <FormControl.Label>Host (optional)</FormControl.Label>
               <TextInput value={ghHost} onChange={(e) => setGhHost(e.target.value)} placeholder="github.com" />
-              <FormControl.Caption>
-                For GitHub Enterprise, e.g. github.acme.com or acme.ghe.com.
-              </FormControl.Caption>
             </FormControl>
             <FormControl>
               <FormControl.Label>Auth</FormControl.Label>
