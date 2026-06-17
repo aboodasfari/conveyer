@@ -4,7 +4,8 @@
 //! can commit freely without disturbing the user's checkout. We follow the
 //! convention used by `wt`/worktrunk: the worktree lives next to the original
 //! checkout as `<repo>.<branch-with-slashes-dashed>`, and the branch is named
-//! `abdulasfari/<slug-of-task-title>`.
+//! `<user-alias>/<slug-of-task-title>` where the alias is derived from the
+//! repo's git identity.
 //!
 //! Public entry point: [`ensure_for_run`]. Idempotent — returns the stored
 //! worktree path if one already exists on the run row.
@@ -15,7 +16,27 @@ use std::process::Command;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
-const BRANCH_PREFIX: &str = "abdulasfari/";
+/// Branch prefix used when the user's git identity can't be resolved.
+const FALLBACK_ALIAS: &str = "conveyer";
+
+/// Derive a branch-name alias from the repo's git identity, so branches read
+/// `<alias>/<task-slug>` for whoever is running the app (not a hardcoded
+/// person). Prefers the local-part of `user.email`, then `user.name`; falls
+/// back to a generic alias when neither is set.
+fn user_alias(codebase: &Path) -> String {
+    for key in ["user.email", "user.name"] {
+        if let Ok(v) = git_capture(codebase, &["config", key]) {
+            let raw = v.split('@').next().unwrap_or("").trim();
+            if !raw.is_empty() {
+                let slug = slugify(raw);
+                if slug != "task" {
+                    return slug;
+                }
+            }
+        }
+    }
+    FALLBACK_ALIAS.to_string()
+}
 
 /// Convert a free-form task title to a branch-safe slug.
 /// Lowercase, alphanumerics + dashes only, collapsed, max 48 chars.
@@ -42,7 +63,7 @@ pub fn slugify(title: &str) -> String {
 }
 
 /// Derive the worktree directory for a given codebase + branch.
-/// `/Users/x/code/repo` + `abdulasfari/foo` -> `/Users/x/code/repo.abdulasfari-foo`.
+/// `/Users/x/code/repo` + `alice/foo` -> `/Users/x/code/repo.alice-foo`.
 pub fn worktree_path_for(codebase: &Path, branch: &str) -> PathBuf {
     let dashed = branch.replace('/', "-");
     let basename = codebase
@@ -70,7 +91,7 @@ pub async fn ensure_for_run(
     .bind(run_id)
     .fetch_optional(&state.db)
     .await?;
-    let branch = format!("{BRANCH_PREFIX}{}", slugify(task_title));
+    let branch = format!("{}/{}", user_alias(codebase_path), slugify(task_title));
     let expected_worktree = worktree_path_for(codebase_path, &branch);
 
     if let Some((Some(wt), Some(br), Some(sha))) = existing {
@@ -428,6 +449,26 @@ mod tests {
         let (branch, sha) = resolve_base(&dir);
         assert_eq!(branch, None);
         assert_eq!(sha, head);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn user_alias_from_git_identity_and_fallback() {
+        use std::process::Command;
+        let dir = std::env::temp_dir().join(format!("conveyer-alias-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let set = |k: &str, v: &str| {
+            assert!(Command::new("git").arg("-C").arg(&dir).args(["config", k, v]).output().unwrap().status.success());
+        };
+        assert!(Command::new("git").arg("-C").arg(&dir).args(["init", "-q"]).output().unwrap().status.success());
+        // Local-part of the email wins, sanitized.
+        set("user.email", "Alice.Smith@example.com");
+        assert_eq!(user_alias(&dir), "alice-smith");
+        // With an empty local email (overrides global), fall back to user.name.
+        set("user.email", "");
+        set("user.name", "Bob Jones");
+        assert_eq!(user_alias(&dir), "bob-jones");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

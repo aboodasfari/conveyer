@@ -278,7 +278,7 @@ function phaseTools() {
       description:
         "Pin the absolute workspace path this task should run in for the rest of the run. " +
         "Call this once during exploration if the task does not already have a workspace pinned. " +
-        "Pass an absolute filesystem path (e.g. /Users/abdul/code/rp). Conveyer will save the " +
+        "Pass an absolute filesystem path (e.g. /Users/you/code/your-repo). Conveyer will save the " +
         "pin to the task so all subsequent phases (planning, implementation, review, submit) " +
         "operate in this workspace and create the worktree from it.",
       parameters: {

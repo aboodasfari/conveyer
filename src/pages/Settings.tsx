@@ -182,16 +182,18 @@ function SourcesSection() {
         noBorder
         actions={
           <Box sx={{ display: "flex", gap: 2 }}>
-            <Button
-              onClick={async () => {
-                try {
-                  await api.tasksSeedDemo();
-                  await load();
-                } catch (e) { setError(formatError(e)); }
-              }}
-            >
-              Seed Demo Data
-            </Button>
+            {import.meta.env.DEV && (
+              <Button
+                onClick={async () => {
+                  try {
+                    await api.tasksSeedDemo();
+                    await load();
+                  } catch (e) { setError(formatError(e)); }
+                }}
+              >
+                Seed Demo Data
+              </Button>
+            )}
             <Button leadingVisual={PlusIcon} variant="primary" onClick={() => setAddOpen(true)}>
               Add Source
             </Button>
@@ -362,17 +364,17 @@ function AddSourceModal({
               block
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="msazure-aks"
+              placeholder="My ADO board"
             />
           </FormControl>
           <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3 }}>
             <FormControl required>
               <FormControl.Label>Organisation</FormControl.Label>
-              <TextInput value={org} onChange={(e) => setOrg(e.target.value)} placeholder="msazure" />
+              <TextInput value={org} onChange={(e) => setOrg(e.target.value)} placeholder="your-org" />
             </FormControl>
             <FormControl required>
               <FormControl.Label>Project</FormControl.Label>
-              <TextInput value={project} onChange={(e) => setProject(e.target.value)} placeholder="CloudNativeCompute" />
+              <TextInput value={project} onChange={(e) => setProject(e.target.value)} placeholder="your-project" />
             </FormControl>
             <FormControl>
               <FormControl.Label>Team (optional)</FormControl.Label>

@@ -1454,7 +1454,7 @@ async fn run_one(
     let (ctx, run_id, phase_kind) = load_phase_context(&state, phase_id).await?;
 
     // For implementation/review/submit, Conveyer owns a dedicated git worktree
-    // on branch `abdulasfari/<slug>`. Created lazily on the first such phase
+    // on branch `<user-alias>/<slug>`. Created lazily on the first such phase
     // (typically implementation), reused by the rest. The working directory
     // for the SDK session is the worktree so all file ops naturally land on
     // the branch and `git diff base..HEAD` is meaningful.

@@ -304,6 +304,12 @@ pub async fn tasks_add_by_url(
 /// run pipeline without needing a real ADO source.
 #[tauri::command]
 pub async fn tasks_seed_demo(state: State<'_, AppState>) -> AppResult<()> {
+    // Demo data is a development aid only — never seed it in release builds.
+    if !cfg!(debug_assertions) {
+        return Err(AppError::Config(
+            "Demo data is only available in development builds.".into(),
+        ));
+    }
     // 1. Default the codebase to the test repo if the user hasn't picked one.
     let existing_cb: Option<(String,)> = sqlx::query_as(
         "SELECT value FROM settings WHERE key = 'codebase_path'",

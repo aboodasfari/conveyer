@@ -36,14 +36,20 @@ pub async fn init() -> AppResult<Db> {
 
 /// One-off defaults for fresh databases. Keys are only written when they
 /// don't already exist, so users won't have settings clobbered after edits.
+///
+/// In release builds we seed nothing personal — a fresh user configures their
+/// own workspace. In dev we point the default codebase at the local test repo
+/// so the demo flow works out of the box.
 async fn seed_defaults(pool: &Db) -> AppResult<()> {
-    let home = std::env::var("HOME").unwrap_or_default();
-    if !home.is_empty() {
-        let cb = format!("{home}/code/conveyer-test-repo");
-        sqlx::query("INSERT OR IGNORE INTO settings(key, value) VALUES('codebase_path', ?)")
-            .bind(&cb)
-            .execute(pool)
-            .await?;
+    if cfg!(debug_assertions) {
+        let home = std::env::var("HOME").unwrap_or_default();
+        if !home.is_empty() {
+            let cb = format!("{home}/code/conveyer-test-repo");
+            sqlx::query("INSERT OR IGNORE INTO settings(key, value) VALUES('codebase_path', ?)")
+                .bind(&cb)
+                .execute(pool)
+                .await?;
+        }
     }
     Ok(())
 }
