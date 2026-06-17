@@ -136,6 +136,18 @@ fn raw_to_issue(raw: RawIssue) -> Option<GithubIssue> {
     })
 }
 
+/// Bare repo name from the config, tolerating an `owner/name` entry (we just
+/// take the last path segment) and trimming whitespace. None when unset/blank.
+fn configured_repo(cfg: &GithubSourceConfig) -> Option<String> {
+    let r = cfg.repo.as_deref()?.trim();
+    let name = r.rsplit('/').next().unwrap_or(r).trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
 /// Keep only issues whose repo owner matches `cfg.owner` (case-insensitive),
 /// and—if set—whose repo matches `cfg.repo`. Filtering client-side sidesteps
 /// the GitHub `user:` vs `org:` search-qualifier ambiguity.
@@ -143,12 +155,12 @@ fn matches_scope(issue: &GithubIssue, cfg: &GithubSourceConfig) -> bool {
     let mut parts = issue.repo_full_name.split('/');
     let owner = parts.next().unwrap_or("");
     let repo = parts.next().unwrap_or("");
-    if !owner.eq_ignore_ascii_case(&cfg.owner) {
+    if !owner.eq_ignore_ascii_case(cfg.owner.trim()) {
         return false;
     }
-    match cfg.repo.as_deref() {
-        Some(r) if !r.is_empty() => repo.eq_ignore_ascii_case(r),
-        _ => true,
+    match configured_repo(cfg) {
+        Some(r) => repo.eq_ignore_ascii_case(&r),
+        None => true,
     }
 }
 
@@ -222,9 +234,9 @@ pub async fn ping(cfg: &GithubSourceConfig, token: &str) -> AppResult<()> {
         .send()
         .await?;
     let _ = check(resp, "auth probe").await?;
-    if let Some(repo) = cfg.repo.as_deref().filter(|r| !r.is_empty()) {
+    if let Some(repo) = configured_repo(cfg) {
         let resp = c
-            .get(format!("{base}/repos/{}/{}", cfg.owner, repo))
+            .get(format!("{base}/repos/{}/{}", cfg.owner.trim(), repo))
             .header("Authorization", auth_header(token))
             .header("Accept", "application/vnd.github+json")
             .send()
@@ -323,6 +335,28 @@ mod tests {
         ));
         // Wrong owner.
         assert!(!matches_scope(&issue, &GithubSourceConfig { owner: "someoneelse".into(), repo: None, host: None }));
+    }
+
+    #[test]
+    fn scope_filter_tolerates_owner_prefixed_repo() {
+        let issue = GithubIssue {
+            number: 1,
+            repo_full_name: "octocat/hello".into(),
+            title: "t".into(),
+            state: "open".into(),
+            body: None,
+            html_url: "u".into(),
+        };
+        // User typed "owner/name" in the Repo field — we take the last segment.
+        assert!(matches_scope(
+            &issue,
+            &GithubSourceConfig { owner: "octocat".into(), repo: Some("octocat/hello".into()), host: None }
+        ));
+        // Blank-ish repo (just whitespace) behaves like no filter.
+        assert!(matches_scope(
+            &issue,
+            &GithubSourceConfig { owner: "octocat".into(), repo: Some("  ".into()), host: None }
+        ));
     }
 
     #[test]

@@ -424,7 +424,7 @@ function AddSourceModal({
             </FormControl>
             <FormControl>
               <FormControl.Label>Repo (optional)</FormControl.Label>
-              <TextInput value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="all repos" />
+              <TextInput value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="name (blank = all)" />
             </FormControl>
             <FormControl>
               <FormControl.Label>Host (optional)</FormControl.Label>
