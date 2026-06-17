@@ -424,6 +424,7 @@ function ExecutionSection() {
   const [reasoningDefault, setReasoningDefault] = useState<string>("");
   const [reasoningPhase, setReasoningPhase] = useState<Record<string, string>>({});
   const [submitEnabled, setSubmitEnabled] = useState<boolean>(true);
+  const [branchAlias, setBranchAlias] = useState<string>("");
 
   // Fast local-DB lookups: gates, workspaces, model/reasoning settings.
   // These should render the section immediately rather than block on the
@@ -431,12 +432,13 @@ function ExecutionSection() {
   useEffect(() => {
     void (async () => {
       try {
-        const [g, ws, mDef, rDef, submitV, ...rest] = await Promise.all([
+        const [g, ws, mDef, rDef, submitV, baV, ...rest] = await Promise.all([
           api.gatesList(),
           api.workspacesList(),
           api.settingGet("model_default"),
           api.settingGet("reasoning_default"),
           api.settingGet("phase_submit_enabled"),
+          api.settingGet("branch_alias"),
           ...PHASE_KINDS.map((k) => api.settingGet(`model_${k}`)),
           ...PHASE_KINDS.map((k) => api.settingGet(`reasoning_${k}`)),
         ]);
@@ -447,6 +449,7 @@ function ExecutionSection() {
         setModelDefault(mDef ?? "");
         setReasoningDefault(rDef ?? "");
         setSubmitEnabled(submitV !== "0" && submitV?.toLowerCase() !== "false");
+        setBranchAlias(baV ?? "");
         const mOver: Record<string, string> = {};
         const rOver: Record<string, string> = {};
         PHASE_KINDS.forEach((k, i) => {
@@ -528,6 +531,14 @@ function ExecutionSection() {
     }
   };
 
+  const saveBranchAlias = async () => {
+    try {
+      await api.settingSet("branch_alias", branchAlias.trim());
+    } catch (e) {
+      setError(formatError(e));
+    }
+  };
+
   const setModel = async (key: string, value: string) => {
     try {
       await api.settingSet(key, value);
@@ -551,6 +562,22 @@ function ExecutionSection() {
           onUpsert={upsertWorkspace}
           onDelete={deleteWorkspace}
         />
+      </SubSection>
+
+      <SubSection
+        title="Branch naming"
+        description={<>Prefix for the branches Conveyer creates, as <code>&lt;alias&gt;/&lt;task&gt;</code>. Leave blank to derive it from your git identity (falling back to <code>conveyer</code>).</>}
+      >
+        <FormControl>
+          <FormControl.Label>Branch alias</FormControl.Label>
+          <TextInput
+            value={branchAlias}
+            onChange={(e) => setBranchAlias(e.target.value)}
+            onBlur={saveBranchAlias}
+            placeholder="(from git identity)"
+            sx={{ maxWidth: 320 }}
+          />
+        </FormControl>
       </SubSection>
 
       <SubSection

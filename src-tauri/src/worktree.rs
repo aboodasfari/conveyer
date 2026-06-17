@@ -38,6 +38,27 @@ fn user_alias(codebase: &Path) -> String {
     FALLBACK_ALIAS.to_string()
 }
 
+/// Resolve the branch-name alias with precedence: the explicit `branch_alias`
+/// setting (ultimate override), then the repo's git identity, then a generic
+/// fallback. Always slugified so the result is branch-safe.
+async fn resolve_branch_alias(state: &AppState, codebase: &Path) -> String {
+    let setting: Option<(String,)> =
+        sqlx::query_as("SELECT value FROM settings WHERE key = 'branch_alias'")
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+    if let Some((v,)) = setting {
+        if !v.trim().is_empty() {
+            let slug = slugify(v.trim());
+            if slug != "task" {
+                return slug;
+            }
+        }
+    }
+    user_alias(codebase)
+}
+
 /// Convert a free-form task title to a branch-safe slug.
 /// Lowercase, alphanumerics + dashes only, collapsed, max 48 chars.
 pub fn slugify(title: &str) -> String {
@@ -91,7 +112,7 @@ pub async fn ensure_for_run(
     .bind(run_id)
     .fetch_optional(&state.db)
     .await?;
-    let branch = format!("{}/{}", user_alias(codebase_path), slugify(task_title));
+    let branch = format!("{}/{}", resolve_branch_alias(state, codebase_path).await, slugify(task_title));
     let expected_worktree = worktree_path_for(codebase_path, &branch);
 
     if let Some((Some(wt), Some(br), Some(sha))) = existing {
@@ -469,6 +490,38 @@ mod tests {
         set("user.email", "");
         set("user.name", "Bob Jones");
         assert_eq!(user_alias(&dir), "bob-jones");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn branch_alias_setting_overrides_git_identity() {
+        use std::process::Command;
+        let dir = std::env::temp_dir().join(format!("conveyer-aliasovr-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let run = |args: &[&str]| {
+            assert!(Command::new("git").arg("-C").arg(&dir).args(args).output().unwrap().status.success());
+        };
+        run(&["init", "-q"]);
+        run(&["config", "user.email", "someone@example.com"]);
+
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)")
+            .execute(&pool).await.unwrap();
+        let state = AppState::new(pool);
+
+        // No setting -> derives from git identity.
+        assert_eq!(resolve_branch_alias(&state, &dir).await, "someone");
+
+        // Setting present -> it wins (slugified).
+        sqlx::query("INSERT INTO settings(key, value) VALUES('branch_alias', 'Team Rocket')")
+            .execute(&state.db).await.unwrap();
+        assert_eq!(resolve_branch_alias(&state, &dir).await, "team-rocket");
+
+        // Blank setting -> falls back to git identity again.
+        sqlx::query("UPDATE settings SET value='' WHERE key='branch_alias'")
+            .execute(&state.db).await.unwrap();
+        assert_eq!(resolve_branch_alias(&state, &dir).await, "someone");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
