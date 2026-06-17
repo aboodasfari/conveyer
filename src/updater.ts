@@ -74,7 +74,7 @@ export async function checkNow(): Promise<void> {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.debug("[updater] check failed", message);
+    console.warn("[updater] check failed", message);
     setState({ status: "error", error: message });
   }
 }
@@ -82,10 +82,15 @@ export async function checkNow(): Promise<void> {
 export async function installAndRelaunch(): Promise<void> {
   const update = pendingUpdate;
   if (!update) {
+    console.info("[updater] install requested but no pending update; re-checking");
     await checkNow();
-    if (!pendingUpdate) return;
+    if (!pendingUpdate) {
+      console.warn("[updater] still no pending update after re-check; aborting install");
+      return;
+    }
     return installAndRelaunch();
   }
+  console.info(`[updater] starting install of v${update.version}`);
   setState({ status: "downloading", progress: { downloaded: 0 } });
   try {
     let total: number | undefined;
@@ -94,6 +99,7 @@ export async function installAndRelaunch(): Promise<void> {
       switch (event.event) {
         case "Started":
           total = event.data.contentLength;
+          console.info(`[updater] download started (${total ?? "?"} bytes)`);
           setState({ progress: { downloaded: 0, total } });
           break;
         case "Progress":
@@ -101,14 +107,17 @@ export async function installAndRelaunch(): Promise<void> {
           setState({ progress: { downloaded, total } });
           break;
         case "Finished":
+          console.info("[updater] download finished; bundle installed, relaunching");
           setState({ status: "ready" });
           break;
       }
     });
+    console.info("[updater] calling relaunch()");
     await relaunch();
+    console.info("[updater] relaunch() returned (app should be restarting)");
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("[updater] install failed", message);
+    console.error("[updater] install failed", message, err);
     setState({ status: "error", error: message });
   }
 }
@@ -121,7 +130,7 @@ let lastFocusCheck = 0;
 export function start(): void {
   if (started) return;
   started = true;
-  console.debug("[updater] starting; checking for updates");
+  console.info("[updater] starting; checking for updates");
   void checkNow();
   setInterval(() => {
     void checkNow();
