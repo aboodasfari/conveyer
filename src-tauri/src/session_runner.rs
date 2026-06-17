@@ -1067,6 +1067,25 @@ pub async fn pr_begin_create(
     let _ = app.emit("pr_changed", serde_json::json!({ "phase_id": phase_id }));
     emit_run_updated(app, state, phase_id).await;
 
+    // Scrub internal comment markers from the branch's commit messages before
+    // the agent pushes, so they never reach the remote. Best-effort: a failure
+    // here shouldn't block PR creation (the markers are harmless noise, not a
+    // correctness issue), but we log it.
+    let wt: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT r.worktree_path, r.base_sha
+         FROM phases p JOIN runs r ON r.id = p.run_id WHERE p.id = ?",
+    )
+    .bind(phase_id)
+    .fetch_optional(&state.db)
+    .await?;
+    if let Some((Some(worktree), Some(base_sha))) = wt {
+        if let Err(e) =
+            crate::worktree::strip_comment_markers(std::path::Path::new(&worktree), &base_sha)
+        {
+            tracing::warn!("strip_comment_markers failed for phase {phase_id}: {e}");
+        }
+    }
+
     let target = target.unwrap_or_else(|| "the default branch".into());
     let source = source.unwrap_or_default();
     let instruction = format!(

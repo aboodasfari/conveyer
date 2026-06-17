@@ -134,6 +134,60 @@ pub async fn ensure_for_run(
     Ok((worktree, branch, base_sha))
 }
 
+/// Strip internal `[conveyer-comment:...]` markers from commit messages on
+/// `base_sha..HEAD` in the given worktree. The markers are an internal device
+/// (they let the review agent locate and amend the commit for a given comment
+/// thread); they must never reach the remote. We scrub them deterministically
+/// in Rust right before the PR push so the public history stays clean no matter
+/// how the agent behaves or how ADO squashes/merges the PR.
+///
+/// Author and committer identity and dates are preserved (verified); only the
+/// message text and resulting commit SHAs change. No-op if no commit in range
+/// carries a marker, so unaffected runs keep their original SHAs.
+pub fn strip_comment_markers(worktree: &Path, base_sha: &str) -> AppResult<()> {
+    let range = format!("{base_sha}..HEAD");
+    // Fast path: nothing to do unless a marker is actually present.
+    let bodies = git_capture(worktree, &["log", "--format=%B", &range])?;
+    if !bodies.contains("[conveyer-comment:") {
+        return Ok(());
+    }
+
+    // `git filter-branch --msg-filter` rewrites messages while keeping author
+    // and committer name/email/date intact. The sed drops the marker token
+    // (and any leading spaces) wherever it appears.
+    let out = Command::new("git")
+        .arg("-C").arg(worktree)
+        .env("FILTER_BRANCH_SQUELCH_WARNING", "1")
+        .args([
+            "filter-branch",
+            "-f",
+            "--msg-filter",
+            r"sed -e 's/ *\[conveyer-comment:[^]]*\]//g'",
+            "--",
+            &range,
+        ])
+        .output()
+        .map_err(|e| AppError::Other(format!("git filter-branch: {e}")))?;
+    if !out.status.success() {
+        return Err(AppError::Other(format!(
+            "git filter-branch failed: {}",
+            String::from_utf8_lossy(&out.stderr),
+        )));
+    }
+
+    // filter-branch leaves a backup under refs/original/. Remove it so the
+    // worktree's history isn't pinned to the pre-scrub commits.
+    if let Ok(refs) = git_capture(worktree, &["for-each-ref", "--format=%(refname)", "refs/original/"]) {
+        for r in refs.lines().filter(|l| !l.trim().is_empty()) {
+            let _ = Command::new("git")
+                .arg("-C").arg(worktree)
+                .args(["update-ref", "-d", r])
+                .output();
+        }
+    }
+    Ok(())
+}
+
 /// Run `git -C <dir> <args>` and return trimmed stdout.
 pub fn git_capture(dir: &Path, args: &[&str]) -> AppResult<String> {
     let out = Command::new("git")
@@ -164,5 +218,84 @@ mod tests {
     fn slug_truncates() {
         let s = slugify(&"a".repeat(200));
         assert_eq!(s.len(), 48);
+    }
+
+    #[test]
+    fn strip_markers_preserves_dates_and_clears_marker() {
+        use std::process::Command;
+        let dir = std::env::temp_dir().join(format!("conveyer-strip-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str], env: &[(&str, &str)]| {
+            let mut c = Command::new("git");
+            c.arg("-C").arg(&dir).args(args);
+            for (k, v) in env {
+                c.env(k, v);
+            }
+            let out = c.output().unwrap();
+            assert!(out.status.success(), "git {:?}: {}", args, String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        git(&["init", "-q"], &[]);
+        git(&["config", "user.email", "t@t.com"], &[]);
+        git(&["config", "user.name", "T"], &[]);
+        std::fs::write(dir.join("a"), "a").unwrap();
+        git(&["add", "."], &[]);
+        // Base commit (no marker) — this is the worktree's starting point.
+        git(&["commit", "-q", "-m", "base"], &[
+            ("GIT_AUTHOR_DATE", "2020-01-01T10:00:00"),
+            ("GIT_COMMITTER_DATE", "2020-01-01T11:00:00"),
+        ]);
+        let base = git(&["rev-parse", "HEAD"], &[]);
+        // Agent commit carrying a marker.
+        std::fs::write(dir.join("b"), "b").unwrap();
+        git(&["add", "."], &[]);
+        git(&["commit", "-q", "-m", "do the thing [conveyer-comment:abc123]"], &[
+            ("GIT_AUTHOR_DATE", "2021-06-15T09:30:00"),
+            ("GIT_COMMITTER_DATE", "2021-06-15T12:45:00"),
+        ]);
+        let author_before = git(&["log", "-1", "--format=%aI"], &[]);
+        let committer_before = git(&["log", "-1", "--format=%cI"], &[]);
+
+        strip_comment_markers(&dir, &base).unwrap();
+
+        let subject = git(&["log", "-1", "--format=%s"], &[]);
+        assert!(!subject.contains("conveyer-comment"), "marker not stripped: {subject}");
+        assert_eq!(subject, "do the thing");
+        assert_eq!(git(&["log", "-1", "--format=%aI"], &[]), author_before, "author date changed");
+        assert_eq!(git(&["log", "-1", "--format=%cI"], &[]), committer_before, "committer date changed");
+        // Backup ref cleaned up.
+        assert_eq!(git(&["for-each-ref", "refs/original/"], &[]), "");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn strip_markers_noop_without_marker() {
+        use std::process::Command;
+        let dir = std::env::temp_dir().join(format!("conveyer-noop-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| {
+            let out = Command::new("git").arg("-C").arg(&dir).args(args).output().unwrap();
+            assert!(out.status.success(), "git {:?}: {}", args, String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.email", "t@t.com"]);
+        git(&["config", "user.name", "T"]);
+        std::fs::write(dir.join("a"), "a").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "base"]);
+        let base = git(&["rev-parse", "HEAD"]);
+        std::fs::write(dir.join("b"), "b").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "clean commit"]);
+        let head_before = git(&["rev-parse", "HEAD"]);
+
+        strip_comment_markers(&dir, &base).unwrap();
+
+        // No marker present -> SHAs untouched.
+        assert_eq!(git(&["rev-parse", "HEAD"]), head_before);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
