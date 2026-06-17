@@ -160,7 +160,9 @@ async fn tasks_refresh_github(state: &AppState, source_id: &str) -> AppResult<us
     let issues = github::fetch_assigned_issues(&cfg, &token).await?;
 
     let mut changed = 0usize;
+    let mut seen: HashSet<String> = HashSet::new();
     for issue in &issues {
+        seen.insert(issue.source_ref());
         let id = Uuid::new_v4().to_string();
         let res = sqlx::query(
             "INSERT INTO tasks(id, source_id, source_ref, title, state, url,
@@ -188,6 +190,49 @@ async fn tasks_refresh_github(state: &AppState, source_id: &str) -> AppResult<us
         .await?;
         if res.rows_affected() > 0 {
             changed += 1;
+        }
+    }
+
+    // The assigned-issues search only returns OPEN issues, so an issue that was
+    // closed (or unassigned) simply drops out of the result set and would never
+    // be reconciled — leaving a stale `open` row in the DB. Re-fetch each known
+    // task that wasn't in this pass to pick up its current state (e.g. closed).
+    // Skip rows already terminal (closed) so we don't re-poll them every refresh.
+    let known: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT source_ref, url, state FROM tasks WHERE source_id = ?",
+    )
+    .bind(&src.id)
+    .fetch_all(&state.db)
+    .await?;
+    for (source_ref, url, state_str) in known {
+        if seen.contains(&source_ref) || state_str.eq_ignore_ascii_case("closed") {
+            continue;
+        }
+        let Some((owner, repo, number)) = github::extract_issue_ref(&url) else {
+            continue;
+        };
+        match github::fetch_issue(&token, cfg.host.as_deref(), &owner, &repo, number).await {
+            Ok(issue) => {
+                let res = sqlx::query(
+                    "UPDATE tasks SET title = ?, state = ?, url = ?, description = ?,
+                                      updated_at = datetime('now')
+                     WHERE source_id = ? AND source_ref = ?",
+                )
+                .bind(&issue.title)
+                .bind(&issue.state)
+                .bind(&issue.html_url)
+                .bind(&issue.body)
+                .bind(&src.id)
+                .bind(&source_ref)
+                .execute(&state.db)
+                .await?;
+                if res.rows_affected() > 0 {
+                    changed += 1;
+                }
+            }
+            Err(e) => {
+                tracing::warn!("failed to refresh github issue {source_ref}: {e}");
+            }
         }
     }
     Ok(changed)
