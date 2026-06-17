@@ -23,8 +23,15 @@ echo "✓ Updated package.json"
 sed -i.bak "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" src-tauri/tauri.conf.json && rm src-tauri/tauri.conf.json.bak
 echo "✓ Updated tauri.conf.json"
 
-# Update Cargo.toml (only the package version, not dependencies)
-sed -i.bak '0,/^version = "[^"]*"/{s/^version = "[^"]*"/version = "'"$VERSION"'"/}' src-tauri/Cargo.toml && rm src-tauri/Cargo.toml.bak
+# Update Cargo.toml (only the [package] version, not dependencies).
+# Use awk for portability: BSD/macOS sed doesn't support GNU's `0,/re/` address.
+awk -v ver="$VERSION" '
+  /^\[/ { in_pkg = ($0 == "[package]") }
+  in_pkg && !done && /^version[[:space:]]*=/ {
+    sub(/"[^"]*"/, "\"" ver "\""); done = 1
+  }
+  { print }
+' src-tauri/Cargo.toml > src-tauri/Cargo.toml.tmp && mv src-tauri/Cargo.toml.tmp src-tauri/Cargo.toml
 echo "✓ Updated Cargo.toml"
 
 # Update Cargo.lock
