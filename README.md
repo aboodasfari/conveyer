@@ -13,11 +13,21 @@ A desktop app that orchestrates AI coding agents through structured, phased work
 
 Grab the latest release for your platform from the [Releases](https://github.com/aboodasfari/conveyer/releases) page:
 
-- **macOS** — `.dmg` installer
-- **Windows** — `.exe` installer (NSIS)
-- **Linux** — `.AppImage` or `.deb`
+- **macOS** — `.dmg` installer (`aarch64` for Apple Silicon, `x64` for Intel)
+- **Windows** — `.exe` installer (NSIS) or `.msi`
+- **Linux** — `.AppImage`, `.deb`, or `.rpm`
 
-> **macOS note:** The app is not Apple-notarized. On first launch, right-click → Open to bypass Gatekeeper.
+> **macOS note:** The app is not code-signed or Apple-notarized (that requires a paid
+> Apple Developer account). macOS quarantines downloaded unsigned apps, so on first launch
+> you may see **"Conveyer is damaged and can't be opened."** This is Gatekeeper, not actual
+> corruption. To fix it, drag Conveyer into **Applications**, then run this once in Terminal:
+>
+> ```bash
+> xattr -dr com.apple.quarantine /Applications/Conveyer.app
+> ```
+>
+> Then open the app normally. (On Apple Silicon, right-click → Open does **not** clear the
+> "damaged" state — the `xattr` command above is required.)
 
 ## Getting Started
 
