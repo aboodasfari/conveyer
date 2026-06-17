@@ -197,9 +197,10 @@ function UpdateButton() {
           "& > span": spinning
             ? {
                 display: "inline-flex",
+                transform: "translateY(1px)",
                 animation: "conveyer-updater-spin 1.2s linear infinite",
               }
-            : { display: "inline-flex" },
+            : { display: "inline-flex", transform: "translateY(1px)" },
           "@keyframes conveyer-updater-spin": {
             from: { transform: "rotate(0deg)" },
             to: { transform: "rotate(360deg)" },
