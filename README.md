@@ -15,7 +15,6 @@ Grab the latest release for your platform from the [Releases](https://github.com
 
 - **macOS** — `.dmg` installer (`aarch64` for Apple Silicon, `x64` for Intel)
 - **Windows** — `.exe` installer (NSIS) or `.msi`
-- **Linux** — `.AppImage`, `.deb`, or `.rpm`
 
 > **macOS note:** The app is not code-signed or Apple-notarized (that requires a paid
 > Apple Developer account). macOS quarantines downloaded unsigned apps, so on first launch
