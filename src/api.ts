@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Gate, Message, Run, RunDetail, Session, Source, TaskSummary } from "./types";
+import { notifySettingChanged } from "./settingsBus";
 
 export interface SourceInput {
   kind: string;
@@ -15,8 +16,10 @@ export const api = {
   // settings
   settingGet: (key: string) =>
     invoke<string | null>("settings_get", { key }),
-  settingSet: (key: string, value: string) =>
-    invoke<void>("settings_set", { key, value }),
+  settingSet: async (key: string, value: string) => {
+    await invoke<void>("settings_set", { key, value });
+    notifySettingChanged(key);
+  },
   settingsAll: () =>
     invoke<[string, string][]>("settings_all"),
 

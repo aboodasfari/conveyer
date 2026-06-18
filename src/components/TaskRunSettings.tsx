@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
-import { Box, Button, Flash, Spinner, Text, TextInput, ToggleSwitch } from "@primer/react";
-import { PlayIcon } from "@primer/octicons-react";
+import { Box, Button, Flash, IconButton, Spinner, Text, TextInput, ToggleSwitch } from "@primer/react";
+import { ChevronRightIcon, HistoryIcon, PlayIcon, SlidersIcon } from "@primer/octicons-react";
 import { api } from "../api";
 import { Task } from "../types";
 import { formatError } from "../errors";
+import { onSettingChanged } from "../settingsBus";
 
 interface Effective {
   task: Task;
   useWorktree: boolean;
+  useWorktreeExplicit: boolean;
   submitPr: boolean;
+  submitPrExplicit: boolean;
   baseBranch: string;
   branch: string;
 }
@@ -42,10 +45,11 @@ export function EmptyRunView({
 }) {
   const [eff, setEff] = useState<Effective | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<boolean>(false);
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
+    const load = async () => {
       try {
         const [task, gWt, gSub] = await Promise.all([
           api.taskGet(taskId),
@@ -58,35 +62,77 @@ export function EmptyRunView({
         setEff({
           task,
           useWorktree: task.use_worktree == null ? globalWt : task.use_worktree !== 0,
+          useWorktreeExplicit: task.use_worktree != null,
           submitPr: task.enable_submit == null ? globalSub : task.enable_submit !== 0,
+          submitPrExplicit: task.enable_submit != null,
           baseBranch: task.base_branch_override ?? "",
           branch: task.branch_override ?? "",
         });
       } catch (e) {
         if (!cancelled) setLoadError(formatError(e));
       }
-    })();
-    return () => { cancelled = true; };
+    };
+    void load();
+    // Listen for global setting changes (made elsewhere — typically the
+    // Settings page) so inherited toggles follow the new global immediately.
+    const off = onSettingChanged((key) => {
+      if (key === "use_worktree" || key === "phase_submit_enabled") {
+        void load();
+      }
+    });
+    return () => {
+      cancelled = true;
+      off();
+    };
   }, [taskId]);
 
   // Apply a partial update. When opts.persist is false (default true), the
   // change is reflected in local state only — used by text inputs so the
-  // preview reacts on every keystroke while we save on blur.
+  // preview reacts on every keystroke while we save on blur. Set
+  // useWorktreeExplicit / submitPrExplicit to false explicitly via the patch
+  // when you want to revert a toggle to "inherit from global".
   const update = async (
     patch: Partial<Omit<Effective, "task">>,
     opts: { persist?: boolean } = {},
   ) => {
     if (!eff) return;
-    const merged: Effective = { ...eff, ...patch };
-    setEff(merged);
+    // Auto-flip explicit flags when the underlying value is set without an
+    // explicit instruction (typical for toggle clicks).
+    const next: Effective = { ...eff, ...patch };
+    if ("useWorktree" in patch && !("useWorktreeExplicit" in patch)) {
+      next.useWorktreeExplicit = true;
+    }
+    if ("submitPr" in patch && !("submitPrExplicit" in patch)) {
+      next.submitPrExplicit = true;
+    }
+    setEff(next);
     if (opts.persist === false) return;
     try {
       await api.taskOverridesSet(taskId, {
-        useWorktree: merged.useWorktree,
-        enableSubmit: merged.submitPr,
-        baseBranchOverride: merged.baseBranch.trim() || null,
-        branchOverride: merged.branch.trim() || null,
+        useWorktree: next.useWorktreeExplicit ? next.useWorktree : null,
+        enableSubmit: next.submitPrExplicit ? next.submitPr : null,
+        baseBranchOverride: next.baseBranch.trim() || null,
+        branchOverride: next.branch.trim() || null,
       });
+    } catch (e) {
+      setLoadError(formatError(e));
+    }
+  };
+
+  // Revert a toggle to the global default. Re-reads the global value so the
+  // local toggle reflects what users actually see in Settings, and clears
+  // the per-task override in the DB.
+  const revertToInherit = async (field: "useWorktree" | "submitPr") => {
+    if (!eff) return;
+    try {
+      const key = field === "useWorktree" ? "use_worktree" : "phase_submit_enabled";
+      const v = await api.settingGet(key);
+      const inheritedValue = v !== "0" && v?.toLowerCase() !== "false";
+      if (field === "useWorktree") {
+        await update({ useWorktree: inheritedValue, useWorktreeExplicit: false });
+      } else {
+        await update({ submitPr: inheritedValue, submitPrExplicit: false });
+      }
     } catch (e) {
       setLoadError(formatError(e));
     }
@@ -104,16 +150,33 @@ export function EmptyRunView({
     >
       {error && <Flash variant="danger">{error}</Flash>}
       {loadError && <Flash variant="danger">{loadError}</Flash>}
+
       <Box
         sx={{
           display: "grid",
-          gridTemplateColumns: "1fr 340px",
-          gap: 4,
+          gridTemplateColumns: collapsed ? "1fr 0px" : "1fr 340px",
+          gap: collapsed ? 0 : 4,
           alignItems: "stretch",
           flex: 1,
           minHeight: 0,
+          position: "relative",
+          transition: "grid-template-columns 200ms ease, gap 200ms ease",
         }}
       >
+        {/* Cog overlay anchored to the grid's top-right corner. Visible only
+            when the right panel is collapsed; expanded state uses the
+            in-card chevron at the same corner of the card. */}
+        {collapsed && (
+          <Box sx={{ position: "absolute", top: 0, right: 0, zIndex: 2 }}>
+            <IconButton
+              aria-label="Show run settings"
+              icon={SlidersIcon}
+              variant="invisible"
+              onClick={() => setCollapsed(false)}
+              size="small"
+            />
+          </Box>
+        )}
         <Box
           sx={{
             display: "flex",
@@ -138,7 +201,13 @@ export function EmptyRunView({
             </Button>
           </Box>
         </Box>
-        <RunSettingsCard eff={eff} update={update} />
+        <RunSettingsCard
+          eff={eff}
+          update={update}
+          revert={revertToInherit}
+          collapsed={collapsed}
+          onToggleCollapsed={() => setCollapsed((c) => !c)}
+        />
       </Box>
     </Box>
   );
@@ -218,6 +287,7 @@ function Pipeline({
         flexWrap: "wrap",
         rowGap: 3,
         justifyContent: "center",
+        userSelect: "none",
       }}
     >
       {phases.map((p, i) => {
@@ -311,60 +381,88 @@ function Fact({
 function RunSettingsCard({
   eff,
   update,
+  revert,
+  collapsed,
+  onToggleCollapsed,
 }: {
   eff: Effective | null;
   update: (patch: Partial<Omit<Effective, "task">>, opts?: { persist?: boolean }) => void;
+  revert: (field: "useWorktree" | "submitPr") => void;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }) {
+  // When collapsed: shrink the grid cell to nothing, clip the card so it
+  // animates out smoothly. The floating cog overlay (rendered by the
+  // parent) is what the user clicks to reopen.
   return (
-    <Box
-      sx={{
-        flex: 1,
-        minHeight: 0,
-        borderWidth: 1,
-        borderStyle: "solid",
-        borderColor: "border.default",
-        borderRadius: 2,
-        bg: "canvas.subtle",
-        p: 3,
-        display: "flex",
-        flexDirection: "column",
-        gap: 3,
-      }}
-    >
-      <Text sx={{ fontWeight: 600, fontSize: 1 }}>Run settings</Text>
+    <Box sx={{ overflow: "hidden", minWidth: 0, minHeight: 0, display: "flex" }}>
+      <Box
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          width: 340,
+          opacity: collapsed ? 0 : 1,
+          pointerEvents: collapsed ? "none" : "auto",
+          transition: "opacity 160ms ease",
+          borderWidth: 1,
+          borderStyle: "solid",
+          borderColor: "border.default",
+          borderRadius: 2,
+          bg: "canvas.subtle",
+          p: 3,
+          display: "flex",
+          flexDirection: "column",
+          gap: 3,
+        }}
+      >
+        <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <Text sx={{ fontWeight: 600, fontSize: 1 }}>Run settings</Text>
+          <IconButton
+            aria-label="Hide run settings"
+            icon={ChevronRightIcon}
+            variant="invisible"
+            onClick={onToggleCollapsed}
+            size="small"
+          />
+        </Box>
 
-      {!eff ? (
-        <Spinner size="small" />
-      ) : (
-        <>
-          <ToggleRow
-            label="Submit PR"
-            checked={eff.submitPr}
-            onChange={(v) => update({ submitPr: v })}
-          />
-          <ToggleRow
-            label="Use worktree"
-            checked={eff.useWorktree}
-            onChange={(v) => update({ useWorktree: v })}
-          />
-          <InputRow
-            label="Working branch"
-            value={eff.branch}
-            onChange={(v) => update({ branch: v }, { persist: false })}
-            onCommit={() => update({ branch: eff.branch })}
-            placeholder="(new)"
-          />
-          <InputRow
-            label="Target branch"
-            value={eff.baseBranch}
-            onChange={(v) => update({ baseBranch: v }, { persist: false })}
-            onCommit={() => update({ baseBranch: eff.baseBranch })}
-            placeholder="(auto)"
-            disabled={!eff.submitPr && !!eff.branch.trim()}
-            disabledReason="No PR is being opened from an existing branch — nothing to target."
-          />
-        </>
-      )}
+        {!eff ? (
+          <Spinner size="small" />
+        ) : (
+          <>
+            <ToggleRow
+              label="Submit PR"
+              checked={eff.submitPr}
+              onChange={(v) => update({ submitPr: v })}
+              explicit={eff.submitPrExplicit}
+              onRevert={() => revert("submitPr")}
+            />
+            <ToggleRow
+              label="Use worktree"
+              checked={eff.useWorktree}
+              onChange={(v) => update({ useWorktree: v })}
+              explicit={eff.useWorktreeExplicit}
+              onRevert={() => revert("useWorktree")}
+            />
+            <InputRow
+              label="Working branch"
+              value={eff.branch}
+              onChange={(v) => update({ branch: v }, { persist: false })}
+              onCommit={() => update({ branch: eff.branch })}
+              placeholder="(new)"
+            />
+            <InputRow
+              label="Target branch"
+              value={eff.baseBranch}
+              onChange={(v) => update({ baseBranch: v }, { persist: false })}
+              onCommit={() => update({ baseBranch: eff.baseBranch })}
+              placeholder="(auto)"
+              disabled={!eff.submitPr && !!eff.branch.trim()}
+              disabledReason="No PR is being opened from an existing branch — nothing to target."
+            />
+          </>
+        )}
+      </Box>
     </Box>
   );
 }
@@ -373,20 +471,43 @@ function ToggleRow({
   label,
   checked,
   onChange,
+  explicit,
+  onRevert,
 }: {
   label: string;
   checked: boolean;
   onChange: (v: boolean) => void;
+  /** True if the value has been explicitly set on this task (i.e. won't
+   *  follow the global default). When false, the toggle shows the inherited
+   *  value and we show no revert affordance (already inherited). */
+  explicit?: boolean;
+  onRevert?: () => void;
 }) {
   return (
-    <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-      <Text sx={{ fontSize: 1 }}>{label}</Text>
-      <ToggleSwitch
-        checked={checked}
-        onClick={() => onChange(!checked)}
-        aria-label={label}
-        size="small"
-      />
+    <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 2 }}>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 0 }}>
+        <Text sx={{ fontSize: 1 }}>{label}</Text>
+        {!explicit && (
+          <Text sx={{ fontSize: 0, color: "fg.muted" }}>· inherited</Text>
+        )}
+      </Box>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+        {explicit && onRevert && (
+          <IconButton
+            aria-label={`Reset ${label} to global default`}
+            icon={HistoryIcon}
+            variant="invisible"
+            size="small"
+            onClick={onRevert}
+          />
+        )}
+        <ToggleSwitch
+          checked={checked}
+          onClick={() => onChange(!checked)}
+          aria-label={label}
+          size="small"
+        />
+      </Box>
     </Box>
   );
 }

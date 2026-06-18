@@ -14,7 +14,7 @@ import {
   PlayIcon,
   TrashIcon,
 } from "@primer/octicons-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, type NavigateFunction } from "react-router-dom";
 import { api } from "../api";
 import { Bucket, TaskSummary } from "../types";
 import { StatusBadge } from "./StatusBadge";
@@ -232,17 +232,7 @@ function StoryHeader({
           <StatusBadge status={task.run_status} phase={task.current_phase} />
         </Box>
       </Box>
-      {showTackle && (
-        <Button
-          leadingVisual={PlayIcon}
-          variant="primary"
-          size="small"
-          onClick={(e) => { stop(e); void tackle(task, nav); }}
-          title="Start a Conveyer run for this task"
-        >
-          Tackle
-        </Button>
-      )}
+      {showTackle && <TackleSplitButton task={task} />}
       {menu}
     </Box>
   );
@@ -253,7 +243,7 @@ function StoryHeader({
  * can watch the phases progress. If a run is already active, we still
  * navigate — the panel surfaces the existing run.
  */
-async function tackle(task: TaskSummary, nav: ReturnType<typeof useNavigate>) {
+async function tackle(task: TaskSummary, nav: NavigateFunction) {
   try {
     await api.runsStart(task.id);
   } catch (e) {
@@ -267,6 +257,87 @@ async function tackle(task: TaskSummary, nav: ReturnType<typeof useNavigate>) {
     }
   }
   nav(`/tasks/${task.id}?tab=run`);
+}
+
+/**
+ * Split button used on dashboard rows. Primary action ("Tackle") immediately
+ * starts a run and navigates to the task. A small dropdown beside it offers
+ * "Custom tackle…" which navigates to the task without starting — the user
+ * lands in the Run tab with the settings panel visible and can configure
+ * overrides before clicking Tackle there.
+ *
+ * Both halves are disabled while a tackle is in flight so the user can't
+ * double-fire and trip the "already has an active run" path.
+ */
+function TackleSplitButton({ task }: { task: TaskSummary }) {
+  const nav = useNavigate();
+  const [busy, setBusy] = useState(false);
+
+  const onTackle = async (e: MouseEvent) => {
+    stop(e);
+    if (busy) return;
+    setBusy(true);
+    try {
+      await tackle(task, nav);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onCustom = () => {
+    // Don't start the run — just open the task so the user can configure
+    // Run settings before clicking Tackle in the Run tab.
+    nav(`/tasks/${task.id}?tab=run`);
+  };
+
+  return (
+    <Box
+      sx={{ display: "flex" }}
+      onClick={(e) => stop(e)}
+    >
+      <Button
+        leadingVisual={PlayIcon}
+        variant="primary"
+        size="small"
+        onClick={onTackle}
+        disabled={busy}
+        title="Start a Conveyer run for this task"
+        sx={{
+          borderTopRightRadius: 0,
+          borderBottomRightRadius: 0,
+        }}
+      >
+        {busy ? "Starting…" : "Tackle"}
+      </Button>
+      <ActionMenu>
+        <ActionMenu.Anchor>
+          <IconButton
+            aria-label="More tackle options"
+            icon={ChevronDownIcon}
+            variant="primary"
+            size="small"
+            disabled={busy}
+            sx={{
+              borderTopLeftRadius: 0,
+              borderBottomLeftRadius: 0,
+              borderLeftWidth: 0,
+              minWidth: 28,
+            }}
+          />
+        </ActionMenu.Anchor>
+        <ActionMenu.Overlay align="end">
+          <ActionList>
+            <ActionList.Item onSelect={onCustom}>
+              Custom tackle…
+              <ActionList.Description>
+                Open the task with run settings before starting.
+              </ActionList.Description>
+            </ActionList.Item>
+          </ActionList>
+        </ActionMenu.Overlay>
+      </ActionMenu>
+    </Box>
+  );
 }
 
 function ChildRow({ task, last }: { task: TaskSummary; last: boolean }) {
@@ -315,17 +386,7 @@ function ChildRow({ task, last }: { task: TaskSummary; last: boolean }) {
           <StatusBadge status={task.run_status} phase={task.current_phase} />
         </Box>
       </Box>
-      {isActionable(task) && (
-        <Button
-          leadingVisual={PlayIcon}
-          variant="primary"
-          size="small"
-          onClick={(e) => { stop(e); void tackle(task, nav); }}
-          title="Start a Conveyer run for this task"
-        >
-          Tackle
-        </Button>
-      )}
+      {isActionable(task) && <TackleSplitButton task={task} />}
     </Box>
   );
 }
