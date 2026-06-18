@@ -14,7 +14,8 @@ const SOURCE_COLS: &str =
     "id, kind, name, config_json, pat_env, enabled, created_at, auth_kind, az_account";
 const TASK_COLS: &str =
     "id, source_id, source_ref, title, state, url, source_meta_json,
-     discovered_at, updated_at, parent_ref, is_self_assigned, description, bucket, workspace_path";
+     discovered_at, updated_at, parent_ref, is_self_assigned, description, bucket, workspace_path,
+     use_worktree, base_branch_override, branch_override, enable_submit";
 
 #[derive(Debug, Serialize)]
 pub struct TaskSummary {
@@ -820,4 +821,50 @@ pub async fn tasks_set_bucket(
     .await?;
     tx.commit().await?;
     Ok(())
+}
+
+/// Set per-task override fields. Any field passed as `None` clears the
+/// override (falls back to the global default at run time). Any field omitted
+/// from the JSON (so deserialized as `None` from the option-wrapped `Option`)
+/// also clears — we treat the call as a full replacement of the override set.
+/// Trim and treat empty strings as `None` to avoid storing whitespace.
+#[tauri::command]
+pub async fn task_overrides_set(
+    state: State<'_, AppState>,
+    task_id: String,
+    use_worktree: Option<bool>,
+    base_branch_override: Option<String>,
+    branch_override: Option<String>,
+    enable_submit: Option<bool>,
+) -> AppResult<()> {
+    let clean = |s: Option<String>| s.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    let base_branch = clean(base_branch_override);
+    let branch = clean(branch_override);
+    sqlx::query(
+        "UPDATE tasks
+            SET use_worktree         = ?,
+                base_branch_override = ?,
+                branch_override      = ?,
+                enable_submit        = ?
+          WHERE id = ?",
+    )
+    .bind(use_worktree.map(i64::from))
+    .bind(base_branch)
+    .bind(branch)
+    .bind(enable_submit.map(i64::from))
+    .bind(&task_id)
+    .execute(&state.db)
+    .await?;
+    Ok(())
+}
+
+/// Fetch a single task by id. Returns NotFound if no such task exists.
+#[tauri::command]
+pub async fn task_get(state: State<'_, AppState>, task_id: String) -> AppResult<Task> {
+    let sql = format!("SELECT {TASK_COLS} FROM tasks WHERE id = ?");
+    sqlx::query_as::<_, Task>(&sql)
+        .bind(&task_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("task {task_id}")))
 }

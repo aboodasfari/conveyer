@@ -37,6 +37,24 @@ export const api = {
     invoke<TaskSummary>("tasks_add_by_url", { sourceId, url }),
   tasksSetBucket: (taskId: string, bucket: string) =>
     invoke<void>("tasks_set_bucket", { taskId, bucket }),
+  taskOverridesSet: (
+    taskId: string,
+    overrides: {
+      useWorktree: boolean | null;
+      baseBranchOverride: string | null;
+      branchOverride: string | null;
+      enableSubmit: boolean | null;
+    },
+  ) =>
+    invoke<void>("task_overrides_set", {
+      taskId,
+      useWorktree: overrides.useWorktree,
+      baseBranchOverride: overrides.baseBranchOverride,
+      branchOverride: overrides.branchOverride,
+      enableSubmit: overrides.enableSubmit,
+    }),
+  taskGet: (taskId: string) =>
+    invoke<import("./types").Task>("task_get", { taskId }),
   tasksSeedDemo: () => invoke<void>("tasks_seed_demo"),
   tasksCreateLocal: (title: string, description: string | null, workspacePath: string | null) =>
     invoke<string>("tasks_create_local", { title, description, workspacePath }),

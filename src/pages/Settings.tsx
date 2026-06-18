@@ -522,6 +522,7 @@ function ExecutionSection() {
   const [reasoningDefault, setReasoningDefault] = useState<string>("");
   const [reasoningPhase, setReasoningPhase] = useState<Record<string, string>>({});
   const [submitEnabled, setSubmitEnabled] = useState<boolean>(true);
+  const [useWorktree, setUseWorktree] = useState<boolean>(true);
   const [branchAlias, setBranchAlias] = useState<string>("");
 
   // Fast local-DB lookups: gates, workspaces, model/reasoning settings.
@@ -530,13 +531,14 @@ function ExecutionSection() {
   useEffect(() => {
     void (async () => {
       try {
-        const [g, ws, mDef, rDef, submitV, baV, ...rest] = await Promise.all([
+        const [g, ws, mDef, rDef, submitV, baV, wtV, ...rest] = await Promise.all([
           api.gatesList(),
           api.workspacesList(),
           api.settingGet("model_default"),
           api.settingGet("reasoning_default"),
           api.settingGet("phase_submit_enabled"),
           api.settingGet("branch_alias"),
+          api.settingGet("use_worktree"),
           ...PHASE_KINDS.map((k) => api.settingGet(`model_${k}`)),
           ...PHASE_KINDS.map((k) => api.settingGet(`reasoning_${k}`)),
         ]);
@@ -547,6 +549,7 @@ function ExecutionSection() {
         setModelDefault(mDef ?? "");
         setReasoningDefault(rDef ?? "");
         setSubmitEnabled(submitV !== "0" && submitV?.toLowerCase() !== "false");
+        setUseWorktree(wtV !== "0" && wtV?.toLowerCase() !== "false");
         setBranchAlias(baV ?? "");
         const mOver: Record<string, string> = {};
         const rOver: Record<string, string> = {};
@@ -626,6 +629,17 @@ function ExecutionSection() {
     } catch (e) {
       setError(formatError(e));
       setSubmitEnabled(!next);
+    }
+  };
+
+  const toggleWorktree = async () => {
+    const next = !useWorktree;
+    setUseWorktree(next);
+    try {
+      await api.settingSet("use_worktree", next ? "1" : "0");
+    } catch (e) {
+      setError(formatError(e));
+      setUseWorktree(!next);
     }
   };
 
@@ -777,6 +791,32 @@ function ExecutionSection() {
             checked={submitEnabled}
             onClick={toggleSubmit}
             aria-label="Enable submit phase"
+            size="small"
+          />
+        </Box>
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            py: 2,
+            borderTopWidth: 1,
+            borderTopStyle: "solid",
+            borderTopColor: "border.subtle",
+          }}
+        >
+          <Text>
+            Worktrees{" "}
+            <Text sx={{ color: "fg.muted", fontSize: 0 }}>
+              · {useWorktree
+                ? "each run gets its own git worktree (recommended)"
+                : "runs use the workspace directly — current branch, in place"}
+            </Text>
+          </Text>
+          <ToggleSwitch
+            checked={useWorktree}
+            onClick={toggleWorktree}
+            aria-label="Use git worktrees"
             size="small"
           />
         </Box>

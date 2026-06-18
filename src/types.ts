@@ -43,6 +43,14 @@ export interface Task {
   description: string | null;
   bucket: Bucket;
   workspace_path: string | null;
+  /** Per-task override: null = inherit settings.use_worktree, else 0/1. */
+  use_worktree: number | null;
+  /** Per-task override: null = auto-detect from remote default branch. */
+  base_branch_override: string | null;
+  /** Per-task override: null = create new <alias>/<slug>; else this existing branch. */
+  branch_override: string | null;
+  /** Per-task override: null = inherit settings.phase_submit_enabled, else 0/1. */
+  enable_submit: number | null;
 }
 
 export interface TaskSummary extends Task {

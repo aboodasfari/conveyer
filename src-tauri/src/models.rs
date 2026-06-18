@@ -48,6 +48,17 @@ pub struct Task {
     pub description: Option<String>,
     pub bucket: String,
     pub workspace_path: Option<String>,
+    /// Per-task override: NULL = inherit `settings.use_worktree`, else 0/1.
+    pub use_worktree: Option<i64>,
+    /// Per-task override for the PR target / diff base. NULL = auto-detect
+    /// from the remote default branch.
+    pub base_branch_override: Option<String>,
+    /// Per-task override: name of an existing branch to work on. NULL = create
+    /// a new branch as `<alias>/<slug>`.
+    pub branch_override: Option<String>,
+    /// Per-task override: NULL = inherit `settings.phase_submit_enabled`,
+    /// else 0/1.
+    pub enable_submit: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

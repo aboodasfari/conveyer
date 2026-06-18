@@ -445,6 +445,12 @@ struct PhaseContext {
     source_ref: String,
     /// Web URL of the work item / issue.
     task_url: String,
+    /// Per-task base-branch override. When set, the agent should target this
+    /// branch in the PR instead of re-detecting the remote default.
+    base_branch_override: Option<String>,
+    /// Per-task working-branch override. When set, the agent is operating on
+    /// this existing branch (no new branch was created).
+    branch_override: Option<String>,
     parent_title: Option<String>,
     parent_description: Option<String>,
     codebase_path: String,
@@ -459,9 +465,10 @@ struct PhaseContext {
 
 async fn load_phase_context(state: &AppState, phase_id: &str) -> AppResult<(PhaseContext, String, String)> {
     // Returns (ctx, run_id, phase_kind).
-    let row: (String, String, String, String, String, Option<String>, String, Option<String>, String, String, String) = sqlx::query_as(
+    let row: (String, String, String, String, String, Option<String>, String, Option<String>, String, String, String, Option<String>, Option<String>) = sqlx::query_as(
         "SELECT t.id, t.title, t.state, COALESCE(t.description,''), t.source_id,
-                t.parent_ref, p.kind, t.workspace_path, t.source_ref, t.url, s.kind
+                t.parent_ref, p.kind, t.workspace_path, t.source_ref, t.url, s.kind,
+                t.base_branch_override, t.branch_override
          FROM phases p
          JOIN runs r  ON r.id = p.run_id
          JOIN tasks t ON t.id = r.task_id
@@ -471,7 +478,7 @@ async fn load_phase_context(state: &AppState, phase_id: &str) -> AppResult<(Phas
     .bind(phase_id)
     .fetch_one(&state.db)
     .await?;
-    let (task_id, task_title, task_state, task_description, source_id, parent_ref, phase_kind, task_workspace_path, source_ref, task_url, source_kind) = row;
+    let (task_id, task_title, task_state, task_description, source_id, parent_ref, phase_kind, task_workspace_path, source_ref, task_url, source_kind, base_branch_override, branch_override) = row;
 
     // Optional parent story title + description.
     let (parent_title, parent_description) = if let Some(pr) = parent_ref {
@@ -550,6 +557,8 @@ async fn load_phase_context(state: &AppState, phase_id: &str) -> AppResult<(Phas
             source_kind,
             source_ref,
             task_url,
+            base_branch_override,
+            branch_override,
             parent_title,
             parent_description,
             codebase_path,
@@ -793,6 +802,8 @@ async fn ensure_chat_spawned(
         .env("CONVEYER_SOURCE_KIND", &ctx.source_kind)
         .env("CONVEYER_TASK_REF", &ctx.source_ref)
         .env("CONVEYER_TASK_URL", &ctx.task_url)
+        .env("CONVEYER_TARGET_BRANCH", ctx.base_branch_override.clone().unwrap_or_default())
+        .env("CONVEYER_WORKING_BRANCH", ctx.branch_override.clone().unwrap_or_default())
         .env("CONVEYER_RUN_ID", &run_id)
         .env("CONVEYER_CODEBASE_PATH", &effective_codebase)
         .env("CONVEYER_PROMPTS_DIR", prompts.display().to_string())
@@ -1585,6 +1596,7 @@ async fn run_one(
         match crate::worktree::ensure_for_run(
             &state,
             &run_id,
+            &ctx.task_id,
             &ctx.task_title,
             std::path::Path::new(&ctx.codebase_path),
         ).await {
@@ -1654,6 +1666,8 @@ async fn run_one(
         .env("CONVEYER_SOURCE_KIND", &ctx.source_kind)
         .env("CONVEYER_TASK_REF", &ctx.source_ref)
         .env("CONVEYER_TASK_URL", &ctx.task_url)
+        .env("CONVEYER_TARGET_BRANCH", ctx.base_branch_override.clone().unwrap_or_default())
+        .env("CONVEYER_WORKING_BRANCH", ctx.branch_override.clone().unwrap_or_default())
         .env("CONVEYER_RUN_ID", &run_id)
         .env("CONVEYER_CODEBASE_PATH", &effective_codebase)
         .env("CONVEYER_PROMPTS_DIR", prompts.display().to_string())
@@ -1719,6 +1733,8 @@ async fn run_one(
             .env("CONVEYER_SOURCE_KIND", &ctx.source_kind)
             .env("CONVEYER_TASK_REF", &ctx.source_ref)
             .env("CONVEYER_TASK_URL", &ctx.task_url)
+        .env("CONVEYER_TARGET_BRANCH", ctx.base_branch_override.clone().unwrap_or_default())
+        .env("CONVEYER_WORKING_BRANCH", ctx.branch_override.clone().unwrap_or_default())
             .env("CONVEYER_CODEBASE_PATH", &effective_codebase)
             .env("CONVEYER_PROMPTS_DIR", prompts.display().to_string())
             .env("CONVEYER_ARTIFACT_PATH", artifact_path.display().to_string())

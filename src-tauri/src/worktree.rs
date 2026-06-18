@@ -100,48 +100,133 @@ pub fn worktree_path_for(codebase: &Path, branch: &str) -> PathBuf {
 /// Ensure a worktree exists for this run. Returns (worktree_path, branch_name,
 /// base_sha). Idempotent: if the run row already records a worktree AND the
 /// directory still exists on disk, returns those values without touching git.
+///
+/// Per-task overrides change behavior:
+///   - `tasks.use_worktree = 0` (or global `use_worktree` setting = false)
+///     → run directly in `codebase_path`; no `git worktree add`.
+///   - `tasks.branch_override = '<existing>'` → check out that existing branch
+///     instead of creating `<alias>/<slug>`.
+///   - `tasks.base_branch_override = '<branch>'` → use that as the PR base /
+///     diff base instead of the auto-detected remote default branch.
 pub async fn ensure_for_run(
     state: &AppState,
     run_id: &str,
+    task_id: &str,
     task_title: &str,
     codebase_path: &Path,
 ) -> AppResult<(PathBuf, String, String)> {
+    // Per-task overrides.
+    let row: Option<(Option<i64>, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT use_worktree, base_branch_override, branch_override FROM tasks WHERE id = ?",
+    )
+    .bind(task_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let (task_use_wt, base_override, branch_override) = row.unwrap_or((None, None, None));
+    let global_use_wt: bool = sqlx::query_scalar::<_, String>(
+        "SELECT value FROM settings WHERE key = 'use_worktree'",
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .map(|v| v != "0" && v.to_ascii_lowercase() != "false")
+    .unwrap_or(true);
+    let use_wt = task_use_wt.map(|v| v != 0).unwrap_or(global_use_wt);
+
+    // Resolve the base branch + sha. base_override wins; otherwise auto-detect.
+    let (auto_base_branch, auto_base_sha) = resolve_base(codebase_path);
+    let base_branch = base_override.clone().or(auto_base_branch.clone());
+    let base_sha = match (&base_override, &auto_base_branch) {
+        (Some(b), Some(a)) if b == a => auto_base_sha.clone(),
+        (Some(b), _) => resolve_branch_sha(codebase_path, b).unwrap_or(auto_base_sha.clone()),
+        _ => auto_base_sha.clone(),
+    };
+
+    // ----- No-worktree path: just use the codebase repo. -----
+    if !use_wt {
+        // If a branch override is set, switch the repo to it (fails on dirty
+        // tree, which is exactly what we want — the user should commit/stash).
+        let branch_name = if let Some(ref br) = branch_override {
+            let out = Command::new("git")
+                .arg("-C").arg(codebase_path)
+                .args(["checkout", br])
+                .output()
+                .map_err(|e| AppError::Other(format!("git checkout: {e}")))?;
+            if !out.status.success() {
+                return Err(AppError::Other(format!(
+                    "git checkout {br} failed: {}",
+                    String::from_utf8_lossy(&out.stderr).trim(),
+                )));
+            }
+            br.clone()
+        } else {
+            git_capture(codebase_path, &["rev-parse", "--abbrev-ref", "HEAD"])
+                .unwrap_or_else(|_| "HEAD".to_string())
+        };
+        sqlx::query(
+            "UPDATE runs SET worktree_path = ?, branch_name = ?, base_sha = ?, base_branch = ? WHERE id = ?",
+        )
+        .bind(codebase_path.to_string_lossy().to_string())
+        .bind(&branch_name)
+        .bind(&base_sha)
+        .bind(base_branch.as_deref())
+        .bind(run_id)
+        .execute(&state.db)
+        .await?;
+        return Ok((codebase_path.to_path_buf(), branch_name, base_sha));
+    }
+
+    // ----- Worktree path. -----
+    let branch = match &branch_override {
+        Some(b) => b.clone(),
+        None => format!(
+            "{}/{}",
+            resolve_branch_alias(state, codebase_path).await,
+            slugify(task_title)
+        ),
+    };
+    let expected_worktree = worktree_path_for(codebase_path, &branch);
+
     let existing: Option<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT worktree_path, branch_name, base_sha FROM runs WHERE id = ?",
     )
     .bind(run_id)
     .fetch_optional(&state.db)
     .await?;
-    let branch = format!("{}/{}", resolve_branch_alias(state, codebase_path).await, slugify(task_title));
-    let expected_worktree = worktree_path_for(codebase_path, &branch);
-
     if let Some((Some(wt), Some(br), Some(sha))) = existing {
-        // Only reuse if the recorded worktree is the one we'd create now
-        // for this codebase + branch AND it still exists on disk. Otherwise
-        // it's stale (e.g. the task's workspace was changed since the
-        // last run) — fall through and recompute.
-        if Path::new(&wt).exists() && PathBuf::from(&wt) == expected_worktree {
+        if Path::new(&wt).exists() && PathBuf::from(&wt) == expected_worktree && br == branch {
             return Ok((PathBuf::from(wt), br, sha));
         }
     }
 
     let worktree = expected_worktree;
-    let (base_branch, base_sha) = resolve_base(codebase_path);
-
     if !worktree.exists() {
-        // Try to add the worktree with a new branch. If the branch already
-        // exists (e.g. a previous run), re-attach to it instead.
-        let add_with_branch = Command::new("git")
-            .arg("-C").arg(codebase_path)
-            .args(["worktree", "add", "-b"])
-            .arg(&branch)
-            .arg(&worktree)
-            .arg(&base_sha)
-            .output()
-            .map_err(|e| AppError::Other(format!("git worktree add: {e}")))?;
-        if !add_with_branch.status.success() {
-            let stderr = String::from_utf8_lossy(&add_with_branch.stderr);
-            if stderr.contains("already exists") || stderr.contains("already used") {
+        // For a new branch (no override): create it on the resolved base SHA.
+        // For an existing branch override: just attach a worktree to it.
+        let result = if branch_override.is_some() {
+            Command::new("git")
+                .arg("-C").arg(codebase_path)
+                .args(["worktree", "add"])
+                .arg(&worktree)
+                .arg(&branch)
+                .output()
+        } else {
+            Command::new("git")
+                .arg("-C").arg(codebase_path)
+                .args(["worktree", "add", "-b"])
+                .arg(&branch)
+                .arg(&worktree)
+                .arg(&base_sha)
+                .output()
+        };
+        let add = result.map_err(|e| AppError::Other(format!("git worktree add: {e}")))?;
+        if !add.status.success() {
+            let stderr = String::from_utf8_lossy(&add.stderr);
+            // If we tried -b and the branch already exists, attach to it instead.
+            if branch_override.is_none()
+                && (stderr.contains("already exists") || stderr.contains("already used"))
+            {
                 let again = Command::new("git")
                     .arg("-C").arg(codebase_path)
                     .args(["worktree", "add"])
@@ -156,9 +241,7 @@ pub async fn ensure_for_run(
                     )));
                 }
             } else {
-                return Err(AppError::Other(format!(
-                    "git worktree add failed: {stderr}",
-                )));
+                return Err(AppError::Other(format!("git worktree add failed: {stderr}")));
             }
         }
     }
@@ -169,12 +252,25 @@ pub async fn ensure_for_run(
     .bind(worktree.to_string_lossy().to_string())
     .bind(&branch)
     .bind(&base_sha)
-    .bind(&base_branch)
+    .bind(base_branch.as_deref())
     .bind(run_id)
     .execute(&state.db)
     .await?;
 
     Ok((worktree, branch, base_sha))
+}
+
+/// Resolve the tip SHA of an arbitrary branch (local or `origin/<branch>`).
+/// Used when the user pins a custom base branch.
+fn resolve_branch_sha(codebase: &Path, branch: &str) -> Option<String> {
+    let _ = Command::new("git")
+        .arg("-C").arg(codebase)
+        .args(["fetch", "origin", branch])
+        .output();
+    let tracking = format!("origin/{branch}");
+    git_capture(codebase, &["rev-parse", &tracking])
+        .or_else(|_| git_capture(codebase, &["rev-parse", branch]))
+        .ok()
 }
 
 /// Resolve the remote default branch and ensure we have its latest commit, so

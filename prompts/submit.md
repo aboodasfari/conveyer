@@ -24,11 +24,14 @@ approve, you'll be asked (in a follow-up) to actually create it.
 ## Steps
 
 1. Inspect the commits and diff on this branch so the proposal is accurate.
-2. Determine the target branch from the remote's default branch
-   (e.g. `git remote show origin` -> "HEAD branch").
+2. {{#TARGET_BRANCH}}The PR's target branch is **`{{TARGET_BRANCH}}`** — set by
+   the user on this task. Use it directly; do not re-detect.{{/TARGET_BRANCH}}{{^TARGET_BRANCH}}Determine the target branch from the remote's default branch
+   (e.g. `git remote show origin` -> "HEAD branch").{{/TARGET_BRANCH}}
 3. Draft a clear PR title (usually the task title `{{TASK_TITLE}}`) and a markdown
    description: a short summary plus a checklist of what changed, taken from the
-   implementation. Use the repo's PR template if one exists.
+   implementation. Use the repo's PR template if one exists.{{#WORKING_BRANCH}} The
+   PR is opened from the existing branch **`{{WORKING_BRANCH}}`** (no new branch
+   was created for this task).{{/WORKING_BRANCH}}
 {{#TASK_REF}}
 4. Reference the originating work item / issue `{{TASK_REF}}` in the description per
    the linking rules below, so the preview shows the link.

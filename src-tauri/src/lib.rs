@@ -95,6 +95,8 @@ pub fn run() {
             commands::tasks::tasks_refresh,
             commands::tasks::tasks_add_by_url,
             commands::tasks::tasks_set_bucket,
+            commands::tasks::task_overrides_set,
+            commands::tasks::task_get,
             commands::tasks::tasks_seed_demo,
             commands::tasks::tasks_create_local,
             commands::tasks::tasks_delete,

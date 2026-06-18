@@ -26,6 +26,7 @@ import { PhaseArtifact } from "./PhaseArtifact";
 import { PromptView } from "./PromptView";
 import { DiffViewer } from "./DiffViewer";
 import { PullRequestView } from "./PullRequestView";
+import { TaskRunSettings } from "./TaskRunSettings";
 
 const RING_PULSE_KEYFRAMES = `
 @keyframes conveyerRingPulse {
@@ -256,11 +257,12 @@ export function RunPanel({ taskId }: { taskId: string }) {
 
   if (!detail) {
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
         {error && <Flash variant="danger">{error}</Flash>}
         <Text sx={{ color: "fg.muted" }}>
           No run yet. Tackle creates a run and starts the first phase.
         </Text>
+        <TaskRunSettings taskId={taskId} />
         <Button
           leadingVisual={PlayIcon}
           variant="primary"

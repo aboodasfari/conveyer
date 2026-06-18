@@ -56,17 +56,29 @@ pub async fn runs_start(
         .execute(&state.db)
         .await?;
 
-    // Honor the "disable submit phase" setting — when false, skip the
-    // submit phase entirely so the run finishes after review.
-    let submit_enabled: bool = sqlx::query_scalar::<_, String>(
-        "SELECT value FROM settings WHERE key = 'phase_submit_enabled'",
+    // Honor "submit phase" setting — per-task override (tasks.enable_submit)
+    // wins; otherwise fall back to the global settings.phase_submit_enabled
+    // (which itself defaults to enabled).
+    let task_enable_submit: Option<i64> = sqlx::query_scalar(
+        "SELECT enable_submit FROM tasks WHERE id = ?",
     )
+    .bind(&task_id)
     .fetch_optional(&state.db)
     .await
     .ok()
-    .flatten()
-    .map(|v| v != "0" && v.to_ascii_lowercase() != "false")
-    .unwrap_or(true);
+    .flatten();
+    let submit_enabled: bool = match task_enable_submit {
+        Some(v) => v != 0,
+        None => sqlx::query_scalar::<_, String>(
+            "SELECT value FROM settings WHERE key = 'phase_submit_enabled'",
+        )
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .map(|v| v != "0" && v.to_ascii_lowercase() != "false")
+        .unwrap_or(true),
+    };
 
     let phases: Vec<&str> = PHASE_KINDS
         .iter()
