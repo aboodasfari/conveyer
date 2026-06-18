@@ -868,3 +868,45 @@ pub async fn task_get(state: State<'_, AppState>, task_id: String) -> AppResult<
         .await?
         .ok_or_else(|| AppError::NotFound(format!("task {task_id}")))
 }
+
+/// Mark a local task as done (or reopen it). Only applies to tasks under the
+/// 'local' source — external sources own their state and would clobber any
+/// change on the next refresh, so the UI only offers this for local tasks
+/// and we enforce the same rule here defensively.
+///
+/// done=true  → state='Done',   bucket='archive'  (mirrors a closed PR)
+/// done=false → state='Active', bucket='active'   (back on the board)
+#[tauri::command]
+pub async fn task_local_set_done(
+    state: State<'_, AppState>,
+    task_id: String,
+    done: bool,
+) -> AppResult<()> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT source_id FROM tasks WHERE id = ?",
+    )
+    .bind(&task_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let source_id = row.ok_or_else(|| AppError::NotFound(format!("task {task_id}")))?.0;
+    if source_id != "local" {
+        return Err(AppError::Config(
+            "Only local tasks can be marked done from the app — external tasks are managed in their source."
+                .into(),
+        ));
+    }
+    let (next_state, next_bucket) = if done {
+        ("Done", "archive")
+    } else {
+        ("Active", "active")
+    };
+    sqlx::query(
+        "UPDATE tasks SET state = ?, bucket = ?, updated_at = datetime('now') WHERE id = ?",
+    )
+    .bind(next_state)
+    .bind(next_bucket)
+    .bind(&task_id)
+    .execute(&state.db)
+    .await?;
+    Ok(())
+}

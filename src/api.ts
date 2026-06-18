@@ -58,6 +58,8 @@ export const api = {
     }),
   taskGet: (taskId: string) =>
     invoke<import("./types").Task>("task_get", { taskId }),
+  taskLocalSetDone: (taskId: string, done: boolean) =>
+    invoke<void>("task_local_set_done", { taskId, done }),
   tasksSeedDemo: () => invoke<void>("tasks_seed_demo"),
   tasksCreateLocal: (title: string, description: string | null, workspacePath: string | null) =>
     invoke<string>("tasks_create_local", { title, description, workspacePath }),

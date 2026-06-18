@@ -592,6 +592,7 @@ function PhaseRow({
               onClick={(e) => { e.stopPropagation(); onRewind(); }}
               disabled={busy}
               title="Reset Implementation and run it again"
+              sx={{ flex: 1 }}
             >
               Send Back to Implementation
             </Button>
@@ -609,12 +610,13 @@ function PhaseRow({
                   ? "Override the reviewer and advance to the next phase anyway"
                   : "Approve this phase and advance to the next"
               }
+              sx={{ flex: 1 }}
             >
               {reviewerSaidSendBack ? "Approve Anyway" : "Approve & Continue"}
             </Button>
           );
           return (
-            <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+            <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
               {reviewerSaidSendBack ? <>{sendBackBtn}{approveBtn}</> : <>{approveBtn}{sendBackBtn}</>}
             </Box>
           );

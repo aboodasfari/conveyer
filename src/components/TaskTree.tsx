@@ -8,8 +8,10 @@ import {
   Text,
 } from "@primer/react";
 import {
+  CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  IssueReopenedIcon,
   KebabHorizontalIcon,
   PlayIcon,
   TrashIcon,
@@ -53,10 +55,12 @@ const formatRef = (sourceRef: string) =>
 export function TaskTree({
   tasks,
   onMove,
+  onMarkDone,
   onDelete,
 }: {
   tasks: TaskSummary[];
   onMove?: (taskId: string, to: Bucket) => void;
+  onMarkDone?: (taskId: string, done: boolean) => void;
   onDelete?: (task: TaskSummary) => void;
 }) {
   const nodes = useMemo<Node[]>(() => {
@@ -83,7 +87,7 @@ export function TaskTree({
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
       {nodes.map((n) => (
-        <StoryCard key={n.task.id} node={n} onMove={onMove} onDelete={onDelete} />
+        <StoryCard key={n.task.id} node={n} onMove={onMove} onMarkDone={onMarkDone} onDelete={onDelete} />
       ))}
     </Box>
   );
@@ -92,10 +96,12 @@ export function TaskTree({
 function StoryCard({
   node,
   onMove,
+  onMarkDone,
   onDelete,
 }: {
   node: Node;
   onMove?: (taskId: string, to: Bucket) => void;
+  onMarkDone?: (taskId: string, done: boolean) => void;
   onDelete?: (task: TaskSummary) => void;
 }) {
   const [open, setOpen] = useState(true);
@@ -131,7 +137,7 @@ function StoryCard({
         ) : (
           <Box sx={{ width: 28 }} />
         )}
-        menu={onMove || onDelete ? (
+        menu={onMove || onMarkDone || onDelete ? (
           <Box onClick={stop}>
             <ActionMenu>
               <ActionMenu.Anchor>
@@ -139,6 +145,19 @@ function StoryCard({
               </ActionMenu.Anchor>
               <ActionMenu.Overlay align="end">
                 <ActionList>
+                  {onMarkDone && node.task.source_id === "local" && (() => {
+                    const isDone = TERMINAL_STATES.has(node.task.state.toLowerCase().trim());
+                    return (
+                      <ActionList.Item
+                        onSelect={() => onMarkDone(node.task.id, !isDone)}
+                      >
+                        <ActionList.LeadingVisual>
+                          {isDone ? <IssueReopenedIcon /> : <CheckIcon />}
+                        </ActionList.LeadingVisual>
+                        {isDone ? "Reopen task" : "Mark as done"}
+                      </ActionList.Item>
+                    );
+                  })()}
                   {onMove && MOVE_TARGETS.filter((m) => m.value !== node.task.bucket).map((m) => (
                     <ActionList.Item
                       key={m.value}

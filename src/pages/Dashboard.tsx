@@ -174,6 +174,15 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
     }
   };
 
+  const markDone = async (taskId: string, done: boolean) => {
+    try {
+      await api.taskLocalSetDone(taskId, done);
+      await load();
+    } catch (e) {
+      setError(formatError(e));
+    }
+  };
+
   // Filter to this bucket — children inherit their root's bucket if their
   // root is in the visible set, otherwise show by their own bucket.
   const visible = useMemo(() => {
@@ -238,7 +247,7 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
           }
         />
       ) : (
-        <TaskTree tasks={visible} onMove={move} onDelete={(t) => setDeleting(t)} />
+        <TaskTree tasks={visible} onMove={move} onMarkDone={markDone} onDelete={(t) => setDeleting(t)} />
       )}
 
       <Modal
