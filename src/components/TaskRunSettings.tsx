@@ -1,11 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Box, Button, Flash, Spinner, Text, TextInput, ToggleSwitch } from "@primer/react";
-import {
-  GitBranchIcon,
-  GitMergeIcon,
-  PackageIcon,
-  PlayIcon,
-} from "@primer/octicons-react";
+import { PlayIcon } from "@primer/octicons-react";
 import { api } from "../api";
 import { Task } from "../types";
 import { formatError } from "../errors";
@@ -18,12 +13,12 @@ interface Effective {
   branch: string;
 }
 
-const PHASES: { kind: string; label: string; color: string }[] = [
-  { kind: "exploration", label: "Exploration", color: "#f0883e" },     // orange — discovery
-  { kind: "planning", label: "Planning", color: "#1f6feb" },           // blue — structured
-  { kind: "implementation", label: "Implementation", color: "#8957e5" }, // purple — build
-  { kind: "review", label: "Review", color: "#3fb950" },               // green — verify
-  { kind: "submit", label: "Submit PR", color: "#db61a2" },            // pink — action
+const PHASES: { kind: string; label: string }[] = [
+  { kind: "exploration", label: "Exploration" },
+  { kind: "planning", label: "Planning" },
+  { kind: "implementation", label: "Implementation" },
+  { kind: "review", label: "Review" },
+  { kind: "submit", label: "Submit PR" },
 ];
 
 /**
@@ -127,7 +122,7 @@ export function EmptyRunView({
             pt: 1,
           }}
         >
-          <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+          <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
             <RunPreview eff={eff} />
           </Box>
           <Box sx={{ pt: 4, display: "flex", justifyContent: "center" }}>
@@ -162,19 +157,29 @@ function RunPreview({ eff }: { eff: Effective | null }) {
   if (!eff || !phases) return null;
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 3, maxWidth: 560, minWidth: 0 }}>
-      <Text sx={{ fontWeight: 600, fontSize: 1, color: "fg.muted" }}>
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+        alignItems: "center",
+        textAlign: "center",
+        maxWidth: 520,
+        minWidth: 0,
+        width: "100%",
+      }}
+    >
+      <Text sx={{ fontWeight: 600, fontSize: 2, color: "fg.default" }}>
         This run will…
       </Text>
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "center" }}>
         <Fact
-          icon={<GitBranchIcon size={14} />}
           label="Branch"
           mono={!!eff.branch}
           value={eff.branch || "create a new branch"}
         />
         <Fact
-          icon={<GitMergeIcon size={14} />}
           label="PR target"
           mono={eff.submitPr && !!eff.baseBranch}
           value={
@@ -185,72 +190,104 @@ function RunPreview({ eff }: { eff: Effective | null }) {
           muted={!eff.submitPr}
         />
         <Fact
-          icon={<PackageIcon size={14} />}
           label="Workdir"
           value={eff.useWorktree ? "isolated git worktree" : "the workspace, in place"}
         />
       </Box>
 
-      <Box sx={{ mt: 1 }}>
-        <Text sx={{ fontSize: 0, fontWeight: 600, color: "fg.muted", display: "block", mb: 2 }}>
-          Pipeline
-        </Text>
-        <PhaseDots phases={phases} />
-      </Box>
+      <Pipeline phases={phases} />
     </Box>
   );
 }
 
 /**
- * Each phase rendered as a small colored dot + label. Phases get different
- * hues for visual variety without the chrome of pills or icon stacks.
- * Wraps gracefully on narrow widths.
+ * Phase pipeline: small connected dots with labels beneath. Subtle accent
+ * color, thin connector lines between each dot — reads as a pipeline rather
+ * than a list. Wraps gracefully.
  */
-function PhaseDots({
+function Pipeline({
   phases,
 }: {
-  phases: { kind: string; label: string; color: string }[];
+  phases: { kind: string; label: string }[];
 }) {
   return (
-    <Box sx={{ display: "flex", flexWrap: "wrap", columnGap: 3, rowGap: 2, alignItems: "center" }}>
-      {phases.map((p) => (
-        <Box key={p.kind} sx={{ display: "flex", alignItems: "center", gap: "6px" }}>
+    <Box
+      sx={{
+        display: "flex",
+        alignItems: "flex-start",
+        flexWrap: "wrap",
+        rowGap: 3,
+        justifyContent: "center",
+      }}
+    >
+      {phases.map((p, i) => {
+        const isLast = i === phases.length - 1;
+        return (
           <Box
-            aria-hidden
+            key={p.kind}
             sx={{
-              width: 8,
-              height: 8,
-              borderRadius: "50%",
-              bg: p.color,
-              boxShadow: `0 0 0 3px ${p.color}1f`,
+              display: "flex",
+              alignItems: "flex-start",
+              flex: isLast ? "0 0 auto" : "1 1 0",
+              minWidth: 72,
             }}
-          />
-          <Text sx={{ fontSize: 1 }}>{p.label}</Text>
-        </Box>
-      ))}
+          >
+            <Box
+              sx={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 1,
+                minWidth: 72,
+              }}
+            >
+              <Box
+                aria-hidden
+                sx={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: "50%",
+                  bg: "accent.fg",
+                }}
+              />
+              <Text sx={{ fontSize: 0, color: "fg.muted" }}>{p.label}</Text>
+            </Box>
+            {!isLast && (
+              <Box
+                aria-hidden
+                sx={{
+                  flex: 1,
+                  height: 2,
+                  bg: "accent.fg",
+                  opacity: 0.35,
+                  mt: "4px",
+                  mx: 1,
+                  borderRadius: 1,
+                  minWidth: 24,
+                }}
+              />
+            )}
+          </Box>
+        );
+      })}
     </Box>
   );
 }
 
 function Fact({
-  icon,
   label,
   value,
   mono,
   muted,
 }: {
-  icon: React.ReactNode;
   label: string;
   value: string;
   mono?: boolean;
   muted?: boolean;
 }) {
   return (
-    <Box sx={{ display: "flex", alignItems: "center", gap: 2, minHeight: 24 }}>
-      <Box sx={{ display: "inline-flex", color: "fg.muted" }} aria-hidden>
-        {icon}
-      </Box>
-      <Text sx={{ fontSize: 0, color: "fg.muted", fontWeight: 600, minWidth: 76 }}>
+    <Box sx={{ display: "flex", alignItems: "baseline", gap: 2, minHeight: 24 }}>
+      <Text sx={{ fontSize: 0, color: "fg.muted", fontWeight: 600 }}>
         {label}
       </Text>
       <Text
