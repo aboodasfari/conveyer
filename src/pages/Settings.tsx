@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import {
   Box,
   Button,
@@ -52,8 +53,27 @@ export function Settings() {
   const [section, setSection] = useState<Section>("sources");
 
   return (
-    <Box sx={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 4 }}>
-      <Box>
+    <Box
+      sx={{
+        display: "grid",
+        gridTemplateColumns: "200px 1fr",
+        gap: 4,
+        // Header (49 incl. 1px border) + main vertical padding from p: 4
+        // (Primer's space[4] = 24px each side = 48 total) = 97. Match
+        // exactly so the grid fills available space without producing an
+        // outer scrollbar or leaving slack below the version label.
+        height: "calc(100vh - 97px)",
+        overflow: "hidden",
+      }}
+    >
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          minHeight: 0,
+          py: 1,
+        }}
+      >
         <Heading as="h1" sx={{ fontSize: 4, mb: 3 }}>Settings</Heading>
         <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
           {SECTIONS.map((s) => (
@@ -65,14 +85,41 @@ export function Settings() {
             />
           ))}
         </Box>
+        <Box sx={{ flex: 1 }} />
+        <VersionFooter />
       </Box>
-      <Box>
+      <Box sx={{ overflowY: "auto", minHeight: 0, pr: 2 }}>
         {section === "sources" && <SourcesSection />}
         {section === "execution" && <ExecutionSection />}
         {section === "notifications" && <NotificationsSection />}
         {section === "appearance" && <AppearanceSection />}
       </Box>
     </Box>
+  );
+}
+
+/** Tiny app version label pinned to the bottom-left of the Settings sidebar.
+ *  Reads the runtime version from Tauri so it always matches what's installed.
+ *  Only rendered when the call resolves (silently hidden in non-Tauri dev). */
+function VersionFooter() {
+  const [v, setV] = useState<string | null>(null);
+  useEffect(() => {
+    getVersion().then(setV).catch(() => {});
+  }, []);
+  if (!v) return null;
+  return (
+    <Text
+      sx={{
+        color: "fg.muted",
+        fontSize: 0,
+        fontVariantNumeric: "tabular-nums",
+        userSelect: "none",
+        mt: 3,
+        px: 2,
+      }}
+    >
+      v{v}
+    </Text>
   );
 }
 

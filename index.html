@@ -5,6 +5,14 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Tauri + React + Typescript</title>
+    <style>
+      /* Disable macOS rubber-band overscroll so sticky-positioned elements
+       * (Settings sidebar, app header) don't jiggle when the user scrolls
+       * past the top/bottom of the page. */
+      html, body {
+        overscroll-behavior: none;
+      }
+    </style>
   </head>
 
   <body>
