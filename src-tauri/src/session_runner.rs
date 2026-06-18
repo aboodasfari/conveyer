@@ -270,6 +270,15 @@ pub fn sidecar_path() -> Option<PathBuf> {
             }
         }
     }
+    // 3. Bundled into the packaged app (production). On macOS the resource dir
+    //    is <bundle>.app/Contents/Resources/; on Linux/Windows it sits next to
+    //    the executable.
+    if let Some(res) = bundled_resource_dir() {
+        let candidate = res.join("sidecar/conveyer-agent.mjs");
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
     None
 }
 
@@ -277,9 +286,85 @@ fn prompts_dir() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("CONVEYER_PROMPTS_DIR") {
         return Some(PathBuf::from(p));
     }
+    // Prefer the bundled location in production; in dev fall back to the
+    // sibling of the sidecar.
+    if let Some(res) = bundled_resource_dir() {
+        let candidate = res.join("prompts");
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
     sidecar_path()
         .and_then(|s| s.parent().and_then(|p| p.parent()).map(|p| p.to_path_buf()))
         .map(|root| root.join("prompts"))
+}
+
+/// Locate the directory Tauri unpacks bundled `resources` into at runtime.
+/// macOS: `<bundle>.app/Contents/Resources/`. Linux/Windows: alongside the
+/// executable. Returns `None` in dev where CWD-based lookup handles it.
+fn bundled_resource_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let exe_dir = exe.parent()?;
+    #[cfg(target_os = "macos")]
+    {
+        // .app/Contents/MacOS/<exe> -> .app/Contents/Resources/
+        if let Some(contents) = exe_dir.parent() {
+            let candidate = contents.join("Resources");
+            if candidate.join("sidecar").exists() || candidate.join("prompts").exists() {
+                return Some(candidate);
+            }
+        }
+    }
+    if exe_dir.join("sidecar").exists() || exe_dir.join("prompts").exists() {
+        return Some(exe_dir.to_path_buf());
+    }
+    None
+}
+
+/// Best-effort lookup of the user's global npm `node_modules` directory so the
+/// sidecar can resolve `@github/copilot-sdk` (and friends) without them being
+/// installed in a `node_modules` next to the bundled sidecar. Shells out to
+/// `npm root -g` once and caches the result for the process lifetime.
+pub fn npm_global_root() -> Option<String> {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<Option<String>> = OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            let out = std::process::Command::new("npm")
+                .args(["root", "-g"])
+                .output()
+                .ok()?;
+            if !out.status.success() {
+                return None;
+            }
+            let s = String::from_utf8(out.stdout).ok()?.trim().to_string();
+            if s.is_empty() || !std::path::Path::new(&s).exists() {
+                return None;
+            }
+            Some(s)
+        })
+        .clone()
+}
+
+/// Build a `node` command (tokio) with NODE_PATH pre-populated so dynamic
+/// imports in the sidecar can resolve globally-installed npm packages (notably
+/// `@github/copilot-sdk`). Existing NODE_PATH entries are preserved.
+pub fn node_command() -> Command {
+    let mut cmd = Command::new("node");
+    if let Some(root) = npm_global_root() {
+        let combined = match std::env::var("NODE_PATH") {
+            Ok(existing) if !existing.is_empty() => {
+                #[cfg(windows)]
+                let sep = ";";
+                #[cfg(not(windows))]
+                let sep = ":";
+                format!("{existing}{sep}{root}")
+            }
+            _ => root,
+        };
+        cmd.env("NODE_PATH", combined);
+    }
+    cmd
 }
 
 fn artifacts_root() -> AppResult<PathBuf> {
@@ -682,7 +767,7 @@ async fn ensure_chat_spawned(
     .await?;
 
     let backend = std::env::var("CONVEYER_BACKEND").unwrap_or_else(|_| "copilot".into());
-    let mut cmd = Command::new("node");
+    let mut cmd = node_command();
     cmd.arg(&sidecar)
         .env("CONVEYER_MODE", "chat_repl")
         .env("CONVEYER_PHASE", &phase_kind)
@@ -1544,7 +1629,7 @@ async fn run_one(
 
     // Spawn the sidecar.
     let backend = std::env::var("CONVEYER_BACKEND").unwrap_or_else(|_| "copilot".into());
-    let mut cmd = Command::new("node");
+    let mut cmd = node_command();
     cmd.arg(&sidecar)
         .env("CONVEYER_PHASE", &phase_kind)
         .env("CONVEYER_TASK_ID", &ctx.task_id)
@@ -1608,7 +1693,7 @@ async fn run_one(
     // builds the prompt + writes prompt.md + exits. Skipped on resume:
     // the prompt.md already exists from the original run.
     if resume.is_none() {
-        let mut pre = Command::new("node");
+        let mut pre = node_command();
         pre.arg(&sidecar)
             .env("CONVEYER_MODE", "render_prompt")
             .env("CONVEYER_PHASE", &phase_kind)

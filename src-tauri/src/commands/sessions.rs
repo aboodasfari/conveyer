@@ -202,7 +202,7 @@ pub async fn models_list() -> AppResult<Vec<ModelInfo>> {
     let Some(sidecar) = session_runner::sidecar_path() else {
         return Ok(vec![]);
     };
-    let mut cmd = Command::new("node");
+    let mut cmd = session_runner::node_command();
     cmd.arg(&sidecar)
         .env("CONVEYER_MODE", "list_models")
         .stdout(Stdio::piped())

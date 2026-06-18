@@ -40,8 +40,49 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { createRequire } from "node:module";
 
 const env = process.env;
+
+// `require` based on this file's URL. Used to resolve npm packages that aren't
+// next to the sidecar — when packaged inside `Conveyer.app/Contents/Resources/`
+// there's no co-located `node_modules`, so we resolve via NODE_PATH (set by
+// Rust to the user's global npm root) plus any default search paths.
+const requireFromHere = createRequire(import.meta.url);
+
+/**
+ * Dynamically load the Copilot SDK. Tries a plain `import()` first (works in
+ * dev where the project's `node_modules` is reachable), then falls back to a
+ * NODE_PATH-aware lookup so the bundled production sidecar can find the user's
+ * globally-installed `@github/copilot-sdk`.
+ */
+async function importCopilotSdk() {
+  try {
+    return await import("@github/copilot-sdk");
+  } catch {}
+  const searchPaths = [];
+  if (env.NODE_PATH) {
+    searchPaths.push(...env.NODE_PATH.split(path.delimiter).filter(Boolean));
+  }
+  // Common npm global locations as a last resort.
+  const home = os.homedir();
+  searchPaths.push(
+    "/opt/homebrew/lib/node_modules",
+    "/usr/local/lib/node_modules",
+    `${home}/.npm-global/lib/node_modules`,
+    `${home}/.local/lib/node_modules`,
+  );
+  for (const p of searchPaths) {
+    try {
+      const resolved = requireFromHere.resolve("@github/copilot-sdk", { paths: [p] });
+      return await import(resolved);
+    } catch {}
+  }
+  throw new Error(
+    "@github/copilot-sdk not found. Install Copilot CLI globally:\n" +
+      "  npm install -g @github/copilot @github/copilot-sdk",
+  );
+}
 
 function emit(event) {
   process.stdout.write(JSON.stringify(event) + "\n");
@@ -498,10 +539,10 @@ async function runCopilotReply(phase, userMessage, sessionId) {
 async function runCopilotChatRepl(sessionId, idleMs) {
   let CopilotClient, approveAll;
   try {
-    ({ CopilotClient, approveAll } = await import("@github/copilot-sdk"));
+    ({ CopilotClient, approveAll } = await importCopilotSdk());
   } catch (e) {
-    msg("system", `@github/copilot-sdk not installed: ${e?.message ?? e}`);
-    emit({ type: "done", ok: false, error: "Install @github/copilot-sdk in the conveyer package." });
+    msg("system", `Copilot SDK not available: ${e?.message ?? e}`);
+    emit({ type: "done", ok: false, error: String(e?.message ?? e) });
     return;
   }
 
@@ -683,10 +724,10 @@ async function runReplLoop({ session, flush, idleMs }) {
 async function runCopilotSession({ phase, prompt, resume }) {
   let CopilotClient, approveAll;
   try {
-    ({ CopilotClient, approveAll } = await import("@github/copilot-sdk"));
+    ({ CopilotClient, approveAll } = await importCopilotSdk());
   } catch (e) {
-    msg("system", `@github/copilot-sdk not installed: ${e?.message ?? e}`);
-    emit({ type: "done", ok: false, error: "Install @github/copilot-sdk in the conveyer package." });
+    msg("system", `Copilot SDK not available: ${e?.message ?? e}`);
+    emit({ type: "done", ok: false, error: String(e?.message ?? e) });
     return;
   }
 
@@ -1023,7 +1064,7 @@ main().catch((e) => {
 async function listModels() {
   let CopilotClient;
   try {
-    ({ CopilotClient } = await import("@github/copilot-sdk"));
+    ({ CopilotClient } = await importCopilotSdk());
   } catch (e) {
     emit({ type: "models", models: [], error: `Could not load Copilot SDK: ${e?.message ?? e}` });
     return;
