@@ -770,8 +770,8 @@ function ExecutionSection() {
       </SubSection>
 
       <SubSection
-        title="Phases"
-        description="Toggle phases on or off for new runs."
+        title="Run Defaults"
+        description="Defaults applied to new runs. Each task can override these in its own Run settings."
       >
         <Box
           sx={{
@@ -782,7 +782,7 @@ function ExecutionSection() {
           }}
         >
           <Text>
-            Submit phase{" "}
+            Submit Phase{" "}
             <Text sx={{ color: "fg.muted", fontSize: 0 }}>
               · {submitEnabled ? "runs end with opening a PR" : "runs end after review"}
             </Text>
