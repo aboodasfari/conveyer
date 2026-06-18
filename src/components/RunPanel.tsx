@@ -9,7 +9,6 @@ import {
   FileDiffIcon,
   FileIcon,
   GitPullRequestIcon,
-  PlayIcon,
   ReplyIcon,
   ScreenFullIcon,
   ScreenNormalIcon,
@@ -26,7 +25,7 @@ import { PhaseArtifact } from "./PhaseArtifact";
 import { PromptView } from "./PromptView";
 import { DiffViewer } from "./DiffViewer";
 import { PullRequestView } from "./PullRequestView";
-import { TaskRunSettings, RunPreview } from "./TaskRunSettings";
+import { EmptyRunView } from "./TaskRunSettings";
 
 const RING_PULSE_KEYFRAMES = `
 @keyframes conveyerRingPulse {
@@ -256,53 +255,7 @@ export function RunPanel({ taskId }: { taskId: string }) {
   if (loading) return <Spinner size="small" />;
 
   if (!detail) {
-    return (
-      <Box
-        sx={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 3,
-          height: "calc(100vh - 300px)",
-          minHeight: 440,
-        }}
-      >
-        {error && <Flash variant="danger">{error}</Flash>}
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: "1fr 340px",
-            gap: 4,
-            alignItems: "stretch",
-            flex: 1,
-            minHeight: 0,
-          }}
-        >
-          <Box
-            sx={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 4,
-              justifyContent: "center",
-              alignItems: "flex-start",
-            }}
-          >
-            <Button
-              leadingVisual={PlayIcon}
-              variant="primary"
-              size="large"
-              onClick={start}
-              disabled={busy}
-            >
-              {busy ? "Starting…" : "Tackle this task"}
-            </Button>
-            <RunPreview taskId={taskId} />
-          </Box>
-          <Box sx={{ display: "flex" }}>
-            <TaskRunSettings taskId={taskId} />
-          </Box>
-        </Box>
-      </Box>
-    );
+    return <EmptyRunView taskId={taskId} onStart={start} busy={busy} error={error} />;
   }
 
   return (

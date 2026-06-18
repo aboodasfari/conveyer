@@ -1,12 +1,10 @@
-import { useEffect, useState } from "react";
-import { Box, Spinner, Text, TextInput, ToggleSwitch } from "@primer/react";
+import { useEffect, useMemo, useState } from "react";
+import { Box, Button, Flash, Spinner, Text, TextInput, ToggleSwitch } from "@primer/react";
 import {
-  CheckCircleFillIcon,
-  CircleSlashIcon,
   GitBranchIcon,
   GitMergeIcon,
   PackageIcon,
-  StackIcon,
+  PlayIcon,
 } from "@primer/octicons-react";
 import { api } from "../api";
 import { Task } from "../types";
@@ -20,28 +18,6 @@ interface Effective {
   branch: string;
 }
 
-/**
- * Shared resolver: returns the effective settings for a task (per-task value
- * if set, otherwise the global default). Used by both the side card and the
- * preview so they always agree.
- */
-async function loadEffective(taskId: string): Promise<Effective> {
-  const [task, gWt, gSub] = await Promise.all([
-    api.taskGet(taskId),
-    api.settingGet("use_worktree"),
-    api.settingGet("phase_submit_enabled"),
-  ]);
-  const globalWt = gWt !== "0" && gWt?.toLowerCase() !== "false";
-  const globalSub = gSub !== "0" && gSub?.toLowerCase() !== "false";
-  return {
-    task,
-    useWorktree: task.use_worktree == null ? globalWt : task.use_worktree !== 0,
-    submitPr: task.enable_submit == null ? globalSub : task.enable_submit !== 0,
-    baseBranch: task.base_branch_override ?? "",
-    branch: task.branch_override ?? "",
-  };
-}
-
 const PHASES: { kind: string; label: string }[] = [
   { kind: "exploration", label: "Exploration" },
   { kind: "planning", label: "Planning" },
@@ -51,29 +27,134 @@ const PHASES: { kind: string; label: string }[] = [
 ];
 
 /**
- * Visual preview of what the run will do — a structured fact list on the
- * left of the empty Run tab so the user can sanity-check the configuration
- * before clicking Tackle. Uses the same resolver as the side card so the
- * two always agree.
+ * The empty-run view of the Run tab. Owns the resolved-settings state for
+ * the task so the left-side preview and the right-side settings card stay
+ * in sync as the user toggles things. Two columns:
+ *
+ *   left  → Tackle CTA + structured RunPreview
+ *   right → TaskRunSettings card (full-height side panel)
  */
-export function RunPreview({ taskId }: { taskId: string }) {
+export function EmptyRunView({
+  taskId,
+  onStart,
+  busy,
+  error,
+}: {
+  taskId: string;
+  onStart: () => void;
+  busy: boolean;
+  error: string | null;
+}) {
   const [eff, setEff] = useState<Effective | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const e = await loadEffective(taskId);
-        if (!cancelled) setEff(e);
-      } catch {}
+        const [task, gWt, gSub] = await Promise.all([
+          api.taskGet(taskId),
+          api.settingGet("use_worktree"),
+          api.settingGet("phase_submit_enabled"),
+        ]);
+        if (cancelled) return;
+        const globalWt = gWt !== "0" && gWt?.toLowerCase() !== "false";
+        const globalSub = gSub !== "0" && gSub?.toLowerCase() !== "false";
+        setEff({
+          task,
+          useWorktree: task.use_worktree == null ? globalWt : task.use_worktree !== 0,
+          submitPr: task.enable_submit == null ? globalSub : task.enable_submit !== 0,
+          baseBranch: task.base_branch_override ?? "",
+          branch: task.branch_override ?? "",
+        });
+      } catch (e) {
+        if (!cancelled) setLoadError(formatError(e));
+      }
     })();
     return () => { cancelled = true; };
   }, [taskId]);
 
-  if (!eff) return null;
+  // Apply a partial update locally first (so the preview reflects it
+  // instantly), then persist. Caller passes only the changed field(s).
+  const update = async (patch: Partial<Omit<Effective, "task">>) => {
+    if (!eff) return;
+    const merged: Effective = { ...eff, ...patch };
+    setEff(merged);
+    try {
+      await api.taskOverridesSet(taskId, {
+        useWorktree: merged.useWorktree,
+        enableSubmit: merged.submitPr,
+        baseBranchOverride: merged.baseBranch.trim() || null,
+        branchOverride: merged.branch.trim() || null,
+      });
+    } catch (e) {
+      setLoadError(formatError(e));
+    }
+  };
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 3, maxWidth: 520 }}>
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 3,
+        height: "calc(100vh - 300px)",
+        minHeight: 440,
+      }}
+    >
+      {error && <Flash variant="danger">{error}</Flash>}
+      {loadError && <Flash variant="danger">{loadError}</Flash>}
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: "1fr 340px",
+          gap: 4,
+          alignItems: "stretch",
+          flex: 1,
+          minHeight: 0,
+        }}
+      >
+        <Box
+          sx={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            justifyContent: "center",
+            alignItems: "flex-start",
+            minWidth: 0,
+          }}
+        >
+          <Button
+            leadingVisual={PlayIcon}
+            variant="primary"
+            size="large"
+            onClick={onStart}
+            disabled={busy}
+          >
+            {busy ? "Starting…" : "Tackle this task"}
+          </Button>
+          <RunPreview eff={eff} />
+        </Box>
+        <RunSettingsCard eff={eff} update={update} />
+      </Box>
+    </Box>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                Run preview                                 */
+/* -------------------------------------------------------------------------- */
+
+function RunPreview({ eff }: { eff: Effective | null }) {
+  const phaseLine = useMemo(() => {
+    if (!eff) return null;
+    return PHASES.filter((p) => p.kind !== "submit" || eff.submitPr).map((p) => p.label);
+  }, [eff]);
+
+  if (!eff || !phaseLine) return null;
+
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 3, maxWidth: 560, minWidth: 0 }}>
       <Text sx={{ fontWeight: 600, fontSize: 1, color: "fg.muted" }}>
         This run will…
       </Text>
@@ -81,59 +162,47 @@ export function RunPreview({ taskId }: { taskId: string }) {
         <Fact
           icon={<GitBranchIcon size={14} />}
           label="Branch"
-          value={eff.branch ? <code>{eff.branch}</code> : <em>create a new branch</em>}
-          hint={eff.branch ? "existing" : "new"}
+          value={eff.branch ? <code>{eff.branch}</code> : "create a new branch"}
         />
         <Fact
           icon={<GitMergeIcon size={14} />}
           label="PR target"
-          value={eff.baseBranch ? <code>{eff.baseBranch}</code> : <em>remote default branch</em>}
-          hint={eff.baseBranch ? "custom" : "auto"}
+          value={
+            eff.submitPr
+              ? eff.baseBranch
+                ? <code>{eff.baseBranch}</code>
+                : "the repo's default branch"
+              : <Text sx={{ color: "fg.muted" }}>not opening a PR</Text>
+          }
         />
         <Fact
           icon={<PackageIcon size={14} />}
           label="Workdir"
-          value={eff.useWorktree ? "isolated git worktree" : "the workspace itself"}
+          value={eff.useWorktree ? "isolated git worktree" : "the workspace, in place"}
         />
       </Box>
 
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1, mt: 1 }}>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 2, color: "fg.muted" }}>
-          <StackIcon size={14} />
-          <Text sx={{ fontSize: 0, fontWeight: 600 }}>Phases</Text>
-        </Box>
-        <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1, pl: 4 }}>
-          {PHASES.map((p, i) => {
-            const dimmed = p.kind === "submit" && !eff.submitPr;
-            return (
-              <Box key={p.kind} sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                <Box
-                  sx={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 1,
-                    px: 2,
-                    py: 0,
-                    fontSize: 0,
-                    borderRadius: 999,
-                    bg: dimmed ? "transparent" : "accent.subtle",
-                    color: dimmed ? "fg.muted" : "accent.fg",
-                    textDecoration: dimmed ? "line-through" : "none",
-                    borderWidth: dimmed ? 1 : 0,
-                    borderStyle: "solid",
-                    borderColor: "border.default",
-                  }}
-                >
-                  {dimmed ? <CircleSlashIcon size={10} /> : <CheckCircleFillIcon size={10} />}
-                  <Text sx={{ fontSize: 0 }}>{p.label}</Text>
-                </Box>
-                {i < PHASES.length - 1 && (
-                  <Text sx={{ color: "fg.muted", fontSize: 0 }}>›</Text>
-                )}
-              </Box>
-            );
-          })}
-        </Box>
+      <Box>
+        <Text sx={{ fontSize: 0, fontWeight: 600, color: "fg.muted", display: "block", mb: 1 }}>
+          Phases
+        </Text>
+        <Text
+          sx={{
+            fontSize: 1,
+            color: "fg.default",
+            lineHeight: 1.6,
+            wordBreak: "break-word",
+          }}
+        >
+          {phaseLine.map((label, i) => (
+            <span key={label}>
+              {label}
+              {i < phaseLine.length - 1 && (
+                <Text as="span" sx={{ color: "fg.muted", mx: 2 }}>›</Text>
+              )}
+            </span>
+          ))}
+        </Text>
       </Box>
     </Box>
   );
@@ -143,12 +212,10 @@ function Fact({
   icon,
   label,
   value,
-  hint,
 }: {
   icon: React.ReactNode;
   label: string;
   value: React.ReactNode;
-  hint?: string;
 }) {
   return (
     <Box sx={{ display: "flex", alignItems: "baseline", gap: 2 }}>
@@ -159,69 +226,30 @@ function Fact({
         {label}
       </Text>
       <Text sx={{ fontSize: 1 }}>{value}</Text>
-      {hint && (
-        <Text sx={{ fontSize: 0, color: "fg.muted" }}>· {hint}</Text>
-      )}
     </Box>
   );
 }
 
-/**
- * Compact side card with the four per-task overrides. Fills the height of
- * its grid cell so the Run tab feels balanced. Toggles initialize from the
- * global default the first time the user sees the task, then persist the
- * concrete value on change.
- */
-export function TaskRunSettings({ taskId }: { taskId: string }) {
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [task, setTask] = useState<Task | null>(null);
+/* -------------------------------------------------------------------------- */
+/*                            Run settings (side card)                        */
+/* -------------------------------------------------------------------------- */
 
-  const [useWorktree, setUseWorktree] = useState<boolean>(true);
-  const [submitPr, setSubmitPr] = useState<boolean>(true);
-  const [baseBranch, setBaseBranch] = useState<string>("");
-  const [branch, setBranch] = useState<string>("");
+function RunSettingsCard({
+  eff,
+  update,
+}: {
+  eff: Effective | null;
+  update: (patch: Partial<Omit<Effective, "task">>) => void;
+}) {
+  // Local mirror for the text inputs so typing doesn't trigger a save on
+  // every keystroke; commits to the parent on blur.
+  const [branch, setBranch] = useState<string>(eff?.branch ?? "");
+  const [baseBranch, setBaseBranch] = useState<string>(eff?.baseBranch ?? "");
 
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const e = await loadEffective(taskId);
-        if (cancelled) return;
-        setTask(e.task);
-        setUseWorktree(e.useWorktree);
-        setSubmitPr(e.submitPr);
-        setBaseBranch(e.baseBranch);
-        setBranch(e.branch);
-      } catch (err) {
-        if (!cancelled) setError(formatError(err));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [taskId]);
-
-  const save = async (next: {
-    useWorktree?: boolean;
-    submitPr?: boolean;
-    baseBranch?: string;
-    branch?: string;
-  }) => {
-    try {
-      await api.taskOverridesSet(taskId, {
-        useWorktree: next.useWorktree !== undefined ? next.useWorktree : useWorktree,
-        enableSubmit: next.submitPr !== undefined ? next.submitPr : submitPr,
-        baseBranchOverride:
-          (next.baseBranch !== undefined ? next.baseBranch : baseBranch).trim() || null,
-        branchOverride:
-          (next.branch !== undefined ? next.branch : branch).trim() || null,
-      });
-      setError(null);
-    } catch (e) {
-      setError(formatError(e));
-    }
-  };
+    setBranch(eff?.branch ?? "");
+    setBaseBranch(eff?.baseBranch ?? "");
+  }, [eff?.branch, eff?.baseBranch]);
 
   return (
     <Box
@@ -241,37 +269,32 @@ export function TaskRunSettings({ taskId }: { taskId: string }) {
     >
       <Text sx={{ fontWeight: 600, fontSize: 1 }}>Run settings</Text>
 
-      {loading || !task ? (
+      {!eff ? (
         <Spinner size="small" />
       ) : (
         <>
-          {error && <Text sx={{ fontSize: 0, color: "danger.fg" }}>{error}</Text>}
-
           <ToggleRow
             label="Submit PR"
-            checked={submitPr}
-            onChange={(v) => { setSubmitPr(v); void save({ submitPr: v }); }}
+            checked={eff.submitPr}
+            onChange={(v) => update({ submitPr: v })}
           />
           <ToggleRow
             label="Use worktree"
-            checked={useWorktree}
-            onChange={(v) => { setUseWorktree(v); void save({ useWorktree: v }); }}
+            checked={eff.useWorktree}
+            onChange={(v) => update({ useWorktree: v })}
           />
-
           <InputRow
             label="Working branch"
-            hint="commits go here · leave blank to create new"
             value={branch}
             onChange={setBranch}
-            onCommit={() => void save({ branch })}
+            onCommit={() => update({ branch })}
             placeholder="(new)"
           />
           <InputRow
-            label="Base branch"
-            hint="PR target · leave blank for repo default"
+            label="Target branch"
             value={baseBranch}
             onChange={setBaseBranch}
-            onCommit={() => void save({ baseBranch })}
+            onCommit={() => update({ baseBranch })}
             placeholder="(auto)"
           />
         </>
@@ -304,14 +327,12 @@ function ToggleRow({
 
 function InputRow({
   label,
-  hint,
   value,
   onChange,
   onCommit,
   placeholder,
 }: {
   label: string;
-  hint?: string;
   value: string;
   onChange: (v: string) => void;
   onCommit: () => void;
@@ -319,12 +340,7 @@ function InputRow({
 }) {
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-      <Box sx={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 2 }}>
-        <Text sx={{ fontSize: 1 }}>{label}</Text>
-        {hint && (
-          <Text sx={{ fontSize: 0, color: "fg.muted", textAlign: "right" }}>{hint}</Text>
-        )}
-      </Box>
+      <Text sx={{ fontSize: 1 }}>{label}</Text>
       <TextInput
         value={value}
         onChange={(e) => onChange(e.target.value)}
