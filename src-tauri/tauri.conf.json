@@ -30,7 +30,8 @@
     "createUpdaterArtifacts": true,
     "resources": {
       "../sidecar/conveyer-agent.mjs": "sidecar/conveyer-agent.mjs",
-      "../prompts": "prompts"
+      "../prompts": "prompts",
+      "resources/copilot-bundle/node_modules": "node_modules"
     },
     "icon": [
       "icons/32x32.png",

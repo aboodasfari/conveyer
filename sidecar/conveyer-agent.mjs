@@ -40,6 +40,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
 const env = process.env;
@@ -50,29 +51,36 @@ const env = process.env;
 // Rust to the user's global npm root) plus any default search paths.
 const requireFromHere = createRequire(import.meta.url);
 
+const SIDECAR_DIR = path.dirname(fileURLToPath(import.meta.url));
+
 /**
  * Dynamically load the Copilot SDK. Tries a plain `import()` first (works in
  * dev where the project's `node_modules` is reachable), then falls back to a
- * NODE_PATH-aware lookup so the bundled production sidecar can find the user's
- * globally-installed `@github/copilot-sdk`.
+ * sidecar-relative bundled tree (production: `Resources/node_modules/`),
+ * process.execPath-derived global modules, NODE_PATH, and common npm global
+ * prefixes. Throws a clear, self-diagnosing error if none of them resolve.
  */
 async function importCopilotSdk() {
   try {
     return await import("@github/copilot-sdk");
   } catch {}
   const searchPaths = [];
+  // (1) Bundled into the .app next to the sidecar. Highest priority so a
+  //     packaged build is fully self-contained even if the user has a
+  //     mismatched globally-installed Copilot CLI.
+  searchPaths.push(path.join(SIDECAR_DIR, "..", "node_modules"));
+  // (2) NODE_PATH (Rust sets this from `npm root -g`).
   if (env.NODE_PATH) {
     searchPaths.push(...env.NODE_PATH.split(path.delimiter).filter(Boolean));
   }
-  // The most reliable source: derive from the running node's own location.
-  // process.execPath is e.g. `<prefix>/bin/node`, so `<prefix>/lib/node_modules`
-  // is the global modules dir for this exact node install. Works under any
-  // nvm/asdf/homebrew/system layout without PATH probing.
+  // (3) Derive global node_modules from the running node binary's own prefix:
+  //     <prefix>/bin/node -> <prefix>/lib/node_modules. Works under any
+  //     nvm/asdf/homebrew/system layout without PATH probing.
   try {
     const prefix = path.dirname(path.dirname(process.execPath));
     searchPaths.push(path.join(prefix, "lib", "node_modules"));
   } catch {}
-  // Common npm global locations as a last resort.
+  // (4) Common npm global locations as a last resort.
   const home = os.homedir();
   searchPaths.push(
     "/opt/homebrew/lib/node_modules",
@@ -90,9 +98,8 @@ async function importCopilotSdk() {
     }
   }
   throw new Error(
-    "@github/copilot-sdk not found. Install Copilot CLI globally:\n" +
-      "  npm install -g @github/copilot @github/copilot-sdk\n\n" +
-      "Searched:\n  - " +
+    "@github/copilot-sdk not found. The bundled copy is missing and no global " +
+      "install was detected.\n\nSearched:\n  - " +
       tried.join("\n  - "),
   );
 }

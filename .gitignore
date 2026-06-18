@@ -1,4 +1,5 @@
 node_modules/
+src-tauri/resources/copilot-bundle/
 dist/
 .DS_Store
 src-tauri/target/

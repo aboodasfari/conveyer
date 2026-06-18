@@ -31,25 +31,14 @@ Grab the latest release for your platform from the [Releases](https://github.com
 
 ## Getting Started
 
-### Prerequisites
-
-Conveyer drives the [GitHub Copilot CLI](https://github.com/github/copilot)
-via the Copilot SDK. The packaged app doesn't ship those (the CLI alone is
-hundreds of MB), so install them globally once:
-
-```sh
-npm install -g @github/copilot @github/copilot-sdk
-```
-
-Conveyer auto-detects your global npm modules at startup; no further config
-is needed. If you ever change npm prefixes, just relaunch the app.
-
-### Using Conveyer
-
 1. Launch Conveyer
 2. Go to **Settings** and add a source (Azure DevOps or GitHub)
 3. For ADO: set your PAT in an environment variable (default `ADO_PAT`) before launching
 4. Tasks from your configured sources appear on the dashboard
+
+The Copilot CLI ships inside the app — no separate install needed. If you already
+have `@github/copilot` installed globally, Conveyer will prefer its own bundled
+copy so versions stay aligned.
 
 ## Development
 
@@ -58,6 +47,14 @@ Requirements: Node ≥20, Rust stable (via `rustup`).
 ```sh
 npm install
 npm run tauri dev
+```
+
+For a local production build, stage the Copilot bundle for your host platform
+first (CI does this automatically):
+
+```sh
+./scripts/stage-copilot.sh        # auto-detects host triple
+npm run tauri build
 ```
 
 See [RELEASING.md](RELEASING.md) for maintainer docs on publishing new versions.
