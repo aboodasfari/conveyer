@@ -1,15 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Box, Button, Flash, Spinner, Text, TextInput, ToggleSwitch } from "@primer/react";
 import {
-  ChecklistIcon,
-  CodeIcon,
-  EyeIcon,
   GitBranchIcon,
   GitMergeIcon,
-  GitPullRequestIcon,
   PackageIcon,
   PlayIcon,
-  SearchIcon,
 } from "@primer/octicons-react";
 import { api } from "../api";
 import { Task } from "../types";
@@ -23,12 +18,12 @@ interface Effective {
   branch: string;
 }
 
-const PHASES: { kind: string; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
-  { kind: "exploration", label: "Exploration", icon: SearchIcon },
-  { kind: "planning", label: "Planning", icon: ChecklistIcon },
-  { kind: "implementation", label: "Implementation", icon: CodeIcon },
-  { kind: "review", label: "Review", icon: EyeIcon },
-  { kind: "submit", label: "Submit PR", icon: GitPullRequestIcon },
+const PHASES: { kind: string; label: string }[] = [
+  { kind: "exploration", label: "Exploration" },
+  { kind: "planning", label: "Planning" },
+  { kind: "implementation", label: "Implementation" },
+  { kind: "review", label: "Review" },
+  { kind: "submit", label: "Submit PR" },
 ];
 
 /**
@@ -79,12 +74,17 @@ export function EmptyRunView({
     return () => { cancelled = true; };
   }, [taskId]);
 
-  // Apply a partial update locally first (so the preview reflects it
-  // instantly), then persist. Caller passes only the changed field(s).
-  const update = async (patch: Partial<Omit<Effective, "task">>) => {
+  // Apply a partial update. When opts.persist is false (default true), the
+  // change is reflected in local state only — used by text inputs so the
+  // preview reacts on every keystroke while we save on blur.
+  const update = async (
+    patch: Partial<Omit<Effective, "task">>,
+    opts: { persist?: boolean } = {},
+  ) => {
     if (!eff) return;
     const merged: Effective = { ...eff, ...patch };
     setEff(merged);
+    if (opts.persist === false) return;
     try {
       await api.taskOverridesSet(taskId, {
         useWorktree: merged.useWorktree,
@@ -123,22 +123,25 @@ export function EmptyRunView({
           sx={{
             display: "flex",
             flexDirection: "column",
-            gap: 4,
-            alignItems: "flex-start",
             minWidth: 0,
             pt: 1,
           }}
         >
-          <Button
-            leadingVisual={PlayIcon}
-            variant="primary"
-            size="large"
-            onClick={onStart}
-            disabled={busy}
-          >
-            {busy ? "Starting…" : "Tackle this task"}
-          </Button>
-          <RunPreview eff={eff} />
+          <Box sx={{ flex: 1, minHeight: 0 }}>
+            <RunPreview eff={eff} />
+          </Box>
+          <Box sx={{ pt: 4, display: "flex", justifyContent: "center" }}>
+            <Button
+              leadingVisual={PlayIcon}
+              variant="primary"
+              size="large"
+              onClick={onStart}
+              disabled={busy}
+              sx={{ minWidth: 240 }}
+            >
+              {busy ? "Starting…" : "Tackle this task"}
+            </Button>
+          </Box>
         </Box>
         <RunSettingsCard eff={eff} update={update} />
       </Box>
@@ -191,95 +194,43 @@ function RunPreview({ eff }: { eff: Effective | null }) {
         <Text sx={{ fontSize: 0, fontWeight: 600, color: "fg.muted", display: "block", mb: 2 }}>
           Pipeline
         </Text>
-        <PhaseStepper phases={phases} />
+        <PhasePills phases={phases} />
       </Box>
     </Box>
   );
 }
 
-/** Horizontal stepper: numbered circles with phase icons + labels beneath,
- *  connected by thin lines. Calm but visually structured. */
-function PhaseStepper({
+/** Compact, calmer-than-the-in-run-sidebar phase list: label-only chips
+ *  joined by thin connectors. Wraps gracefully. */
+function PhasePills({
   phases,
 }: {
-  phases: { kind: string; label: string; icon: React.ComponentType<{ size?: number }> }[];
+  phases: { kind: string; label: string }[];
 }) {
   return (
-    <Box
-      sx={{
-        display: "flex",
-        alignItems: "flex-start",
-        // Wider gap on bigger screens; collapses gracefully.
-        flexWrap: "wrap",
-        rowGap: 3,
-      }}
-    >
-      {phases.map((p, i) => {
-        const Icon = p.icon;
-        const isLast = i === phases.length - 1;
-        return (
+    <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", rowGap: 2 }}>
+      {phases.map((p, i) => (
+        <Box key={p.kind} sx={{ display: "flex", alignItems: "center" }}>
           <Box
-            key={p.kind}
             sx={{
-              display: "flex",
-              alignItems: "flex-start",
-              flex: isLast ? "0 0 auto" : "1 1 0",
-              minWidth: 80,
+              px: 2,
+              py: "2px",
+              fontSize: 0,
+              borderRadius: 999,
+              bg: "neutral.subtle",
+              color: "fg.default",
+              borderWidth: 1,
+              borderStyle: "solid",
+              borderColor: "border.muted",
             }}
           >
-            <Box
-              sx={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                gap: 1,
-                minWidth: 80,
-              }}
-            >
-              <Box
-                sx={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: "50%",
-                  bg: "canvas.subtle",
-                  borderWidth: 1,
-                  borderStyle: "solid",
-                  borderColor: "border.default",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: "accent.fg",
-                }}
-              >
-                <Icon size={16} />
-              </Box>
-              <Text
-                sx={{
-                  fontSize: 0,
-                  color: "fg.default",
-                  textAlign: "center",
-                  lineHeight: 1.3,
-                }}
-              >
-                {p.label}
-              </Text>
-            </Box>
-            {!isLast && (
-              <Box
-                aria-hidden
-                sx={{
-                  flex: 1,
-                  height: 1,
-                  bg: "border.default",
-                  mt: "18px",
-                  mx: 1,
-                  minWidth: 16,
-                }}
-              />
-            )}
+            {p.label}
           </Box>
-        );
-      })}
+          {i < phases.length - 1 && (
+            <Box aria-hidden sx={{ width: 16, height: 1, bg: "border.muted", mx: 1 }} />
+          )}
+        </Box>
+      ))}
     </Box>
   );
 }
@@ -315,18 +266,8 @@ function RunSettingsCard({
   update,
 }: {
   eff: Effective | null;
-  update: (patch: Partial<Omit<Effective, "task">>) => void;
+  update: (patch: Partial<Omit<Effective, "task">>, opts?: { persist?: boolean }) => void;
 }) {
-  // Local mirror for the text inputs so typing doesn't trigger a save on
-  // every keystroke; commits to the parent on blur.
-  const [branch, setBranch] = useState<string>(eff?.branch ?? "");
-  const [baseBranch, setBaseBranch] = useState<string>(eff?.baseBranch ?? "");
-
-  useEffect(() => {
-    setBranch(eff?.branch ?? "");
-    setBaseBranch(eff?.baseBranch ?? "");
-  }, [eff?.branch, eff?.baseBranch]);
-
   return (
     <Box
       sx={{
@@ -361,16 +302,16 @@ function RunSettingsCard({
           />
           <InputRow
             label="Working branch"
-            value={branch}
-            onChange={setBranch}
-            onCommit={() => update({ branch })}
+            value={eff.branch}
+            onChange={(v) => update({ branch: v }, { persist: false })}
+            onCommit={() => update({ branch: eff.branch })}
             placeholder="(new)"
           />
           <InputRow
             label="Target branch"
-            value={baseBranch}
-            onChange={setBaseBranch}
-            onCommit={() => update({ baseBranch })}
+            value={eff.baseBranch}
+            onChange={(v) => update({ baseBranch: v }, { persist: false })}
+            onCommit={() => update({ baseBranch: eff.baseBranch })}
             placeholder="(auto)"
             disabled={!eff.submitPr && !!eff.branch.trim()}
             disabledReason="No PR is being opened from an existing branch — nothing to target."
