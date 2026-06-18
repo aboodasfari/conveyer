@@ -46,12 +46,26 @@ export function EmptyRunView({
 }) {
   const [eff, setEff] = useState<Effective | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  // Closed by default; ?settings=open in the URL opens it on first mount
-  // (used by the dashboard's "Custom Tackle" path).
-  const [searchParams] = useSearchParams();
-  const [collapsed, setCollapsed] = useState<boolean>(
-    searchParams.get("settings") !== "open",
-  );
+  // Persist the panel open/closed state in the URL so it survives tab
+  // switches (which remount RunPanel). Default is closed; Custom Tackle
+  // navigates with ?settings=open. Toggling the panel updates the URL so
+  // the user's choice sticks.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const collapsed = searchParams.get("settings") !== "open";
+  const setCollapsed = (next: boolean) => {
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        if (next) {
+          params.delete("settings");
+        } else {
+          params.set("settings", "open");
+        }
+        return params;
+      },
+      { replace: true },
+    );
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -212,7 +226,7 @@ export function EmptyRunView({
           update={update}
           revert={revertToInherit}
           collapsed={collapsed}
-          onToggleCollapsed={() => setCollapsed((c) => !c)}
+          onToggleCollapsed={() => setCollapsed(!collapsed)}
         />
       </Box>
     </Box>
