@@ -871,7 +871,7 @@ function ExecutionSection() {
 
       <SubSection
         title="Phase Gates"
-        description="After a phase finishes, auto-advance to the next phase. Turn off to pause for your approval before continuing."
+        description="When a phase finishes, what should Conveyer do next? Turn each gate on to keep moving automatically; turn it off to pause for your input."
       >
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
           {PHASE_KINDS.map((k) => {
@@ -952,9 +952,15 @@ function ExecutionSection() {
                   }}
                 >
                   <Text id={labelId}>
-                    {titleCase(k)}{" "}
+                    {titleCase(k === "submit" ? "Submit PR" : k)}{" "}
                     <Text sx={{ color: "fg.muted", fontSize: 0 }}>
-                      · {on ? "auto-advance after" : "wait for me after"}
+                      · {k === "submit"
+                        ? on
+                          ? "auto-create the PR after the agent drafts it"
+                          : "show the PR preview and wait for me to create"
+                        : on
+                          ? "auto-advance after"
+                          : "wait for me after"}
                     </Text>
                   </Text>
                   <ToggleSwitch
