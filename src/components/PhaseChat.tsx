@@ -1043,6 +1043,7 @@ function ToolBubbleView({ bubble, streaming }: { bubble: ToolBubble; streaming?:
             flexDirection: "column",
             gap: 2,
             fontSize: 0,
+            minWidth: 0,
           }}
         >
           {formatArguments(bubble.arguments) && (
@@ -1073,7 +1074,8 @@ function CodeBlock({ label, content, tone }: { label: string; content: string; t
           color: tone === "danger" ? "danger.fg" : "fg.default",
           borderRadius: 1,
           overflowX: "auto",
-          whiteSpace: "pre",
+          whiteSpace: "pre-wrap",
+          overflowWrap: "anywhere",
           maxHeight: 320,
           fontFamily: "mono",
           fontSize: 0,
@@ -1133,7 +1135,8 @@ function ResultBlock({ content }: { content: string }) {
             bg: "canvas.subtle",
             borderRadius: 1,
             overflowX: "auto",
-            whiteSpace: "pre",
+            whiteSpace: "pre-wrap",
+            overflowWrap: "anywhere",
             maxHeight: 320,
             fontFamily: "mono",
             fontSize: 0,

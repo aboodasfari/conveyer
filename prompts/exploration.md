@@ -22,6 +22,10 @@ Research the task and the relevant parts of the codebase. Produce a context docu
 
 - Don't propose a plan yet — that's the next phase.
 - Don't make code changes.
+- Don't use `web_fetch` for Azure DevOps work items, queries, repos, or any
+  ADO-hosted page — those URLs require auth and the cookieless fetcher gets
+  stub HTML. Use the `az` / `az boards` / `az repos` CLI instead, which
+  already has your credentials.
 
 ## Context document format
 
