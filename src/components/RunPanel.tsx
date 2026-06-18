@@ -26,7 +26,7 @@ import { PhaseArtifact } from "./PhaseArtifact";
 import { PromptView } from "./PromptView";
 import { DiffViewer } from "./DiffViewer";
 import { PullRequestView } from "./PullRequestView";
-import { TaskRunSettings, TackleSummary } from "./TaskRunSettings";
+import { TaskRunSettings, RunPreview } from "./TaskRunSettings";
 
 const RING_PULSE_KEYFRAMES = `
 @keyframes conveyerRingPulse {
@@ -257,25 +257,33 @@ export function RunPanel({ taskId }: { taskId: string }) {
 
   if (!detail) {
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 3,
+          height: "calc(100vh - 300px)",
+          minHeight: 440,
+        }}
+      >
         {error && <Flash variant="danger">{error}</Flash>}
         <Box
           sx={{
-            display: "flex",
+            display: "grid",
+            gridTemplateColumns: "1fr 340px",
             gap: 4,
             alignItems: "stretch",
-            flexWrap: "wrap",
+            flex: 1,
+            minHeight: 0,
           }}
         >
           <Box
             sx={{
-              flex: "1 1 320px",
               display: "flex",
               flexDirection: "column",
+              gap: 4,
               justifyContent: "center",
               alignItems: "flex-start",
-              gap: 3,
-              py: 5,
             }}
           >
             <Button
@@ -287,9 +295,9 @@ export function RunPanel({ taskId }: { taskId: string }) {
             >
               {busy ? "Starting…" : "Tackle this task"}
             </Button>
-            <TackleSummary taskId={taskId} />
+            <RunPreview taskId={taskId} />
           </Box>
-          <Box sx={{ flex: "0 0 340px" }}>
+          <Box sx={{ display: "flex" }}>
             <TaskRunSettings taskId={taskId} />
           </Box>
         </Box>
