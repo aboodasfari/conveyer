@@ -999,11 +999,13 @@ function ToolBubbleView({ bubble, streaming }: { bubble: ToolBubble; streaming?:
           />
         </Box>
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Box sx={{ display: "flex", alignItems: "baseline", gap: 2 }}>
-            <Text sx={{ fontWeight: 600 }}>{summary.title}</Text>
-            <Text sx={{ color: "fg.muted", fontSize: 0 }}>({bubble.tool})</Text>
+          <Box sx={{ display: "flex", alignItems: "baseline", gap: 2, minWidth: 0 }}>
+            <Text sx={{ fontWeight: 600, minWidth: 0, overflowWrap: "anywhere", wordBreak: "break-word" }}>
+              {summary.title}
+            </Text>
+            <Text sx={{ color: "fg.muted", fontSize: 0, flexShrink: 0 }}>({bubble.tool})</Text>
             {hasDetails && (
-              <Box sx={{ ml: "auto", color: "fg.muted" }} aria-hidden>
+              <Box sx={{ ml: "auto", color: "fg.muted", flexShrink: 0 }} aria-hidden>
                 {open ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
               </Box>
             )}
