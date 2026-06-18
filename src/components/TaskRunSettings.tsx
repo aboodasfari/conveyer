@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { Box, Button, Flash, Spinner, Text, TextInput, ToggleSwitch } from "@primer/react";
 import {
+  ChecklistIcon,
+  CodeIcon,
+  EyeIcon,
   GitBranchIcon,
   GitMergeIcon,
+  GitPullRequestIcon,
   PackageIcon,
   PlayIcon,
+  SearchIcon,
 } from "@primer/octicons-react";
 import { api } from "../api";
 import { Task } from "../types";
@@ -18,12 +23,12 @@ interface Effective {
   branch: string;
 }
 
-const PHASES: { kind: string; label: string }[] = [
-  { kind: "exploration", label: "Exploration" },
-  { kind: "planning", label: "Planning" },
-  { kind: "implementation", label: "Implementation" },
-  { kind: "review", label: "Review" },
-  { kind: "submit", label: "Submit PR" },
+const PHASES: { kind: string; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
+  { kind: "exploration", label: "Exploration", icon: SearchIcon },
+  { kind: "planning", label: "Planning", icon: ChecklistIcon },
+  { kind: "implementation", label: "Implementation", icon: CodeIcon },
+  { kind: "review", label: "Review", icon: EyeIcon },
+  { kind: "submit", label: "Submit PR", icon: GitPullRequestIcon },
 ];
 
 /**
@@ -119,9 +124,9 @@ export function EmptyRunView({
             display: "flex",
             flexDirection: "column",
             gap: 4,
-            justifyContent: "center",
             alignItems: "flex-start",
             minWidth: 0,
+            pt: 1,
           }}
         >
           <Button
@@ -146,12 +151,12 @@ export function EmptyRunView({
 /* -------------------------------------------------------------------------- */
 
 function RunPreview({ eff }: { eff: Effective | null }) {
-  const phaseLine = useMemo(() => {
+  const phases = useMemo(() => {
     if (!eff) return null;
-    return PHASES.filter((p) => p.kind !== "submit" || eff.submitPr).map((p) => p.label);
+    return PHASES.filter((p) => p.kind !== "submit" || eff.submitPr);
   }, [eff]);
 
-  if (!eff || !phaseLine) return null;
+  if (!eff || !phases) return null;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3, maxWidth: 560, minWidth: 0 }}>
@@ -182,28 +187,99 @@ function RunPreview({ eff }: { eff: Effective | null }) {
         />
       </Box>
 
-      <Box>
-        <Text sx={{ fontSize: 0, fontWeight: 600, color: "fg.muted", display: "block", mb: 1 }}>
-          Phases
+      <Box sx={{ mt: 2 }}>
+        <Text sx={{ fontSize: 0, fontWeight: 600, color: "fg.muted", display: "block", mb: 2 }}>
+          Pipeline
         </Text>
-        <Text
-          sx={{
-            fontSize: 1,
-            color: "fg.default",
-            lineHeight: 1.6,
-            wordBreak: "break-word",
-          }}
-        >
-          {phaseLine.map((label, i) => (
-            <span key={label}>
-              {label}
-              {i < phaseLine.length - 1 && (
-                <Text as="span" sx={{ color: "fg.muted", mx: 2 }}>›</Text>
-              )}
-            </span>
-          ))}
-        </Text>
+        <PhaseStepper phases={phases} />
       </Box>
+    </Box>
+  );
+}
+
+/** Horizontal stepper: numbered circles with phase icons + labels beneath,
+ *  connected by thin lines. Calm but visually structured. */
+function PhaseStepper({
+  phases,
+}: {
+  phases: { kind: string; label: string; icon: React.ComponentType<{ size?: number }> }[];
+}) {
+  return (
+    <Box
+      sx={{
+        display: "flex",
+        alignItems: "flex-start",
+        // Wider gap on bigger screens; collapses gracefully.
+        flexWrap: "wrap",
+        rowGap: 3,
+      }}
+    >
+      {phases.map((p, i) => {
+        const Icon = p.icon;
+        const isLast = i === phases.length - 1;
+        return (
+          <Box
+            key={p.kind}
+            sx={{
+              display: "flex",
+              alignItems: "flex-start",
+              flex: isLast ? "0 0 auto" : "1 1 0",
+              minWidth: 80,
+            }}
+          >
+            <Box
+              sx={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 1,
+                minWidth: 80,
+              }}
+            >
+              <Box
+                sx={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: "50%",
+                  bg: "canvas.subtle",
+                  borderWidth: 1,
+                  borderStyle: "solid",
+                  borderColor: "border.default",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "accent.fg",
+                }}
+              >
+                <Icon size={16} />
+              </Box>
+              <Text
+                sx={{
+                  fontSize: 0,
+                  color: "fg.default",
+                  textAlign: "center",
+                  lineHeight: 1.3,
+                }}
+              >
+                {p.label}
+              </Text>
+            </Box>
+            {!isLast && (
+              <Box
+                aria-hidden
+                sx={{
+                  flex: 1,
+                  height: 1,
+                  bg: "border.default",
+                  mt: "18px",
+                  mx: 1,
+                  minWidth: 16,
+                }}
+              />
+            )}
+          </Box>
+        );
+      })}
     </Box>
   );
 }
@@ -296,6 +372,8 @@ function RunSettingsCard({
             onChange={setBaseBranch}
             onCommit={() => update({ baseBranch })}
             placeholder="(auto)"
+            disabled={!eff.submitPr && !!eff.branch.trim()}
+            disabledReason="No PR is being opened from an existing branch — nothing to target."
           />
         </>
       )}
@@ -331,24 +409,32 @@ function InputRow({
   onChange,
   onCommit,
   placeholder,
+  disabled,
+  disabledReason,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   onCommit: () => void;
   placeholder?: string;
+  disabled?: boolean;
+  disabledReason?: string;
 }) {
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-      <Text sx={{ fontSize: 1 }}>{label}</Text>
+      <Text sx={{ fontSize: 1, color: disabled ? "fg.muted" : "fg.default" }}>{label}</Text>
       <TextInput
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onBlur={onCommit}
         placeholder={placeholder}
+        disabled={disabled}
         sx={{ width: "100%" }}
         monospace
       />
+      {disabled && disabledReason && (
+        <Text sx={{ fontSize: 0, color: "fg.muted" }}>{disabledReason}</Text>
+      )}
     </Box>
   );
 }
