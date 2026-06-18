@@ -782,7 +782,7 @@ function ExecutionSection() {
           }}
         >
           <Text>
-            Submit Phase{" "}
+            Submit PR{" "}
             <Text sx={{ color: "fg.muted", fontSize: 0 }}>
               · {submitEnabled ? "runs end with opening a PR" : "runs end after review"}
             </Text>
@@ -790,7 +790,7 @@ function ExecutionSection() {
           <ToggleSwitch
             checked={submitEnabled}
             onClick={toggleSubmit}
-            aria-label="Enable submit phase"
+            aria-label="Submit PR"
             size="small"
           />
         </Box>

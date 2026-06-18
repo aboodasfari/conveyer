@@ -259,9 +259,6 @@ export function RunPanel({ taskId }: { taskId: string }) {
     return (
       <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
         {error && <Flash variant="danger">{error}</Flash>}
-        <Text sx={{ color: "fg.muted" }}>
-          No run yet. Tackle creates a run and starts the first phase.
-        </Text>
         <TaskRunSettings taskId={taskId} />
         <Button
           leadingVisual={PlayIcon}
