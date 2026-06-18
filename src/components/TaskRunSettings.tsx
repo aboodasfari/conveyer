@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Box, Button, Flash, IconButton, Spinner, Text, TextInput, ToggleSwitch } from "@primer/react";
 import { ChevronRightIcon, HistoryIcon, PlayIcon, SlidersIcon } from "@primer/octicons-react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { Task } from "../types";
 import { formatError } from "../errors";
@@ -45,7 +46,12 @@ export function EmptyRunView({
 }) {
   const [eff, setEff] = useState<Effective | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState<boolean>(false);
+  // Closed by default; ?settings=open in the URL opens it on first mount
+  // (used by the dashboard's "Custom Tackle" path).
+  const [searchParams] = useSearchParams();
+  const [collapsed, setCollapsed] = useState<boolean>(
+    searchParams.get("settings") !== "open",
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -479,20 +485,36 @@ function ToggleRow({
   onChange: (v: boolean) => void;
   /** True if the value has been explicitly set on this task (i.e. won't
    *  follow the global default). When false, the toggle shows the inherited
-   *  value and we show no revert affordance (already inherited). */
+   *  value and the revert affordance is hidden (already inherited). */
   explicit?: boolean;
   onRevert?: () => void;
 }) {
+  // Reserve constant slots for the "inherited" tag and the revert button so
+  // the row height stays fixed whether or not they're visible.
   return (
-    <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 2 }}>
+    <Box
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 2,
+        minHeight: 28,
+      }}
+    >
       <Box sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 0 }}>
         <Text sx={{ fontSize: 1 }}>{label}</Text>
-        {!explicit && (
-          <Text sx={{ fontSize: 0, color: "fg.muted" }}>· inherited</Text>
-        )}
+        <Text
+          sx={{
+            fontSize: 0,
+            color: "fg.muted",
+            visibility: explicit ? "hidden" : "visible",
+          }}
+        >
+          · inherited
+        </Text>
       </Box>
       <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-        {explicit && onRevert && (
+        <Box sx={{ visibility: explicit && onRevert ? "visible" : "hidden" }}>
           <IconButton
             aria-label={`Reset ${label} to global default`}
             icon={HistoryIcon}
@@ -500,7 +522,7 @@ function ToggleRow({
             size="small"
             onClick={onRevert}
           />
-        )}
+        </Box>
         <ToggleSwitch
           checked={checked}
           onClick={() => onChange(!checked)}

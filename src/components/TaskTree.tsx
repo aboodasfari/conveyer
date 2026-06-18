@@ -272,10 +272,17 @@ async function tackle(task: TaskSummary, nav: NavigateFunction) {
 function TackleSplitButton({ task }: { task: TaskSummary }) {
   const nav = useNavigate();
   const [busy, setBusy] = useState(false);
+  // A run already exists on this task — Conveyer doesn't support starting
+  // a parallel run yet, so disable both halves and tell the user why.
+  const hasRun = task.run_status != null;
+  const disabled = busy || hasRun;
+  const title = hasRun
+    ? "A run is already active for this task. Open the task to view it."
+    : "Start a Conveyer run for this task";
 
   const onTackle = async (e: MouseEvent) => {
     stop(e);
-    if (busy) return;
+    if (disabled) return;
     setBusy(true);
     try {
       await tackle(task, nav);
@@ -285,9 +292,7 @@ function TackleSplitButton({ task }: { task: TaskSummary }) {
   };
 
   const onCustom = () => {
-    // Don't start the run — just open the task so the user can configure
-    // Run settings before clicking Tackle in the Run tab.
-    nav(`/tasks/${task.id}?tab=run`);
+    nav(`/tasks/${task.id}?tab=run&settings=open`);
   };
 
   return (
@@ -300,8 +305,8 @@ function TackleSplitButton({ task }: { task: TaskSummary }) {
         variant="primary"
         size="small"
         onClick={onTackle}
-        disabled={busy}
-        title="Start a Conveyer run for this task"
+        disabled={disabled}
+        title={title}
         sx={{
           borderTopRightRadius: 0,
           borderBottomRightRadius: 0,
@@ -316,7 +321,7 @@ function TackleSplitButton({ task }: { task: TaskSummary }) {
             icon={ChevronDownIcon}
             variant="primary"
             size="small"
-            disabled={busy}
+            disabled={disabled}
             sx={{
               borderTopLeftRadius: 0,
               borderBottomLeftRadius: 0,
@@ -327,12 +332,7 @@ function TackleSplitButton({ task }: { task: TaskSummary }) {
         </ActionMenu.Anchor>
         <ActionMenu.Overlay align="end">
           <ActionList>
-            <ActionList.Item onSelect={onCustom}>
-              Custom tackle…
-              <ActionList.Description>
-                Open the task with run settings before starting.
-              </ActionList.Description>
-            </ActionList.Item>
+            <ActionList.Item onSelect={onCustom}>Custom Tackle</ActionList.Item>
           </ActionList>
         </ActionMenu.Overlay>
       </ActionMenu>
