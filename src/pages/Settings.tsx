@@ -874,9 +874,7 @@ function ExecutionSection() {
         description="After a phase finishes, auto-advance to the next phase. Turn off to pause for your approval before continuing."
       >
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          {PHASE_KINDS
-            .filter((k) => submitEnabled || k !== "submit")
-            .map((k) => {
+          {PHASE_KINDS.map((k) => {
             const g = gates.find((x) => x.phase_kind === k) ?? { phase_kind: k, auto_advance: 0 };
             const on = g.auto_advance === 1;
             const labelId = `gate-${k}`;
