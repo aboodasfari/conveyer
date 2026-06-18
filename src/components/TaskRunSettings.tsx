@@ -5,17 +5,70 @@ import { Task } from "../types";
 import { formatError } from "../errors";
 
 /**
- * Per-task overrides for the four run knobs (worktree, base branch, working
- * branch, submit PR). Mirrors the Settings → Run Defaults layout so the two
- * surfaces feel like the same UI.
- *
- * Toggles are initialized from the global default when the task has no
- * explicit value, then persist as concrete 0/1 once the user touches them —
- * no "Inherit" tri-state. Text inputs persist on blur; empty trims to NULL,
- * which means "fall back to auto-detect / generate".
- *
- * Lives in the Run tab above the Tackle button so it can be set before the
- * first run.
+ * Shared resolver: returns the effective settings for a task (per-task value
+ * if set, otherwise the global default). Used by both the side card and the
+ * one-line summary so they always agree.
+ */
+async function loadEffective(taskId: string): Promise<{
+  task: Task;
+  useWorktree: boolean;
+  submitPr: boolean;
+  baseBranch: string;
+  branch: string;
+}> {
+  const [task, gWt, gSub] = await Promise.all([
+    api.taskGet(taskId),
+    api.settingGet("use_worktree"),
+    api.settingGet("phase_submit_enabled"),
+  ]);
+  const globalWt = gWt !== "0" && gWt?.toLowerCase() !== "false";
+  const globalSub = gSub !== "0" && gSub?.toLowerCase() !== "false";
+  return {
+    task,
+    useWorktree: task.use_worktree == null ? globalWt : task.use_worktree !== 0,
+    submitPr: task.enable_submit == null ? globalSub : task.enable_submit !== 0,
+    baseBranch: task.base_branch_override ?? "",
+    branch: task.branch_override ?? "",
+  };
+}
+
+/**
+ * One-line, muted preview of what the run will do — sits under the Tackle
+ * button so the user can sanity-check the resolved configuration without
+ * scanning the side panel.
+ */
+export function TackleSummary({ taskId }: { taskId: string }) {
+  const [text, setText] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const e = await loadEffective(taskId);
+        if (cancelled) return;
+        const parts: string[] = [];
+        parts.push(e.branch ? `on branch \`${e.branch}\`` : "on a new branch");
+        parts.push(e.useWorktree ? "in a worktree" : "in the workspace");
+        parts.push(e.baseBranch ? `targets \`${e.baseBranch}\`` : "targets default branch");
+        parts.push(e.submitPr ? "opens a PR" : "no PR");
+        setText(parts.join(" · "));
+      } catch {
+        if (!cancelled) setText(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [taskId]);
+
+  if (!text) return null;
+  return (
+    <Text sx={{ color: "fg.muted", fontSize: 0, maxWidth: 480 }}>{text}</Text>
+  );
+}
+
+/**
+ * Compact side card with the four per-task overrides. Toggles initialize
+ * from the global default the first time the user sees the task, then
+ * persist the concrete value on change. Text inputs persist on blur.
  */
 export function TaskRunSettings({ taskId }: { taskId: string }) {
   const [loading, setLoading] = useState(true);
@@ -31,21 +84,15 @@ export function TaskRunSettings({ taskId }: { taskId: string }) {
     let cancelled = false;
     void (async () => {
       try {
-        const [t, gWt, gSub] = await Promise.all([
-          api.taskGet(taskId),
-          api.settingGet("use_worktree"),
-          api.settingGet("phase_submit_enabled"),
-        ]);
+        const e = await loadEffective(taskId);
         if (cancelled) return;
-        setTask(t);
-        const globalWt = gWt !== "0" && gWt?.toLowerCase() !== "false";
-        const globalSub = gSub !== "0" && gSub?.toLowerCase() !== "false";
-        setUseWorktree(t?.use_worktree == null ? globalWt : t.use_worktree !== 0);
-        setSubmitPr(t?.enable_submit == null ? globalSub : t.enable_submit !== 0);
-        setBaseBranch(t?.base_branch_override ?? "");
-        setBranch(t?.branch_override ?? "");
-      } catch (e) {
-        if (!cancelled) setError(formatError(e));
+        setTask(e.task);
+        setUseWorktree(e.useWorktree);
+        setSubmitPr(e.submitPr);
+        setBaseBranch(e.baseBranch);
+        setBranch(e.branch);
+      } catch (err) {
+        if (!cancelled) setError(formatError(err));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -59,142 +106,118 @@ export function TaskRunSettings({ taskId }: { taskId: string }) {
     baseBranch?: string;
     branch?: string;
   }) => {
-    const merged = {
-      useWorktree: next.useWorktree !== undefined ? next.useWorktree : useWorktree,
-      enableSubmit: next.submitPr !== undefined ? next.submitPr : submitPr,
-      baseBranchOverride: (next.baseBranch !== undefined ? next.baseBranch : baseBranch)
-        .trim() || null,
-      branchOverride: (next.branch !== undefined ? next.branch : branch)
-        .trim() || null,
-    };
     try {
-      await api.taskOverridesSet(taskId, merged);
+      await api.taskOverridesSet(taskId, {
+        useWorktree: next.useWorktree !== undefined ? next.useWorktree : useWorktree,
+        enableSubmit: next.submitPr !== undefined ? next.submitPr : submitPr,
+        baseBranchOverride:
+          (next.baseBranch !== undefined ? next.baseBranch : baseBranch).trim() || null,
+        branchOverride:
+          (next.branch !== undefined ? next.branch : branch).trim() || null,
+      });
       setError(null);
     } catch (e) {
       setError(formatError(e));
     }
   };
 
-  if (loading || !task) {
-    return <Spinner size="small" />;
-  }
-
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <Box>
-        <Text sx={{ fontWeight: 600, fontSize: 2 }}>Run settings</Text>
-        <Text sx={{ display: "block", color: "fg.muted", fontSize: 1, mt: 1 }}>
-          Override the global defaults for this task.
-        </Text>
-      </Box>
+    <Box
+      sx={{
+        borderWidth: 1,
+        borderStyle: "solid",
+        borderColor: "border.default",
+        borderRadius: 2,
+        bg: "canvas.subtle",
+        p: 3,
+        display: "flex",
+        flexDirection: "column",
+        gap: 3,
+      }}
+    >
+      <Text sx={{ fontWeight: 600, fontSize: 1 }}>Run settings</Text>
 
-      {error && (
-        <Text sx={{ fontSize: 0, color: "danger.fg" }}>{error}</Text>
+      {loading || !task ? (
+        <Spinner size="small" />
+      ) : (
+        <>
+          {error && <Text sx={{ fontSize: 0, color: "danger.fg" }}>{error}</Text>}
+
+          <ToggleRow
+            label="Submit PR"
+            checked={submitPr}
+            onChange={(v) => { setSubmitPr(v); void save({ submitPr: v }); }}
+          />
+          <ToggleRow
+            label="Use worktree"
+            checked={useWorktree}
+            onChange={(v) => { setUseWorktree(v); void save({ useWorktree: v }); }}
+          />
+
+          <InputRow
+            label="Base branch"
+            value={baseBranch}
+            onChange={setBaseBranch}
+            onCommit={() => void save({ baseBranch })}
+            placeholder="(auto)"
+          />
+          <InputRow
+            label="Working branch"
+            value={branch}
+            onChange={setBranch}
+            onCommit={() => void save({ branch })}
+            placeholder="(new)"
+          />
+        </>
       )}
-
-      <ToggleSetting
-        label="Submit PR"
-        caption={submitPr ? "Runs end with opening a PR." : "Runs end after review — no PR is opened."}
-        checked={submitPr}
-        onChange={(v) => {
-          setSubmitPr(v);
-          void save({ submitPr: v });
-        }}
-      />
-
-      <ToggleSetting
-        label="Worktree"
-        caption={
-          useWorktree
-            ? "This run gets its own git worktree, so the agent can commit freely without disturbing your checkout."
-            : "This run uses the workspace directly — current branch, in place. No worktree is created."
-        }
-        checked={useWorktree}
-        onChange={(v) => {
-          setUseWorktree(v);
-          void save({ useWorktree: v });
-        }}
-      />
-
-      <InputSetting
-        label="Base branch"
-        caption="PR target and diff base. Leave blank to auto-detect from the remote default."
-        value={baseBranch}
-        onChange={setBaseBranch}
-        onCommit={() => void save({ baseBranch })}
-        placeholder="(auto)"
-      />
-
-      <InputSetting
-        label="Working branch"
-        caption="An existing branch to work on instead of creating a new one. Leave blank to let Conveyer create `<alias>/<slug>`."
-        value={branch}
-        onChange={setBranch}
-        onCommit={() => void save({ branch })}
-        placeholder="(new branch)"
-      />
     </Box>
   );
 }
 
-/** Inline toggle row: label + switch on one line, caption beneath. */
-function ToggleSetting({
+function ToggleRow({
   label,
-  caption,
   checked,
   onChange,
 }: {
   label: string;
-  caption: string;
   checked: boolean;
   onChange: (v: boolean) => void;
 }) {
   return (
-    <Box>
-      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 3 }}>
-        <Text sx={{ fontWeight: 600 }}>{label}</Text>
-        <ToggleSwitch
-          checked={checked}
-          onClick={() => onChange(!checked)}
-          aria-label={label}
-          size="small"
-        />
-      </Box>
-      <Text sx={{ display: "block", color: "fg.muted", fontSize: 0, mt: 1, maxWidth: 560 }}>
-        {caption}
-      </Text>
+    <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <Text sx={{ fontSize: 1 }}>{label}</Text>
+      <ToggleSwitch
+        checked={checked}
+        onClick={() => onChange(!checked)}
+        aria-label={label}
+        size="small"
+      />
     </Box>
   );
 }
 
-/** Stacked text-input row: label, caption, then full-width input beneath. */
-function InputSetting({
+function InputRow({
   label,
-  caption,
   value,
   onChange,
   onCommit,
   placeholder,
 }: {
   label: string;
-  caption: string;
   value: string;
   onChange: (v: string) => void;
   onCommit: () => void;
   placeholder?: string;
 }) {
   return (
-    <Box>
-      <Text sx={{ fontWeight: 600, display: "block" }}>{label}</Text>
-      <Text sx={{ display: "block", color: "fg.muted", fontSize: 0, mt: 1, maxWidth: 560 }}>
-        {caption}
-      </Text>
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      <Text sx={{ fontSize: 1 }}>{label}</Text>
       <TextInput
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onBlur={onCommit}
         placeholder={placeholder}
-        sx={{ mt: 2, width: 320 }}
+        sx={{ width: "100%" }}
         monospace
       />
     </Box>

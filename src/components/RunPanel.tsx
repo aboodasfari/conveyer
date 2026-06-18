@@ -26,7 +26,7 @@ import { PhaseArtifact } from "./PhaseArtifact";
 import { PromptView } from "./PromptView";
 import { DiffViewer } from "./DiffViewer";
 import { PullRequestView } from "./PullRequestView";
-import { TaskRunSettings } from "./TaskRunSettings";
+import { TaskRunSettings, TackleSummary } from "./TaskRunSettings";
 
 const RING_PULSE_KEYFRAMES = `
 @keyframes conveyerRingPulse {
@@ -259,16 +259,40 @@ export function RunPanel({ taskId }: { taskId: string }) {
     return (
       <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
         {error && <Flash variant="danger">{error}</Flash>}
-        <TaskRunSettings taskId={taskId} />
-        <Button
-          leadingVisual={PlayIcon}
-          variant="primary"
-          onClick={start}
-          disabled={busy}
-          sx={{ alignSelf: "flex-start" }}
+        <Box
+          sx={{
+            display: "flex",
+            gap: 4,
+            alignItems: "stretch",
+            flexWrap: "wrap",
+          }}
         >
-          {busy ? "Starting…" : "Tackle"}
-        </Button>
+          <Box
+            sx={{
+              flex: "1 1 320px",
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "center",
+              alignItems: "flex-start",
+              gap: 3,
+              py: 5,
+            }}
+          >
+            <Button
+              leadingVisual={PlayIcon}
+              variant="primary"
+              size="large"
+              onClick={start}
+              disabled={busy}
+            >
+              {busy ? "Starting…" : "Tackle this task"}
+            </Button>
+            <TackleSummary taskId={taskId} />
+          </Box>
+          <Box sx={{ flex: "0 0 340px" }}>
+            <TaskRunSettings taskId={taskId} />
+          </Box>
+        </Box>
       </Box>
     );
   }
