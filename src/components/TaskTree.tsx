@@ -8,10 +8,8 @@ import {
   Text,
 } from "@primer/react";
 import {
-  CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
-  IssueReopenedIcon,
   KebabHorizontalIcon,
   PlayIcon,
   TrashIcon,
@@ -148,14 +146,14 @@ function StoryCard({
                   {onMarkDone && node.task.source_id === "local" && (() => {
                     const isDone = TERMINAL_STATES.has(node.task.state.toLowerCase().trim());
                     return (
-                      <ActionList.Item
-                        onSelect={() => onMarkDone(node.task.id, !isDone)}
-                      >
-                        <ActionList.LeadingVisual>
-                          {isDone ? <IssueReopenedIcon /> : <CheckIcon />}
-                        </ActionList.LeadingVisual>
-                        {isDone ? "Reopen task" : "Mark as done"}
-                      </ActionList.Item>
+                      <>
+                        <ActionList.Item
+                          onSelect={() => onMarkDone(node.task.id, !isDone)}
+                        >
+                          {isDone ? "Reopen task" : "Mark as done"}
+                        </ActionList.Item>
+                        <ActionList.Divider />
+                      </>
                     );
                   })()}
                   {onMove && MOVE_TARGETS.filter((m) => m.value !== node.task.bucket).map((m) => (
