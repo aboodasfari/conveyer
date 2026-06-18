@@ -80,8 +80,8 @@ export function TaskRunSettings({ taskId }: { taskId: string }) {
   }
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 0 }}>
-      <Box sx={{ mb: 1 }}>
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <Box>
         <Text sx={{ fontWeight: 600, fontSize: 2 }}>Run settings</Text>
         <Text sx={{ display: "block", color: "fg.muted", fontSize: 1, mt: 1 }}>
           Override the global defaults for this task.
@@ -89,110 +89,114 @@ export function TaskRunSettings({ taskId }: { taskId: string }) {
       </Box>
 
       {error && (
-        <Text sx={{ fontSize: 0, color: "danger.fg", mt: 2 }}>{error}</Text>
+        <Text sx={{ fontSize: 0, color: "danger.fg" }}>{error}</Text>
       )}
 
-      <SettingRow
+      <ToggleSetting
         label="Submit PR"
-        caption={submitPr ? "runs end with opening a PR" : "runs end after review"}
-        control={
-          <ToggleSwitch
-            checked={submitPr}
-            onClick={() => {
-              const next = !submitPr;
-              setSubmitPr(next);
-              void save({ submitPr: next });
-            }}
-            aria-label="Submit PR"
-            size="small"
-          />
-        }
+        caption={submitPr ? "Runs end with opening a PR." : "Runs end after review — no PR is opened."}
+        checked={submitPr}
+        onChange={(v) => {
+          setSubmitPr(v);
+          void save({ submitPr: v });
+        }}
       />
 
-      <SettingRow
+      <ToggleSetting
         label="Worktree"
         caption={
           useWorktree
-            ? "this run gets its own git worktree"
-            : "this run uses the workspace directly — current branch, in place"
+            ? "This run gets its own git worktree, so the agent can commit freely without disturbing your checkout."
+            : "This run uses the workspace directly — current branch, in place. No worktree is created."
         }
-        control={
-          <ToggleSwitch
-            checked={useWorktree}
-            onClick={() => {
-              const next = !useWorktree;
-              setUseWorktree(next);
-              void save({ useWorktree: next });
-            }}
-            aria-label="Use git worktree"
-            size="small"
-          />
-        }
+        checked={useWorktree}
+        onChange={(v) => {
+          setUseWorktree(v);
+          void save({ useWorktree: v });
+        }}
       />
 
-      <SettingRow
+      <InputSetting
         label="Base branch"
         caption="PR target and diff base. Leave blank to auto-detect from the remote default."
-        control={
-          <TextInput
-            value={baseBranch}
-            onChange={(e) => setBaseBranch(e.target.value)}
-            onBlur={() => void save({ baseBranch })}
-            placeholder="(auto)"
-            sx={{ width: 220 }}
-            monospace
-          />
-        }
+        value={baseBranch}
+        onChange={setBaseBranch}
+        onCommit={() => void save({ baseBranch })}
+        placeholder="(auto)"
       />
 
-      <SettingRow
+      <InputSetting
         label="Working branch"
-        caption="An existing branch to work on. Leave blank to let Conveyer create a new one."
-        control={
-          <TextInput
-            value={branch}
-            onChange={(e) => setBranch(e.target.value)}
-            onBlur={() => void save({ branch })}
-            placeholder="(new branch)"
-            sx={{ width: 220 }}
-            monospace
-          />
-        }
+        caption="An existing branch to work on instead of creating a new one. Leave blank to let Conveyer create `<alias>/<slug>`."
+        value={branch}
+        onChange={setBranch}
+        onCommit={() => void save({ branch })}
+        placeholder="(new branch)"
       />
     </Box>
   );
 }
 
-function SettingRow({
+/** Inline toggle row: label + switch on one line, caption beneath. */
+function ToggleSetting({
   label,
   caption,
-  control,
+  checked,
+  onChange,
 }: {
   label: string;
   caption: string;
-  control: React.ReactNode;
+  checked: boolean;
+  onChange: (v: boolean) => void;
 }) {
   return (
-    <Box
-      sx={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 3,
-        py: 2,
-        borderTopWidth: 1,
-        borderTopStyle: "solid",
-        borderTopColor: "border.subtle",
-        "&:first-of-type": { borderTopWidth: 0 },
-      }}
-    >
-      <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Text>
-          {label}{" "}
-          <Text sx={{ color: "fg.muted", fontSize: 0 }}>· {caption}</Text>
-        </Text>
+    <Box>
+      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 3 }}>
+        <Text sx={{ fontWeight: 600 }}>{label}</Text>
+        <ToggleSwitch
+          checked={checked}
+          onClick={() => onChange(!checked)}
+          aria-label={label}
+          size="small"
+        />
       </Box>
-      <Box sx={{ flexShrink: 0 }}>{control}</Box>
+      <Text sx={{ display: "block", color: "fg.muted", fontSize: 0, mt: 1, maxWidth: 560 }}>
+        {caption}
+      </Text>
+    </Box>
+  );
+}
+
+/** Stacked text-input row: label, caption, then full-width input beneath. */
+function InputSetting({
+  label,
+  caption,
+  value,
+  onChange,
+  onCommit,
+  placeholder,
+}: {
+  label: string;
+  caption: string;
+  value: string;
+  onChange: (v: string) => void;
+  onCommit: () => void;
+  placeholder?: string;
+}) {
+  return (
+    <Box>
+      <Text sx={{ fontWeight: 600, display: "block" }}>{label}</Text>
+      <Text sx={{ display: "block", color: "fg.muted", fontSize: 0, mt: 1, maxWidth: 560 }}>
+        {caption}
+      </Text>
+      <TextInput
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onBlur={onCommit}
+        placeholder={placeholder}
+        sx={{ mt: 2, width: 320 }}
+        monospace
+      />
     </Box>
   );
 }
