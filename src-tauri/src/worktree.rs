@@ -164,17 +164,23 @@ pub async fn ensure_for_run(
             git_capture(codebase_path, &["rev-parse", "--abbrev-ref", "HEAD"])
                 .unwrap_or_else(|_| "HEAD".to_string())
         };
+        // Diff base: HEAD at run start, NOT the PR target. The user is on an
+        // existing branch (or no worktree at all), so any commits already on
+        // that branch are not part of *this* run — only commits added during
+        // the run should show up in the Diff tab.
+        let diff_base_sha = git_capture(codebase_path, &["rev-parse", "HEAD"])
+            .unwrap_or_else(|_| base_sha.clone());
         sqlx::query(
             "UPDATE runs SET worktree_path = ?, branch_name = ?, base_sha = ?, base_branch = ? WHERE id = ?",
         )
         .bind(codebase_path.to_string_lossy().to_string())
         .bind(&branch_name)
-        .bind(&base_sha)
+        .bind(&diff_base_sha)
         .bind(base_branch.as_deref())
         .bind(run_id)
         .execute(&state.db)
         .await?;
-        return Ok((codebase_path.to_path_buf(), branch_name, base_sha));
+        return Ok((codebase_path.to_path_buf(), branch_name, diff_base_sha));
     }
 
     // ----- Worktree path. -----
@@ -246,18 +252,32 @@ pub async fn ensure_for_run(
         }
     }
 
+    // Diff base: when we created a fresh branch, base_sha (the resolved
+    // tip of the PR target) is correct — no commits are on the new branch
+    // yet, so diff vs base_sha shows exactly this run's commits. But when
+    // the user pinned an existing working branch, base_sha would include
+    // every commit that branch had ahead of the PR target. The diff base
+    // for an existing branch is its current HEAD (which is also the
+    // worktree's HEAD right after `git worktree add <existing>`), so the
+    // Diff tab only shows commits made during this run.
+    let diff_base_sha = if branch_override.is_some() {
+        git_capture(&worktree, &["rev-parse", "HEAD"]).unwrap_or_else(|_| base_sha.clone())
+    } else {
+        base_sha.clone()
+    };
+
     sqlx::query(
         "UPDATE runs SET worktree_path = ?, branch_name = ?, base_sha = ?, base_branch = ? WHERE id = ?",
     )
     .bind(worktree.to_string_lossy().to_string())
     .bind(&branch)
-    .bind(&base_sha)
+    .bind(&diff_base_sha)
     .bind(base_branch.as_deref())
     .bind(run_id)
     .execute(&state.db)
     .await?;
 
-    Ok((worktree, branch, base_sha))
+    Ok((worktree, branch, diff_base_sha))
 }
 
 /// Resolve the tip SHA of an arbitrary branch (local or `origin/<branch>`).
