@@ -140,20 +140,43 @@ pub fn run() {
 /// PATH. Falls back to a sane default if PATH isn't set at all.
 fn augment_path() {
     let home = std::env::var("HOME").unwrap_or_default();
-    let candidates = [
-        "/opt/homebrew/bin",            // Apple Silicon Homebrew
-        "/opt/homebrew/sbin",
-        "/usr/local/bin",               // Intel Homebrew + manual installs
-        "/usr/local/sbin",
-        &format!("{home}/.cargo/bin"),  // rustup
-        &format!("{home}/.local/bin"),
-        &format!("{home}/.nvm/versions/node/current/bin"),
-        "/Library/Apple/usr/bin",       // Xcode tools
+    let mut candidates: Vec<String> = vec![
+        "/opt/homebrew/bin".into(),
+        "/opt/homebrew/sbin".into(),
+        "/usr/local/bin".into(),
+        "/usr/local/sbin".into(),
+        format!("{home}/.cargo/bin"),
+        format!("{home}/.local/bin"),
+        "/Library/Apple/usr/bin".into(),
     ];
+
+    // nvm: scan both the default location (~/.nvm/versions/node/) and the XDG
+    // variant (~/.local/share/nvm/). Some users keep an unversioned `current`
+    // symlink; others have versioned dirs (e.g. v25.1.0/bin/). Prefer `current`
+    // if present, otherwise add every `*/bin` we find.
+    for nvm_root in [
+        format!("{home}/.nvm/versions/node"),
+        format!("{home}/.local/share/nvm"),
+    ] {
+        let current = format!("{nvm_root}/current/bin");
+        if std::path::Path::new(&current).exists() {
+            candidates.push(current);
+        }
+        if let Ok(entries) = std::fs::read_dir(&nvm_root) {
+            for e in entries.flatten() {
+                let p = e.path().join("bin");
+                if p.exists() {
+                    if let Some(s) = p.to_str() {
+                        candidates.push(s.to_string());
+                    }
+                }
+            }
+        }
+    }
+
     let current = std::env::var("PATH").unwrap_or_default();
     let mut parts: Vec<String> = current.split(':').map(|s| s.to_string()).collect();
-    for c in candidates.iter() {
-        let c = c.to_string();
+    for c in candidates {
         if !c.is_empty() && !parts.iter().any(|p| p == &c) {
             parts.insert(0, c);
         }

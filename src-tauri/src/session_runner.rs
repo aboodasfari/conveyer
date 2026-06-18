@@ -330,18 +330,33 @@ pub fn npm_global_root() -> Option<String> {
     static CACHE: OnceLock<Option<String>> = OnceLock::new();
     CACHE
         .get_or_init(|| {
-            let out = std::process::Command::new("npm")
-                .args(["root", "-g"])
-                .output()
-                .ok()?;
-            if !out.status.success() {
-                return None;
+            match std::process::Command::new("npm").args(["root", "-g"]).output() {
+                Ok(out) if out.status.success() => {
+                    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if s.is_empty() || !std::path::Path::new(&s).exists() {
+                        tracing::warn!(
+                            "npm root -g returned empty or missing path: {s:?}"
+                        );
+                        return None;
+                    }
+                    tracing::info!("resolved npm global root: {s}");
+                    Some(s)
+                }
+                Ok(out) => {
+                    tracing::warn!(
+                        "npm root -g failed (status {:?}): {}",
+                        out.status.code(),
+                        String::from_utf8_lossy(&out.stderr).trim()
+                    );
+                    None
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "could not spawn `npm root -g` (npm not in PATH?): {e}"
+                    );
+                    None
+                }
             }
-            let s = String::from_utf8(out.stdout).ok()?.trim().to_string();
-            if s.is_empty() || !std::path::Path::new(&s).exists() {
-                return None;
-            }
-            Some(s)
         })
         .clone()
 }

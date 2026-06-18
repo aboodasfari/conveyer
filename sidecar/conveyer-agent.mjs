@@ -64,6 +64,14 @@ async function importCopilotSdk() {
   if (env.NODE_PATH) {
     searchPaths.push(...env.NODE_PATH.split(path.delimiter).filter(Boolean));
   }
+  // The most reliable source: derive from the running node's own location.
+  // process.execPath is e.g. `<prefix>/bin/node`, so `<prefix>/lib/node_modules`
+  // is the global modules dir for this exact node install. Works under any
+  // nvm/asdf/homebrew/system layout without PATH probing.
+  try {
+    const prefix = path.dirname(path.dirname(process.execPath));
+    searchPaths.push(path.join(prefix, "lib", "node_modules"));
+  } catch {}
   // Common npm global locations as a last resort.
   const home = os.homedir();
   searchPaths.push(
@@ -72,15 +80,20 @@ async function importCopilotSdk() {
     `${home}/.npm-global/lib/node_modules`,
     `${home}/.local/lib/node_modules`,
   );
+  const tried = [];
   for (const p of searchPaths) {
     try {
       const resolved = requireFromHere.resolve("@github/copilot-sdk", { paths: [p] });
       return await import(resolved);
-    } catch {}
+    } catch (e) {
+      tried.push(`${p} (${e?.code ?? e?.message ?? "unknown"})`);
+    }
   }
   throw new Error(
     "@github/copilot-sdk not found. Install Copilot CLI globally:\n" +
-      "  npm install -g @github/copilot @github/copilot-sdk",
+      "  npm install -g @github/copilot @github/copilot-sdk\n\n" +
+      "Searched:\n  - " +
+      tried.join("\n  - "),
   );
 }
 
