@@ -40,21 +40,35 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/node_modules/@github"
 STAGE="$ROOT/src-tauri/resources/copilot-bundle/node_modules/@github"
 
+# Belt-and-suspenders: `@github/copilot` is a regular dep of `@github/copilot-sdk`,
+# but on some CI runners (esp. Windows) `npm ci` doesn't materialise it into
+# node_modules — possibly because the package-lock was generated on a different
+# OS and npm skips the platform-specific optional siblings, taking the parent
+# tree with them. Install it directly if missing so this script is self-healing.
 if [ ! -d "$SRC/copilot" ]; then
-  echo "Missing $SRC/copilot — run \`npm ci\` first." >&2
+  echo "@github/copilot not in node_modules — installing directly..."
+  (cd "$ROOT" && npm install --no-save --no-audit --no-fund --force "@github/copilot")
+fi
+
+if [ ! -d "$SRC/copilot" ]; then
+  echo "Missing $SRC/copilot even after install — bailing out." >&2
   exit 1
 fi
 
 # Read the @github/copilot version so we install the matching sibling package.
-COPILOT_VERSION="$(node -p "require('$SRC/copilot/package.json').version")"
+# Use a relative path + `cd "$ROOT"` so this works on Windows (Git Bash converts
+# absolute paths to /<drive>/... which Node's require can choke on).
+COPILOT_VERSION="$(cd "$ROOT" && node -p "require('./node_modules/@github/copilot/package.json').version")"
 SIBLING_PKG="@github/copilot-$PLATFORM"
 
 # Ensure the platform-specific sibling is installed. npm only auto-installs the
 # host platform's optional dep, so cross-target builds (e.g. building
-# x86_64-apple-darwin on an arm64 runner) need an explicit install.
+# x86_64-apple-darwin on an arm64 runner) need an explicit install. Use --force
+# to bypass the EBADPLATFORM check — we're staging this package as a static
+# bundle for the *target* platform, not running it on the build host.
 if [ ! -d "$SRC/copilot-$PLATFORM" ]; then
   echo "Installing $SIBLING_PKG@$COPILOT_VERSION (cross-platform sibling)..."
-  (cd "$ROOT" && npm install --no-save --no-audit --no-fund \
+  (cd "$ROOT" && npm install --no-save --no-audit --no-fund --force \
     "$SIBLING_PKG@$COPILOT_VERSION")
 fi
 
