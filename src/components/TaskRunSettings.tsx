@@ -18,12 +18,12 @@ interface Effective {
   branch: string;
 }
 
-const PHASES: { kind: string; label: string }[] = [
-  { kind: "exploration", label: "Exploration" },
-  { kind: "planning", label: "Planning" },
-  { kind: "implementation", label: "Implementation" },
-  { kind: "review", label: "Review" },
-  { kind: "submit", label: "Submit PR" },
+const PHASES: { kind: string; label: string; color: string }[] = [
+  { kind: "exploration", label: "Exploration", color: "#f0883e" },     // orange — discovery
+  { kind: "planning", label: "Planning", color: "#1f6feb" },           // blue — structured
+  { kind: "implementation", label: "Implementation", color: "#8957e5" }, // purple — build
+  { kind: "review", label: "Review", color: "#3fb950" },               // green — verify
+  { kind: "submit", label: "Submit PR", color: "#db61a2" },            // pink — action
 ];
 
 /**
@@ -127,7 +127,7 @@ export function EmptyRunView({
             pt: 1,
           }}
         >
-          <Box sx={{ flex: 1, minHeight: 0 }}>
+          <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", justifyContent: "center" }}>
             <RunPreview eff={eff} />
           </Box>
           <Box sx={{ pt: 4, display: "flex", justifyContent: "center" }}>
@@ -170,18 +170,19 @@ function RunPreview({ eff }: { eff: Effective | null }) {
         <Fact
           icon={<GitBranchIcon size={14} />}
           label="Branch"
-          value={eff.branch ? <code>{eff.branch}</code> : "create a new branch"}
+          mono={!!eff.branch}
+          value={eff.branch || "create a new branch"}
         />
         <Fact
           icon={<GitMergeIcon size={14} />}
           label="PR target"
+          mono={eff.submitPr && !!eff.baseBranch}
           value={
             eff.submitPr
-              ? eff.baseBranch
-                ? <code>{eff.baseBranch}</code>
-                : "the repo's default branch"
-              : <Text sx={{ color: "fg.muted" }}>not opening a PR</Text>
+              ? eff.baseBranch || "the repo's default branch"
+              : "not opening a PR"
           }
+          muted={!eff.submitPr}
         />
         <Fact
           icon={<PackageIcon size={14} />}
@@ -190,45 +191,41 @@ function RunPreview({ eff }: { eff: Effective | null }) {
         />
       </Box>
 
-      <Box sx={{ mt: 2 }}>
+      <Box sx={{ mt: 1 }}>
         <Text sx={{ fontSize: 0, fontWeight: 600, color: "fg.muted", display: "block", mb: 2 }}>
           Pipeline
         </Text>
-        <PhasePills phases={phases} />
+        <PhaseDots phases={phases} />
       </Box>
     </Box>
   );
 }
 
-/** Compact, calmer-than-the-in-run-sidebar phase list: label-only chips
- *  joined by thin connectors. Wraps gracefully. */
-function PhasePills({
+/**
+ * Each phase rendered as a small colored dot + label. Phases get different
+ * hues for visual variety without the chrome of pills or icon stacks.
+ * Wraps gracefully on narrow widths.
+ */
+function PhaseDots({
   phases,
 }: {
-  phases: { kind: string; label: string }[];
+  phases: { kind: string; label: string; color: string }[];
 }) {
   return (
-    <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", rowGap: 2 }}>
-      {phases.map((p, i) => (
-        <Box key={p.kind} sx={{ display: "flex", alignItems: "center" }}>
+    <Box sx={{ display: "flex", flexWrap: "wrap", columnGap: 3, rowGap: 2, alignItems: "center" }}>
+      {phases.map((p) => (
+        <Box key={p.kind} sx={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <Box
+            aria-hidden
             sx={{
-              px: 2,
-              py: "2px",
-              fontSize: 0,
-              borderRadius: 999,
-              bg: "neutral.subtle",
-              color: "fg.default",
-              borderWidth: 1,
-              borderStyle: "solid",
-              borderColor: "border.muted",
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              bg: p.color,
+              boxShadow: `0 0 0 3px ${p.color}1f`,
             }}
-          >
-            {p.label}
-          </Box>
-          {i < phases.length - 1 && (
-            <Box aria-hidden sx={{ width: 16, height: 1, bg: "border.muted", mx: 1 }} />
-          )}
+          />
+          <Text sx={{ fontSize: 1 }}>{p.label}</Text>
         </Box>
       ))}
     </Box>
@@ -239,20 +236,33 @@ function Fact({
   icon,
   label,
   value,
+  mono,
+  muted,
 }: {
   icon: React.ReactNode;
   label: string;
-  value: React.ReactNode;
+  value: string;
+  mono?: boolean;
+  muted?: boolean;
 }) {
   return (
-    <Box sx={{ display: "flex", alignItems: "baseline", gap: 2 }}>
-      <Box sx={{ display: "inline-flex", color: "fg.muted", alignSelf: "center" }} aria-hidden>
+    <Box sx={{ display: "flex", alignItems: "center", gap: 2, minHeight: 24 }}>
+      <Box sx={{ display: "inline-flex", color: "fg.muted" }} aria-hidden>
         {icon}
       </Box>
       <Text sx={{ fontSize: 0, color: "fg.muted", fontWeight: 600, minWidth: 76 }}>
         {label}
       </Text>
-      <Text sx={{ fontSize: 1 }}>{value}</Text>
+      <Text
+        sx={{
+          fontSize: 1,
+          color: muted ? "fg.muted" : "fg.default",
+          fontFamily: mono ? "mono" : undefined,
+          lineHeight: 1.5,
+        }}
+      >
+        {value}
+      </Text>
     </Box>
   );
 }
