@@ -59,13 +59,19 @@ pub async fn runs_start(
     // Honor "submit phase" setting — per-task override (tasks.enable_submit)
     // wins; otherwise fall back to the global settings.phase_submit_enabled
     // (which itself defaults to enabled).
-    let task_enable_submit: Option<i64> = sqlx::query_scalar(
+    //
+    // NOTE: query_scalar with a non-Option column type silently decodes NULL
+    // as the type's default (i64 → 0) on sqlx-sqlite, which would make an
+    // "inherited" task look like an explicit off. Bind to Option<i64> and
+    // flatten the outer Option<Option<…>> so NULL stays as None.
+    let task_enable_submit: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(
         "SELECT enable_submit FROM tasks WHERE id = ?",
     )
     .bind(&task_id)
     .fetch_optional(&state.db)
     .await
     .ok()
+    .flatten()
     .flatten();
     let submit_enabled: bool = match task_enable_submit {
         Some(v) => v != 0,
