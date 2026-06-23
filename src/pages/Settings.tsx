@@ -1220,6 +1220,7 @@ function NotificationsSection() {
   const [granted, setGranted] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [prefs, setPrefs] = useState<{ enabled: boolean; waiting: boolean; failed: boolean; newTask: boolean; taskFinished: boolean } | null>(null);
+  const [inAppPrefs, setInAppPrefs] = useState<{ enabled: boolean; waiting: boolean; failed: boolean; newTask: boolean; taskFinished: boolean } | null>(null);
 
   const refresh = async () => {
     try {
@@ -1233,6 +1234,12 @@ function NotificationsSection() {
       setPrefs(await loadNotifPrefs());
     } catch {
       setPrefs({ enabled: true, waiting: true, failed: true, newTask: true, taskFinished: true });
+    }
+    try {
+      const { loadInAppNotifPrefs } = await import("../notificationInbox");
+      setInAppPrefs(await loadInAppNotifPrefs());
+    } catch {
+      setInAppPrefs({ enabled: true, waiting: true, failed: true, newTask: true, taskFinished: true });
     }
   };
 
@@ -1263,6 +1270,18 @@ function NotificationsSection() {
     }
   };
 
+  const toggleInApp = async (kind: "enabled" | "waiting" | "failed" | "newTask" | "taskFinished") => {
+    if (!inAppPrefs) return;
+    const next = { ...inAppPrefs, [kind]: !inAppPrefs[kind] };
+    setInAppPrefs(next);
+    try {
+      const { setInAppNotifPref } = await import("../notificationInbox");
+      await setInAppNotifPref(kind, next[kind]);
+    } catch {
+      setInAppPrefs(inAppPrefs);
+    }
+  };
+
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <Heading as="h2" sx={{ fontSize: 2 }}>Notifications</Heading>
@@ -1272,7 +1291,8 @@ function NotificationsSection() {
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "flex-start" }}>
             <Text sx={{ color: "fg.muted", fontSize: 1 }}>
               macOS hasn't granted Conveyer notification permission. If clicking Enable doesn't
-              prompt, toggle it in System Settings → Notifications → Conveyer.
+              prompt, toggle it in System Settings → Notifications → Conveyer. In-app notifications
+              still work without this permission.
             </Text>
             <Button variant="primary" onClick={() => void enable()} disabled={busy}>
               {busy ? "Requesting…" : "Enable notifications"}
@@ -1282,7 +1302,11 @@ function NotificationsSection() {
       )}
 
       {granted !== false && prefs && (
-        <SubSection title="What to notify me about" noBorder>
+        <SubSection
+          title="Desktop notifications"
+          description="Sent by your OS when Conveyer isn't focused."
+          noBorder
+        >
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
             <NotifToggle
               label="All notifications"
@@ -1313,6 +1337,47 @@ function NotificationsSection() {
                 on={prefs.taskFinished}
                 onToggle={() => void toggle("taskFinished")}
                 disabled={!prefs.enabled}
+              />
+            </Box>
+          </Box>
+        </SubSection>
+      )}
+
+      {inAppPrefs && (
+        <SubSection
+          title="In-app notifications"
+          description="Shown in the notifications popover at the top of the window."
+        >
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <NotifToggle
+              label="All notifications"
+              on={inAppPrefs.enabled}
+              onToggle={() => void toggleInApp("enabled")}
+            />
+            <Box sx={{ borderTop: "1px solid", borderTopColor: "border.muted", mt: 1, pt: 2, display: "flex", flexDirection: "column", gap: 2 }}>
+              <NotifToggle
+                label="Waiting for approval"
+                on={inAppPrefs.waiting}
+                onToggle={() => void toggleInApp("waiting")}
+                disabled={!inAppPrefs.enabled}
+              />
+              <NotifToggle
+                label="Phase failed"
+                on={inAppPrefs.failed}
+                onToggle={() => void toggleInApp("failed")}
+                disabled={!inAppPrefs.enabled}
+              />
+              <NotifToggle
+                label="New task discovered"
+                on={inAppPrefs.newTask}
+                onToggle={() => void toggleInApp("newTask")}
+                disabled={!inAppPrefs.enabled}
+              />
+              <NotifToggle
+                label="Task finished"
+                on={inAppPrefs.taskFinished}
+                onToggle={() => void toggleInApp("taskFinished")}
+                disabled={!inAppPrefs.enabled}
               />
             </Box>
           </Box>
