@@ -274,7 +274,7 @@ export function NotificationBell() {
                 >
                   <IconButton
                     icon={XIcon}
-                    aria-label={`Dismiss "${item.title}"`}
+                    aria-label="Dismiss notification"
                     size="small"
                     variant="invisible"
                     onClick={(e: React.MouseEvent) => {
