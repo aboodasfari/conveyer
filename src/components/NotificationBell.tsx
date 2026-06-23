@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnchoredOverlay, Box, IconButton, Text } from "@primer/react";
-import { BellIcon, TrashIcon } from "@primer/octicons-react";
+import { BellIcon, TrashIcon, XIcon } from "@primer/octicons-react";
 import {
   InboxItem,
   clearAll,
@@ -142,8 +142,8 @@ export function NotificationBell() {
       <Box
         data-tauri-drag-region={false}
         sx={{
-          width: 360,
-          maxHeight: 400,
+          width: 420,
+          maxHeight: 460,
           display: "flex",
           flexDirection: "column",
         }}
@@ -184,58 +184,105 @@ export function NotificationBell() {
             {items.map((item) => (
               <Box
                 key={item.id}
-                as="button"
-                type="button"
-                onClick={() => handleItemClick(item)}
                 data-tauri-drag-region={false}
                 sx={{
-                  display: "block",
-                  width: "100%",
-                  textAlign: "left",
-                  border: "none",
-                  bg: "transparent",
-                  cursor: "pointer",
-                  px: 3,
-                  py: 2,
+                  position: "relative",
+                  display: "flex",
+                  alignItems: "stretch",
                   borderBottomWidth: 1,
                   borderBottomStyle: "solid",
                   borderBottomColor: "border.muted",
                   "&:last-child": { borderBottomWidth: 0 },
                   "&:hover": { bg: "neutral.subtle" },
+                  "&:hover .notif-dismiss": { opacity: 1 },
                 }}
               >
                 <Box
+                  as="button"
+                  type="button"
+                  onClick={() => handleItemClick(item)}
+                  data-tauri-drag-region={false}
                   sx={{
-                    display: "flex",
-                    alignItems: "baseline",
-                    justifyContent: "space-between",
-                    gap: 2,
+                    flex: 1,
+                    minWidth: 0,
+                    textAlign: "left",
+                    border: "none",
+                    bg: "transparent",
+                    cursor: "pointer",
+                    pl: 3,
+                    // Reserve room for the dismiss button so the long
+                    // body text doesn't slide underneath it.
+                    pr: 5,
+                    py: 2,
+                    color: "inherit",
+                    font: "inherit",
+                    outline: "none",
+                    "&:focus": { outline: "none" },
+                    "&:focus-visible": {
+                      outline: "2px solid",
+                      outlineColor: "accent.fg",
+                      outlineOffset: "-2px",
+                      borderRadius: 2,
+                    },
                   }}
                 >
-                  <Text sx={{ fontWeight: 600, fontSize: 1, color: "fg.default" }}>
-                    {item.title}
-                  </Text>
-                  <Text
+                  <Box
                     sx={{
-                      fontSize: 0,
-                      color: "fg.muted",
-                      flexShrink: 0,
-                      fontVariantNumeric: "tabular-nums",
+                      display: "flex",
+                      alignItems: "baseline",
+                      justifyContent: "space-between",
+                      gap: 2,
                     }}
                   >
-                    {formatRelative(item.ts, now)}
+                    <Text sx={{ fontWeight: 600, fontSize: 1, color: "fg.default" }}>
+                      {item.title}
+                    </Text>
+                    <Text
+                      sx={{
+                        fontSize: 0,
+                        color: "fg.muted",
+                        flexShrink: 0,
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {formatRelative(item.ts, now)}
+                    </Text>
+                  </Box>
+                  <Text
+                    sx={{
+                      display: "block",
+                      fontSize: 1,
+                      color: "fg.muted",
+                      mt: 1,
+                    }}
+                  >
+                    {item.body}
                   </Text>
                 </Box>
-                <Text
+                <Box
+                  className="notif-dismiss"
                   sx={{
-                    display: "block",
-                    fontSize: 1,
-                    color: "fg.muted",
-                    mt: 1,
+                    position: "absolute",
+                    top: 6,
+                    right: 6,
+                    opacity: 0,
+                    transition: "opacity 80ms",
+                    // Keep the dismiss target keyboard-accessible even
+                    // when hidden by opacity (focus-visible reveals it).
+                    "&:focus-within": { opacity: 1 },
                   }}
                 >
-                  {item.body}
-                </Text>
+                  <IconButton
+                    icon={XIcon}
+                    aria-label={`Dismiss "${item.title}"`}
+                    size="small"
+                    variant="invisible"
+                    onClick={(e: React.MouseEvent) => {
+                      e.stopPropagation();
+                      dismissItem(item.id);
+                    }}
+                  />
+                </Box>
               </Box>
             ))}
           </Box>

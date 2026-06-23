@@ -64,6 +64,14 @@ export function TaskDetail() {
     void reload().finally(() => setLoading(false));
   }, [reload, id]);
 
+  // Visiting the run tab clears the actionable phase items too —
+  // "if I open the relevant place, dismiss the notification."
+  useEffect(() => {
+    if (id && tab === "run") {
+      dismissForTask(id, ["waiting", "failed"]);
+    }
+  }, [id, tab]);
+
   // Refresh the header chip (and parent link) when the run state changes
   // so the status badge actually reflects the current phase. Also reload
   // on window focus-regain — see focusRefresh.ts.
