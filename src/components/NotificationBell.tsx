@@ -188,13 +188,14 @@ export function NotificationBell() {
                 sx={{
                   position: "relative",
                   display: "flex",
-                  alignItems: "stretch",
+                  alignItems: "center",
                   borderBottomWidth: 1,
                   borderBottomStyle: "solid",
                   borderBottomColor: "border.muted",
                   "&:last-child": { borderBottomWidth: 0 },
                   "&:hover": { bg: "neutral.subtle" },
                   "&:hover .notif-dismiss": { opacity: 1 },
+                  "&:focus-within .notif-dismiss": { opacity: 1 },
                 }}
               >
                 <Box
@@ -263,13 +264,11 @@ export function NotificationBell() {
                   className="notif-dismiss"
                   sx={{
                     position: "absolute",
-                    top: 6,
-                    right: 6,
+                    right: 2,
+                    top: "50%",
+                    transform: "translateY(-50%)",
                     opacity: 0,
                     transition: "opacity 80ms",
-                    // Keep the dismiss target keyboard-accessible even
-                    // when hidden by opacity (focus-visible reveals it).
-                    "&:focus-within": { opacity: 1 },
                   }}
                 >
                   <IconButton
