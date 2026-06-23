@@ -125,7 +125,10 @@ export function NotificationBell() {
                 fontVariantNumeric: "tabular-nums",
                 borderWidth: 2,
                 borderStyle: "solid",
-                borderColor: open ? "neutral.muted" : "canvas.subtle",
+                // Keep the border colour stable so the badge's visible
+                // size doesn't appear to change when the button bg
+                // shifts on open/hover.
+                borderColor: "canvas.subtle",
                 pointerEvents: "none",
               }}
             >
