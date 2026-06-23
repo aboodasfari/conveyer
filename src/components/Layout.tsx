@@ -2,6 +2,7 @@ import { Box, Text } from "@primer/react";
 import { DownloadIcon, GearIcon, SyncIcon, CheckIcon } from "@primer/octicons-react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { useUpdateStatus, installAndRelaunch } from "../updater";
+import { NotificationBell } from "./NotificationBell";
 
 interface NavItem {
   to: string;
@@ -64,6 +65,7 @@ export function Layout() {
           ))}
         </Box>
         <UpdateButton />
+        <NotificationBell />
         <IconNavLink to="/settings" label="Settings" active={settingsActive}>
           <GearIcon size={16} />
         </IconNavLink>
