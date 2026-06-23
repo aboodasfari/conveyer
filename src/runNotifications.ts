@@ -17,6 +17,45 @@ import { Phase, TaskSummary } from "./types";const PREF_KEYS = {
 
 export type NotifKind = "waiting" | "failed" | "newTask" | "taskFinished";
 
+/**
+ * Payload broadcast for every detected backend transition the user might
+ * care about. Subscribers (the desktop notifier, the in-app inbox store,
+ * etc.) decide independently whether to surface the event based on their
+ * own preferences and gating rules.
+ *
+ * `phaseId` is set for phase-driven kinds (`waiting`/`failed`) and absent
+ * for task-driven kinds (`newTask`/`taskFinished`).
+ */
+export interface NotifTransition {
+  kind: NotifKind;
+  taskId: string;
+  phaseId?: string;
+  title: string;
+  body: string;
+  ts: number;
+}
+
+const notifEvents = new EventTarget();
+
+/**
+ * Subscribe to every transition the detection loop emits. Returns an
+ * unsubscribe function. Transitions are *not* emitted during the initial
+ * silent-seed pass at app start.
+ */
+export function subscribeNotifTransitions(
+  handler: (t: NotifTransition) => void,
+): () => void {
+  const listener = (e: Event) => {
+    handler((e as CustomEvent<NotifTransition>).detail);
+  };
+  notifEvents.addEventListener("transition", listener);
+  return () => notifEvents.removeEventListener("transition", listener);
+}
+
+function emitTransition(t: NotifTransition): void {
+  notifEvents.dispatchEvent(new CustomEvent("transition", { detail: t }));
+}
+
 const DEFAULT_PREFS: Record<keyof typeof PREF_KEYS, boolean> = {
   enabled: true,
   waiting: true,
@@ -118,7 +157,18 @@ export function useRunNotifications() {
     let unlistenRefreshed: (() => void) | null = null;
     let cancelled = false;
 
-    const maybeNotify = async (kind: NotifKind, title: string, body: string) => {
+    const maybeNotify = async (
+      kind: NotifKind,
+      title: string,
+      body: string,
+      taskId: string,
+      phaseId?: string,
+    ) => {
+      // Broadcast the transition first so non-desktop subscribers (e.g.
+      // the in-app inbox) see it regardless of OS permission, window
+      // focus, or the desktop-pref toggles.
+      emitTransition({ kind, taskId, phaseId, title, body, ts: Date.now() });
+
       if (!permission.current) {
         // eslint-disable-next-line no-console
         console.info(`[notif] skipped (${kind}): permission not granted`);
@@ -170,7 +220,7 @@ export function useRunNotifications() {
                 : t.source_id === "local"
                   ? "Created locally."
                   : "Newly discovered.";
-              void maybeNotify("newTask", `New Task: ${t.title}`, fromClause);
+              void maybeNotify("newTask", `New Task: ${t.title}`, fromClause, t.id);
             }
           }
         }
@@ -188,6 +238,7 @@ export function useRunNotifications() {
               "taskFinished",
               `Task Finished: ${t.title}`,
               "All phases completed successfully.",
+              t.id,
             );
           }
         }
@@ -233,6 +284,8 @@ export function useRunNotifications() {
           "waiting",
           `${phaseLabel} needs your input`,
           `“${task.title}” has a question for you.`,
+          task.id,
+          phase.id,
         );
         return;
       }
@@ -242,7 +295,13 @@ export function useRunNotifications() {
       const body = becameWaiting
         ? `“${task.title}” is waiting for your approval.`
         : `“${task.title}” stopped during ${phaseLabel.toLowerCase()}.`;
-      void maybeNotify(becameWaiting ? "waiting" : "failed", title, body);
+      void maybeNotify(
+        becameWaiting ? "waiting" : "failed",
+        title,
+        body,
+        task.id,
+        phase.id,
+      );
     };
 
     void (async () => {

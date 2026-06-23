@@ -12,6 +12,7 @@ import {
 import { ArrowLeftIcon, LinkExternalIcon, PlayIcon, FileIcon } from "@primer/octicons-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
+import { dismissForTask } from "../notificationInbox";
 import { TaskSummary } from "../types";
 import { StatusBadge } from "../components/StatusBadge";
 import { RichText } from "../components/RichText";
@@ -59,8 +60,17 @@ export function TaskDetail() {
 
   useEffect(() => {
     setLoading(true);
+    if (id) dismissForTask(id, ["newTask", "taskFinished"]);
     void reload().finally(() => setLoading(false));
-  }, [reload]);
+  }, [reload, id]);
+
+  // Visiting the run tab clears the actionable phase items too —
+  // "if I open the relevant place, dismiss the notification."
+  useEffect(() => {
+    if (id && tab === "run") {
+      dismissForTask(id, ["waiting", "failed"]);
+    }
+  }, [id, tab]);
 
   // Refresh the header chip (and parent link) when the run state changes
   // so the status badge actually reflects the current phase. Also reload
