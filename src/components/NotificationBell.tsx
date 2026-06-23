@@ -103,18 +103,23 @@ export function NotificationBell() {
               aria-hidden
               sx={{
                 position: "absolute",
-                top: -2,
-                right: -2,
-                minWidth: 16,
-                height: 16,
-                px: items.length > 9 ? "4px" : 0,
+                // Bell glyph is 16x16 centered in a 32x32 button, so it
+                // spans pixels 8–24. Anchor the badge to that corner
+                // instead of the button edge so it visually clings to
+                // the icon.
+                top: 4,
+                right: 4,
+                transform: "translate(40%, -40%)",
+                minWidth: 14,
+                height: 14,
+                px: items.length > 9 ? "3px" : 0,
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
                 borderRadius: 999,
                 bg: "accent.fg",
                 color: "fg.onEmphasis",
-                fontSize: "10px",
+                fontSize: "9px",
                 lineHeight: 1,
                 fontWeight: 600,
                 fontVariantNumeric: "tabular-nums",
