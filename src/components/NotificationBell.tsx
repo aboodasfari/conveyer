@@ -38,6 +38,7 @@ export function NotificationBell() {
   const navigate = useNavigate();
   const hasItems = items.length > 0;
   const now = useMemo(() => Date.now(), [open, items]);
+  const countLabel = items.length > 99 ? "99+" : String(items.length);
 
   const handleItemClick = (item: InboxItem) => {
     dismissItem(item.id);
@@ -56,17 +57,21 @@ export function NotificationBell() {
           as="button"
           type="button"
           {...anchorProps}
-          aria-label="Notifications"
+          aria-label={hasItems ? `Notifications (${items.length})` : "Notifications"}
           title="Notifications"
           data-tauri-drag-region={false}
           sx={{
             position: "relative",
             width: 32,
             height: 32,
+            padding: 0,
+            margin: 0,
+            font: "inherit",
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "center",
             border: "none",
+            outline: "none",
             cursor: "pointer",
             borderRadius: 2,
             color: open ? "fg.default" : "fg.muted",
@@ -76,25 +81,51 @@ export function NotificationBell() {
               bg: open ? "neutral.muted" : "neutral.subtle",
               color: "fg.default",
             },
+            "&:focus": { outline: "none" },
+            "&:focus-visible": {
+              outline: "2px solid",
+              outlineColor: "accent.fg",
+              outlineOffset: "-2px",
+            },
+            // Match the gear's optical baseline; without this the bell
+            // sits ~1px high relative to neighbouring icons.
+            "& > span.bell-glyph": {
+              display: "inline-flex",
+              transform: "translateY(1px)",
+            },
           }}
         >
-          <BellIcon size={16} />
+          <Box as="span" className="bell-glyph">
+            <BellIcon size={16} />
+          </Box>
           {hasItems && (
             <Box
               aria-hidden
               sx={{
                 position: "absolute",
-                top: 6,
-                right: 6,
-                width: 8,
-                height: 8,
+                top: -2,
+                right: -2,
+                minWidth: 16,
+                height: 16,
+                px: items.length > 9 ? "4px" : 0,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
                 borderRadius: 999,
                 bg: "accent.fg",
+                color: "fg.onEmphasis",
+                fontSize: "10px",
+                lineHeight: 1,
+                fontWeight: 600,
+                fontVariantNumeric: "tabular-nums",
                 borderWidth: 2,
                 borderStyle: "solid",
                 borderColor: open ? "neutral.muted" : "canvas.subtle",
+                pointerEvents: "none",
               }}
-            />
+            >
+              {countLabel}
+            </Box>
           )}
         </Box>
       )}
