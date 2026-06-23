@@ -211,9 +211,10 @@ export function NotificationBell() {
                     bg: "transparent",
                     cursor: "pointer",
                     pl: 3,
-                    // Reserve room for the dismiss button so the long
-                    // body text doesn't slide underneath it.
-                    pr: 5,
+                    // Reserve room for the dismiss button + breathing
+                    // space so long titles/bodies don't sit flush
+                    // against the X.
+                    pr: 6,
                     py: 2,
                     color: "inherit",
                     font: "inherit",
