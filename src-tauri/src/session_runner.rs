@@ -1710,11 +1710,15 @@ async fn run_one(
     // Hand over previous phase artifacts if they exist on disk.
     let context_doc = artifact_path_for(&ctx.task_id, 1, "exploration").ok();
     let plan_doc = artifact_path_for(&ctx.task_id, 1, "planning").ok();
+    let review_doc = artifact_path_for(&ctx.task_id, 1, "review").ok();
     if let Some(p) = context_doc.filter(|p| p.exists()) {
         cmd.env("CONVEYER_CONTEXT_DOC", p.display().to_string());
     }
     if let Some(p) = plan_doc.filter(|p| p.exists()) {
         cmd.env("CONVEYER_PLAN_DOC", p.display().to_string());
+    }
+    if let Some(p) = review_doc.filter(|p| p.exists()) {
+        cmd.env("CONVEYER_REVIEW_DOC", p.display().to_string());
     }
 
     // Pre-render the prompt to disk so the Prompt tab populates immediately,
@@ -1755,11 +1759,15 @@ async fn run_one(
         }
         let context_doc = artifact_path_for(&ctx.task_id, 1, "exploration").ok();
         let plan_doc = artifact_path_for(&ctx.task_id, 1, "planning").ok();
+        let review_doc = artifact_path_for(&ctx.task_id, 1, "review").ok();
         if let Some(p) = context_doc.filter(|p| p.exists()) {
             pre.env("CONVEYER_CONTEXT_DOC", p.display().to_string());
         }
         if let Some(p) = plan_doc.filter(|p| p.exists()) {
             pre.env("CONVEYER_PLAN_DOC", p.display().to_string());
+        }
+        if let Some(p) = review_doc.filter(|p| p.exists()) {
+            pre.env("CONVEYER_REVIEW_DOC", p.display().to_string());
         }
         // Best-effort; don't fail the phase if the pre-render fails.
         match pre.stdout(Stdio::null()).stderr(Stdio::null()).status().await {
