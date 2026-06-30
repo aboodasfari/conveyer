@@ -59,12 +59,12 @@ const SIDECAR_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * Parse `CONVEYER_PHASE_INACTIVITY_MS` from the given env object. Falls back
- * to 10 minutes when unset, empty, or not a positive integer. Mirrors the
+ * to 2 hours when unset, empty, or not a positive integer. Mirrors the
  * pattern used for `CONVEYER_CHAT_IDLE_MS`.
  */
 export function resolveInactivityMs(envObj) {
   const raw = parseInt(envObj?.CONVEYER_PHASE_INACTIVITY_MS || "", 10);
-  return Number.isFinite(raw) && raw > 0 ? raw : 10 * 60 * 1000;
+  return Number.isFinite(raw) && raw > 0 ? raw : 2 * 60 * 60 * 1000;
 }
 
 /**
@@ -904,7 +904,8 @@ async function runCopilotSession({ phase, prompt, resume }) {
     // tool-calling for hours is legitimate work. Instead we use an
     // activity-resetting inactivity watchdog: only abort if the agent
     // goes completely silent for `CONVEYER_PHASE_INACTIVITY_MS`
-    // (default 10 min).
+    // (default 2 h — long-running test suites can easily produce
+    // 10+ min gaps with no streamed output).
     await sendAndWaitWithActivity({
       session,
       prompt: { prompt },

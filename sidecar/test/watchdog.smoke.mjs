@@ -37,11 +37,11 @@ function assertEq(actual, expected, label) {
   }
 }
 
-assertEq(resolveInactivityMs({}), 10 * 60 * 1000, "default");
-assertEq(resolveInactivityMs({ CONVEYER_PHASE_INACTIVITY_MS: "" }), 10 * 60 * 1000, "empty");
-assertEq(resolveInactivityMs({ CONVEYER_PHASE_INACTIVITY_MS: "abc" }), 10 * 60 * 1000, "non-numeric");
-assertEq(resolveInactivityMs({ CONVEYER_PHASE_INACTIVITY_MS: "0" }), 10 * 60 * 1000, "zero");
-assertEq(resolveInactivityMs({ CONVEYER_PHASE_INACTIVITY_MS: "-5" }), 10 * 60 * 1000, "negative");
+assertEq(resolveInactivityMs({}), 2 * 60 * 60 * 1000, "default");
+assertEq(resolveInactivityMs({ CONVEYER_PHASE_INACTIVITY_MS: "" }), 2 * 60 * 60 * 1000, "empty");
+assertEq(resolveInactivityMs({ CONVEYER_PHASE_INACTIVITY_MS: "abc" }), 2 * 60 * 60 * 1000, "non-numeric");
+assertEq(resolveInactivityMs({ CONVEYER_PHASE_INACTIVITY_MS: "0" }), 2 * 60 * 60 * 1000, "zero");
+assertEq(resolveInactivityMs({ CONVEYER_PHASE_INACTIVITY_MS: "-5" }), 2 * 60 * 60 * 1000, "negative");
 assertEq(resolveInactivityMs({ CONVEYER_PHASE_INACTIVITY_MS: "1500" }), 1500, "valid int");
 
 // --- (a) fires after inactivity ------------------------------------------
