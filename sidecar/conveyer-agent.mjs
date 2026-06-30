@@ -727,7 +727,6 @@ async function runReplLoop({ session, flush, idleMs }) {
   await wireAnswerListener();
   emit({ type: "ready" });
 
-  const TURN_TIMEOUT_MS = 30 * 60 * 1000;
   let busy = false;
 
   // Idle watchdog. Reset before/after each turn; while `busy` is true
@@ -784,7 +783,11 @@ async function runReplLoop({ session, flush, idleMs }) {
     busy = true;
     clearTimeout(idleTimer);
     try {
-      await session.sendAndWait({ prompt: content }, TURN_TIMEOUT_MS);
+      await sendAndWaitWithActivity({
+        session,
+        prompt: { prompt: content },
+        inactivityMs: resolveInactivityMs(process.env),
+      });
       flush();
       emit({ type: "turn_done", ok: true });
     } catch (e) {
@@ -896,9 +899,17 @@ async function runCopilotSession({ phase, prompt, resume }) {
   try {
     // The SDK's sendAndWait defaults to a 60s timeout waiting for
     // session.idle, which is far too short for a real phase that does
-    // multiple file reads, shells, and edits. Give it 30 minutes.
-    const PHASE_TIMEOUT_MS = 30 * 60 * 1000;
-    await session.sendAndWait({ prompt }, PHASE_TIMEOUT_MS);
+    // multiple file reads, shells, and edits. We don't impose any
+    // overall wall-clock cap — a phase that's actively streaming /
+    // tool-calling for hours is legitimate work. Instead we use an
+    // activity-resetting inactivity watchdog: only abort if the agent
+    // goes completely silent for `CONVEYER_PHASE_INACTIVITY_MS`
+    // (default 10 min).
+    await sendAndWaitWithActivity({
+      session,
+      prompt: { prompt },
+      inactivityMs: resolveInactivityMs(env),
+    });
     flush();
     // Capture the artifact file the agent (hopefully) wrote.
     await checkArtifactWritten();
