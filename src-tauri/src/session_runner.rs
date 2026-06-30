@@ -1038,10 +1038,11 @@ async fn run_comment_processor(app: &AppHandle, phase_id: &str) -> AppResult<()>
             break;
         }
 
-        // Wait for the turn to finish (cap so a wedged turn can't hang the
-        // processor forever).
+        // Wait for the turn to finish (12h hard cap, defense-in-depth —
+        // the sidecar enforces an activity-based watchdog; this just
+        // prevents a wedged turn from blocking the processor forever).
         let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(30 * 60),
+            std::time::Duration::from_secs(12 * 60 * 60),
             turn_rx.recv(),
         )
         .await;
