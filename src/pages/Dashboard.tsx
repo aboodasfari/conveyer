@@ -183,6 +183,19 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
     }
   };
 
+  // Count descendant tasks of the row pending deletion so the modal can
+  // warn the user that children will go too. Hierarchy is a soft link
+  // (`parent_ref` scoped by `source_id`) so we filter the same list the
+  // dashboard already has in memory — no extra round trip.
+  const deleteChildCount = useMemo(() => {
+    if (!deleting) return 0;
+    return tasks.filter(
+      (t) =>
+        t.source_id === deleting.source_id &&
+        t.parent_ref === deleting.source_ref,
+    ).length;
+  }, [tasks, deleting]);
+
   // Filter to this bucket — children inherit their root's bucket if their
   // root is in the visible set, otherwise show by their own bucket.
   const visible = useMemo(() => {
@@ -378,6 +391,12 @@ export function Dashboard({ bucket }: { bucket: Bucket }) {
             </Text>
           </Box>
           <Text>Permanently deletes its runs, chat, and artifacts.</Text>
+          {deleteChildCount > 0 && (
+            <Text sx={{ fontWeight: 600 }}>
+              This will also delete {deleteChildCount} child task
+              {deleteChildCount === 1 ? "" : "s"} and their runs, chats, and artifacts.
+            </Text>
+          )}
           <Text sx={{ color: "fg.muted" }}>This can't be undone.</Text>
           {deleting?.source_id && deleting.source_id !== "local" && (
             <Text sx={{ fontSize: 0, color: "attention.fg" }}>
