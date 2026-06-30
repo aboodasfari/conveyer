@@ -313,11 +313,20 @@ async fn tasks_refresh_ado(state: &AppState, source_id: &str) -> AppResult<usize
     let mut changed = 0usize;
     for it in &items {
         if is_skip_type(&it.work_item_type) {
-            sqlx::query("DELETE FROM tasks WHERE source_id = ? AND source_ref = ?")
-                .bind(&src.id)
-                .bind(it.id.to_string())
-                .execute(&state.db)
-                .await?;
+            // Skip-type rows (Feature/Epic/Theme/Initiative) shouldn't be
+            // stored. If one was stored by an earlier version, cascade-
+            // delete it so any child rows (and their artifacts/worktrees)
+            // go with it instead of getting stranded.
+            let existing_id: Option<(String,)> = sqlx::query_as(
+                "SELECT id FROM tasks WHERE source_id = ? AND source_ref = ?",
+            )
+            .bind(&src.id)
+            .bind(it.id.to_string())
+            .fetch_optional(&state.db)
+            .await?;
+            if let Some((id,)) = existing_id {
+                delete_task_cascade(state, &id).await?;
+            }
             continue;
         }
         // Don't newly INSERT a terminal-state row brought in via the
@@ -711,10 +720,15 @@ pub async fn tasks_create_local(
     Ok(id)
 }
 
-/// Delete a task and everything FK-cascaded from it (runs/phases/sessions/
-/// messages). Best-effort wipes the on-disk artifact directory and removes
-/// any worktrees this task's runs created (branches are LEFT INTACT — the
-/// user might want to keep the code, push it manually, etc.).
+/// Delete a task and every descendant task in its hierarchy, along with
+/// everything FK-cascaded from each row (runs/phases/sessions/messages).
+/// Best-effort wipes the on-disk artifact directory and removes any
+/// worktrees the task's runs created (branches are LEFT INTACT — the user
+/// might want to keep the code, push it manually, etc.).
+///
+/// The parent → child task link is a soft reference (`tasks.parent_ref`,
+/// scoped by `source_id`) — there is no FK to cascade on — so children are
+/// resolved and deleted in application code via `delete_task_cascade`.
 ///
 /// NOTE: Tasks under an external source (ADO etc.) may reappear on the
 /// next source refresh if the upstream still has the work item. The
@@ -722,47 +736,117 @@ pub async fn tasks_create_local(
 /// pick Archive instead when that's what they actually want.
 #[tauri::command]
 pub async fn tasks_delete(state: State<'_, AppState>, task_id: String) -> AppResult<()> {
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT source_id FROM tasks WHERE id = ?",
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM tasks WHERE id = ?)",
     )
     .bind(&task_id)
-    .fetch_optional(&state.db)
+    .fetch_one(&state.db)
     .await?;
-    if row.is_none() {
+    if !exists {
         return Err(AppError::NotFound(format!("task {task_id}")));
     }
+    delete_task_cascade(&state, &task_id).await
+}
 
-    // Collect (worktree_path, originating_workspace) for every run on this
-    // task that managed to create a worktree. `git worktree remove` has to
-    // be run from inside the originating repo (or with a path the repo
-    // knows about), so we resolve the workspace from tasks.workspace_path
-    // (the same source ensure_for_run used). If nothing's pinned we still
-    // try the path standalone — git is good enough to find the linked dir.
-    let worktree_paths: Vec<(String, Option<String>)> = sqlx::query_as(
+/// Delete `task_id` and all of its descendants (children pointing at it
+/// via `parent_ref`, scoped by `source_id`, recursively). Runs DB deletes
+/// in a single transaction so we never half-delete a hierarchy, then
+/// performs per-task filesystem cleanup (artifact dirs + worktrees) after
+/// the commit so a FS failure can't leave the DB in a half-deleted state.
+///
+/// Branches are intentionally preserved — only worktrees and artifacts
+/// are wiped. See `tasks_delete` for the user-facing rationale.
+async fn delete_task_cascade(state: &AppState, task_id: &str) -> AppResult<()> {
+    // 1. Resolve the target's (source_id, source_ref) — anchor for the
+    //    recursive walk over the soft parent_ref hierarchy.
+    let root: Option<(String, String)> = sqlx::query_as(
+        "SELECT source_id, source_ref FROM tasks WHERE id = ?",
+    )
+    .bind(task_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((source_id, _source_ref)) = root else {
+        // Already gone — nothing to do. Treat as success so callers that
+        // race with another delete don't blow up.
+        return Ok(());
+    };
+
+    // 2. Walk descendants via a recursive CTE. Schema today is two
+    //    levels (story → tasks) but the walk is recursive to future-proof
+    //    against deeper hierarchies. Scope is always `source_id` because
+    //    `source_ref` is only unique within a source.
+    let descendant_ids: Vec<(String,)> = sqlx::query_as(
+        "WITH RECURSIVE descendants(id, source_ref) AS (
+             SELECT id, source_ref FROM tasks WHERE id = ?1
+             UNION ALL
+             SELECT t.id, t.source_ref
+             FROM tasks t
+             JOIN descendants d ON t.parent_ref = d.source_ref
+             WHERE t.source_id = ?2
+         )
+         SELECT id FROM descendants",
+    )
+    .bind(task_id)
+    .bind(&source_id)
+    .fetch_all(&state.db)
+    .await?;
+    let ids: Vec<String> = descendant_ids.into_iter().map(|(id,)| id).collect();
+    if ids.is_empty() {
+        // The root row vanished between the resolve and the walk; nothing
+        // to do.
+        return Ok(());
+    }
+
+    // 3. Collect per-task (worktree_path, originating_workspace) for every
+    //    run that managed to create a worktree, BEFORE we delete the
+    //    tasks rows (the JOIN on tasks.workspace_path needs them).
+    //    `git worktree remove` has to be run from inside the originating
+    //    repo (or with a path the repo knows about), so we resolve the
+    //    workspace from tasks.workspace_path. If nothing's pinned we still
+    //    try the path standalone — git is good enough to find the linked
+    //    dir.
+    let placeholders = std::iter::repeat_n("?", ids.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let wt_sql = format!(
         "SELECT r.worktree_path, t.workspace_path
          FROM runs r
          JOIN tasks t ON t.id = r.task_id
-         WHERE r.task_id = ? AND r.worktree_path IS NOT NULL",
-    )
-    .bind(&task_id)
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+         WHERE r.task_id IN ({placeholders}) AND r.worktree_path IS NOT NULL"
+    );
+    let mut wt_q = sqlx::query_as::<_, (String, Option<String>)>(&wt_sql);
+    for id in &ids {
+        wt_q = wt_q.bind(id);
+    }
+    let worktree_paths: Vec<(String, Option<String>)> =
+        wt_q.fetch_all(&state.db).await.unwrap_or_default();
 
-    sqlx::query("DELETE FROM tasks WHERE id = ?")
-        .bind(&task_id)
-        .execute(&state.db)
-        .await?;
+    // 4. Single transaction: delete the whole tree at once so a crash
+    //    mid-way can't strand children (or, in the reverse failure mode,
+    //    leave the parent without its tasks).
+    let del_sql = format!("DELETE FROM tasks WHERE id IN ({placeholders})");
+    let mut tx = state.db.begin().await?;
+    let mut del_q = sqlx::query(&del_sql);
+    for id in &ids {
+        del_q = del_q.bind(id);
+    }
+    del_q.execute(&mut *tx).await?;
+    tx.commit().await?;
 
-    if let Ok(root) = artifacts_root_for_task(&task_id) {
-        let _ = tokio::fs::remove_dir_all(root).await;
+    // 5. Per-task artifact cleanup. Each task has its own dir keyed only
+    //    by task id (`artifacts_root_for_task`), so the parent dir does
+    //    NOT contain the children — wipe each one individually.
+    for id in &ids {
+        if let Ok(root) = artifacts_root_for_task(id) {
+            let _ = tokio::fs::remove_dir_all(root).await;
+        }
     }
 
-    // Worktree cleanup runs after the DB delete so a failure here doesn't
-    // leave the task in a half-deleted state. We DELIBERATELY do not run
-    // `git branch -D <branch>` — preserving the code on disk is the whole
-    // point. `git worktree remove --force` un-links the dir + deletes the
-    // checkout but leaves the branch ref alone.
+    // 6. Worktree cleanup runs after the DB delete so a failure here
+    //    doesn't leave the task in a half-deleted state. We DELIBERATELY
+    //    do not run `git branch -D <branch>` — preserving the code on
+    //    disk is the whole point. `git worktree remove --force` un-links
+    //    the dir + deletes the checkout but leaves the branch ref alone.
     for (wt, ws) in worktree_paths {
         let wt_path = std::path::PathBuf::from(crate::session_runner::expand_path(&wt));
         if !wt_path.exists() {
