@@ -148,12 +148,22 @@ pub const STORY_TYPES: &[&str] = &["User Story", "Bug", "Issue", "Product Backlo
 /// in Conveyer.
 pub const SKIP_TYPES: &[&str] = &["Feature", "Epic", "Theme", "Initiative"];
 
+/// Work-item states that should be treated as "done/closed" for the purposes
+/// of discovery gating. Must stay aligned with the frontend's
+/// `TERMINAL_STATES` set in `src/components/TaskTree.tsx`.
+pub const TERMINAL_STATES: &[&str] = &["Done", "Closed", "Resolved", "Completed", "Removed"];
+
 pub fn is_story_type(t: &str) -> bool {
     STORY_TYPES.iter().any(|s| s.eq_ignore_ascii_case(t))
 }
 
 pub fn is_skip_type(t: &str) -> bool {
     SKIP_TYPES.iter().any(|s| s.eq_ignore_ascii_case(t))
+}
+
+pub fn is_terminal_state(s: &str) -> bool {
+    let s = s.trim();
+    TERMINAL_STATES.iter().any(|t| t.eq_ignore_ascii_case(s))
 }
 
 /// Run a WIQL query to find work items currently assigned to the caller.
@@ -279,5 +289,28 @@ mod tests {
             Some(42)
         );
         assert_eq!(extract_work_item_id("https://example.com"), None);
+    }
+
+    #[test]
+    fn terminal_state_matches_canonical_values() {
+        for s in ["Done", "Closed", "Resolved", "Completed", "Removed"] {
+            assert!(is_terminal_state(s), "{s} should be terminal");
+        }
+    }
+
+    #[test]
+    fn terminal_state_is_case_and_whitespace_insensitive() {
+        assert!(is_terminal_state("closed"));
+        assert!(is_terminal_state(" Done "));
+        assert!(is_terminal_state("resolved"));
+        assert!(is_terminal_state("completed"));
+        assert!(is_terminal_state("REMOVED"));
+    }
+
+    #[test]
+    fn terminal_state_rejects_active_states() {
+        for s in ["Active", "New", "In Progress", "Committed", ""] {
+            assert!(!is_terminal_state(s), "{s} should not be terminal");
+        }
     }
 }
