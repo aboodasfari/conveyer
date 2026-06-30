@@ -72,7 +72,7 @@ export function Layout() {
       </Box>
       <Box
         as="main"
-        sx={{ p: 4, flex: 1, maxWidth: 1200, mx: "auto", width: "100%" }}
+        sx={{ p: 4, flex: 1, width: "100%" }}
       >
         <Outlet />
       </Box>
