@@ -213,13 +213,16 @@ export function useRunNotifications() {
         const ids = new Set(tasks.map((t) => t.id));
         if (announce) {
           for (const t of tasks) {
+            // Local tasks are always user-initiated via the in-app "New task"
+            // modal, so surfacing a "discovery" notification when the poller
+            // later observes them is noise. Skip emission but still let
+            // `knownTaskIds.current = ids` below record their ids.
+            if (t.source_id === "local") continue;
             if (!knownTaskIds.current.has(t.id)) {
               const sourceName = sourceNameById.get(t.source_id);
               const fromClause = sourceName
                 ? `Discovered in ${sourceName}.`
-                : t.source_id === "local"
-                  ? "Created locally."
-                  : "Newly discovered.";
+                : "Newly discovered.";
               void maybeNotify("newTask", `New Task: ${t.title}`, fromClause, t.id);
             }
           }
