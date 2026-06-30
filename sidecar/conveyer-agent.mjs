@@ -40,7 +40,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 
 const env = process.env;
@@ -52,6 +52,64 @@ const env = process.env;
 const requireFromHere = createRequire(import.meta.url);
 
 const SIDECAR_DIR = path.dirname(fileURLToPath(import.meta.url));
+
+/* -------------------------------------------------------------------------- */
+/*                       Inactivity watchdog for sendAndWait                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Parse `CONVEYER_PHASE_INACTIVITY_MS` from the given env object. Falls back
+ * to 10 minutes when unset, empty, or not a positive integer. Mirrors the
+ * pattern used for `CONVEYER_CHAT_IDLE_MS`.
+ */
+export function resolveInactivityMs(envObj) {
+  const raw = parseInt(envObj?.CONVEYER_PHASE_INACTIVITY_MS || "", 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 10 * 60 * 1000;
+}
+
+/**
+ * Wrap `session.sendAndWait` with an activity-resetting inactivity watchdog.
+ *
+ * The Copilot SDK's `sendAndWait` only supports a single fixed `setTimeout`
+ * with no reset hook, so a phase that streams / tool-calls for longer than
+ * that ceiling fails even though the agent is actively working. We instead:
+ *
+ *   1. Pass a 7-day timeout to the SDK so its internal timer effectively
+ *      never fires (Node clamps to ~24.8d anyway — still safe).
+ *   2. Subscribe a wildcard `session.on` handler that resets our own timer
+ *      on every event from the agent.
+ *   3. Race the SDK promise against the watchdog timer; the watchdog rejects
+ *      with a clear message after `inactivityMs` of complete silence.
+ *
+ * Cleans up the timer and the listener in a `finally` block on all paths
+ * (success, SDK error, watchdog fire).
+ */
+export async function sendAndWaitWithActivity({ session, prompt, inactivityMs }) {
+  const SDK_DISABLE_TIMEOUT_MS = 7 * 24 * 60 * 60 * 1000;
+  let timer;
+  let unsubscribe;
+  let rejectWatchdog;
+  const watchdog = new Promise((_, reject) => { rejectWatchdog = reject; });
+  const arm = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      rejectWatchdog(new Error(
+        `No activity from agent for ${inactivityMs}ms (inactivity timeout)`,
+      ));
+    }, inactivityMs);
+  };
+  try {
+    unsubscribe = session.on(() => arm());
+    arm();
+    return await Promise.race([
+      session.sendAndWait(prompt, SDK_DISABLE_TIMEOUT_MS),
+      watchdog,
+    ]);
+  } finally {
+    clearTimeout(timer);
+    try { unsubscribe?.(); } catch { /* noop */ }
+  }
+}
 
 /**
  * Dynamically load the Copilot SDK. Tries a plain `import()` first (works in
@@ -1074,10 +1132,12 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  emit({ type: "done", ok: false, error: e?.message ?? String(e) });
-  process.exit(1);
-});
+if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
+  main().catch((e) => {
+    emit({ type: "done", ok: false, error: e?.message ?? String(e) });
+    process.exit(1);
+  });
+}
 
 /* -------------------------------------------------------------------------- */
 /*                              List models mode                              */
