@@ -1,6 +1,6 @@
 use crate::ado;
 use crate::ado::auth::{header_value, AuthInputs, AuthKind};
-use crate::ado::{is_skip_type, is_story_type, WorkItem};
+use crate::ado::{is_skip_type, is_story_type, is_terminal_state, WorkItem};
 use crate::error::{AppError, AppResult};
 use crate::github;
 use crate::models::{AdoSourceConfig, GithubSourceConfig, Source, Task};
@@ -277,19 +277,31 @@ async fn tasks_refresh_ado(state: &AppState, source_id: &str) -> AppResult<usize
 
     // 4. Fetch missing parents (one hop). After this we'll decide which
     //    of them to keep based on type.
+    //
+    //    Only walk parents for items that are *currently self-assigned and
+    //    non-terminal*. A closed self-assigned task (or a stale known-DB row
+    //    that has since gone terminal) must not drag in a story parent we
+    //    don't already track. See `is_terminal_state` for the contract.
     let have: HashSet<i64> = items.iter().map(|w| w.id).collect();
     let missing_parents: Vec<i64> = items
         .iter()
+        .filter(|w| assigned_ids.contains(&w.id) && !is_terminal_state(&w.state))
         .filter_map(|w| w.parent_id)
         .filter(|p| !have.contains(p))
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
+    let mut parent_hop_ids: HashSet<i64> = HashSet::new();
     if !missing_parents.is_empty() {
         let ids: Vec<String> = missing_parents.iter().map(|n| n.to_string()).collect();
         let parents = ado::fetch_work_items_batch(&cfg, &auth, &ids).await?;
         // Only keep story-type parents. Features/Epics are dropped on the floor.
-        items.extend(parents.into_iter().filter(|p| is_story_type(&p.work_item_type)));
+        let kept: Vec<WorkItem> = parents
+            .into_iter()
+            .filter(|p| is_story_type(&p.work_item_type))
+            .collect();
+        parent_hop_ids.extend(kept.iter().map(|p| p.id));
+        items.extend(kept);
     }
 
     // 5. Index everything by id so we can resolve parent types.
@@ -307,6 +319,23 @@ async fn tasks_refresh_ado(state: &AppState, source_id: &str) -> AppResult<usize
                 .execute(&state.db)
                 .await?;
             continue;
+        }
+        // Don't newly INSERT a terminal-state row brought in via the
+        // known-refs/WIQL pass. Already-existing rows still UPDATE so
+        // state transitions flow through. Parents pulled in via the
+        // parent-hop above are exempt — they're roots needed by an
+        // active self-assigned child.
+        if is_terminal_state(&it.state) && !parent_hop_ids.contains(&it.id) {
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM tasks WHERE source_id = ? AND source_ref = ?)",
+            )
+            .bind(&src.id)
+            .bind(it.id.to_string())
+            .fetch_one(&state.db)
+            .await?;
+            if !exists {
+                continue;
+            }
         }
         let url = work_item_url(&cfg, it.id);
         // Stories have no parent_ref shown (they ARE the root in our view).
