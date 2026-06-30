@@ -1,10 +1,20 @@
-<!-- Available vars: {{TASK_TITLE}}, {{PLAN_DOCUMENT}}, {{ARTIFACT_PATH}},
+<!-- Available vars: {{TASK_TITLE}}, {{PLAN_DOCUMENT}}, {{REVIEW_FEEDBACK}}, {{ARTIFACT_PATH}},
      {{CODEBASE_PATH}}, {{BRANCH}}, {{WORKTREE_PATH}}.
      See prompts/_system.md for the full list. -->
 
 # Implementation phase
 
 Implement the plan from the previous phase.
+
+{{#REVIEW_FEEDBACK}}
+## Review feedback to address
+
+A previous attempt at this implementation has already been committed to your branch and the reviewer asked for changes. **Do not redo the plan from scratch.** Read the feedback below, inspect your prior commits with `git log {{BRANCH}}` and `git diff` against the base branch, and apply only the changes the reviewer requested.
+
+{{REVIEW_FEEDBACK}}
+
+---
+{{/REVIEW_FEEDBACK}}
 
 ## Your workspace
 

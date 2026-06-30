@@ -298,6 +298,7 @@ async function buildPrompt(phase) {
     WORKSPACES_HINT: renderWorkspacesHint(),
     CONTEXT_DOCUMENT: await readFileOr(env.CONVEYER_CONTEXT_DOC, "(no context document)"),
     PLAN_DOCUMENT: await readFileOr(env.CONVEYER_PLAN_DOC, "(no plan document)"),
+    REVIEW_FEEDBACK: await readFileOr(env.CONVEYER_REVIEW_DOC, ""),
     DIFF: "(diff capture wires up alongside the implementation phase)",
   };
 
