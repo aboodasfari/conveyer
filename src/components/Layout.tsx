@@ -27,7 +27,7 @@ export function Layout() {
   const settingsActive = pathname === "/settings" || pathname.startsWith("/settings/");
 
   return (
-    <Box sx={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+    <Box sx={{ height: "100vh", display: "flex", flexDirection: "column" }}>
       <Box
         data-tauri-drag-region
         sx={{
@@ -72,7 +72,15 @@ export function Layout() {
       </Box>
       <Box
         as="main"
-        sx={{ p: 4, flex: 1, width: "100%", display: "flex", flexDirection: "column" }}
+        sx={{
+          p: 4,
+          flex: 1,
+          width: "100%",
+          display: "flex",
+          flexDirection: "column",
+          minHeight: 0,
+          overflow: "auto",
+        }}
       >
         <Outlet />
       </Box>
