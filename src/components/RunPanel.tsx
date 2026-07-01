@@ -260,8 +260,11 @@ export function RunPanel({ taskId }: { taskId: string }) {
 
   return (
     // Use `height` so the panel is exactly the viewport minus the chrome
-    // above it. Subtracted: 48 header + 64 main padding + ~80 title block
-    // + ~40 tabs + ~28 back button + ~80 gap = ~340.
+    // above/below it. Chrome measurements (non-fullscreen):
+    //   48 sticky top nav + 32 main padding-top + 12 back button (mt: -2)
+    //   + 24 gap + 40 title + 24 gap + 40 tabs + 24 gap = ~244 above.
+    //   32 main padding-bottom below. Leave a small ~20px bottom cushion
+    //   so the panel doesn't sit right on the padding edge: 244 + 20 = 264.
     <Box
       sx={fullscreen ? {
         position: "fixed",
@@ -277,7 +280,7 @@ export function RunPanel({ taskId }: { taskId: string }) {
         display: "flex",
         flexDirection: "column",
         gap: 2,
-        height: "calc(100vh - 300px)",
+        height: "calc(100vh - 264px)",
         minHeight: 440,
       }}
     >
