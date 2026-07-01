@@ -1,6 +1,6 @@
 [package]
 name = "conveyer"
-version = "0.2.2"
+version = "0.2.3"
 description = "Conveyer — agent orchestrator"
 authors = ["Abdul Asfari"]
 edition = "2021"
