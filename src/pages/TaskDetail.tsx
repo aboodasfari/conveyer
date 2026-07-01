@@ -112,7 +112,7 @@ export function TaskDetail() {
   }
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 3, flex: 1, minHeight: 0 }}>
       <Button
         leadingVisual={ArrowLeftIcon}
         variant="invisible"
@@ -164,7 +164,13 @@ export function TaskDetail() {
         onChange={setTab}
       />
 
-      <Box>
+      <Box
+        sx={
+          tab === "run"
+            ? { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }
+            : undefined
+        }
+      >
         {tab === "description" ? (
           <RichText content={task.description} />
         ) : (

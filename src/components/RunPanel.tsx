@@ -259,9 +259,9 @@ export function RunPanel({ taskId }: { taskId: string }) {
   }
 
   return (
-    // Use `height` so the panel is exactly the viewport minus the chrome
-    // above it. Subtracted: 48 header + 64 main padding + ~80 title block
-    // + ~40 tabs + ~28 back button + ~80 gap = ~340.
+    // Non-fullscreen: fill remaining vertical space in the parent flex
+    // chain (main -> TaskDetail root -> tab wrapper). Fullscreen pins to
+    // the viewport under the top nav.
     <Box
       sx={fullscreen ? {
         position: "fixed",
@@ -277,7 +277,7 @@ export function RunPanel({ taskId }: { taskId: string }) {
         display: "flex",
         flexDirection: "column",
         gap: 2,
-        height: "calc(100vh - 300px)",
+        flex: 1,
         minHeight: 440,
       }}
     >
