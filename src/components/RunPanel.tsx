@@ -263,8 +263,9 @@ export function RunPanel({ taskId }: { taskId: string }) {
     // above/below it. Chrome measurements (non-fullscreen):
     //   48 sticky top nav + 32 main padding-top + 12 back button (mt: -2)
     //   + 24 gap + 40 title + 24 gap + 40 tabs + 24 gap = ~244 above.
-    //   32 main padding-bottom below. Leave a small ~20px bottom cushion
-    //   so the panel doesn't sit right on the padding edge: 244 + 20 = 264.
+    //   32 main padding-bottom below = 276 total chrome.
+    //   +20 cushion so the panel doesn't sit flush on the bottom edge:
+    //   276 + 20 = 296.
     <Box
       sx={fullscreen ? {
         position: "fixed",
@@ -280,7 +281,7 @@ export function RunPanel({ taskId }: { taskId: string }) {
         display: "flex",
         flexDirection: "column",
         gap: 2,
-        height: "calc(100vh - 264px)",
+        height: "calc(100vh - 296px)",
         minHeight: 440,
       }}
     >
