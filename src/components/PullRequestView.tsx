@@ -85,7 +85,7 @@ export function PullRequestView({ phaseId }: { phaseId: string }) {
   const isFailed = pr.status === "failed";
 
   return (
-    <Box sx={{ overflowY: "auto", pr: 3, maxWidth: 820 }}>
+    <Box sx={{ height: "100%", overflowY: "auto", pr: 3 }}>
       {/* Title row */}
       <Box sx={{ display: "flex", alignItems: "flex-start", gap: 2, mb: 2 }}>
         <Box sx={{ color: isProposed ? "attention.fg" : "success.fg", mt: "2px" }}>
@@ -132,6 +132,8 @@ export function PullRequestView({ phaseId }: { phaseId: string }) {
           p: 3,
           mb: 3,
           bg: "canvas.subtle",
+          minWidth: 0,
+          overflow: "hidden",
         }}
       >
         <RichText content={pr.description} />
