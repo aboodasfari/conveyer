@@ -56,8 +56,7 @@ export function RichText({ content }: { content: string | null }) {
           textAlign: "left",
           verticalAlign: "top",
           whiteSpace: "normal",
-          overflowWrap: "anywhere",
-          wordBreak: "break-word",
+          overflowWrap: "break-word",
         },
         "& th": {
           bg: "canvas.subtle",
