@@ -987,18 +987,30 @@ function AssistantBubble({ content, streaming }: { content: string; streaming: b
   );
 }
 
-/** User: prepended with a chevron, like a shell prompt. */
+/** User: solid gray chat pill, no marker — the container itself is
+ *  the "this is user text" cue, no need for an additional chevron. */
 function UserBubble({ content }: { content: string }) {
   return (
     <Box sx={{ display: "flex", gap: 1 }}>
-      <Gutter
-        marker={
-          <Box sx={{ color: "accent.fg", display: "flex" }}>
-            <ChevronRightIcon size={12} />
-          </Box>
-        }
-      />
-      <Box sx={{ flex: 1, color: "fg.default", whiteSpace: "pre-wrap", overflowWrap: "anywhere", minWidth: 0 }}>{content}</Box>
+      {/* Empty gutter — keeps the pill's left edge aligned with the
+          text of assistant/system bubbles, which all use the gutter
+          for their marker dot. */}
+      <Box aria-hidden sx={{ width: GUTTER_WIDTH, flexShrink: 0 }} />
+      <Box
+        sx={{
+          flex: 1,
+          minWidth: 0,
+          bg: "neutral.muted",
+          color: "fg.default",
+          borderRadius: 2,
+          px: 2,
+          py: "6px",
+          whiteSpace: "pre-wrap",
+          overflowWrap: "anywhere",
+        }}
+      >
+        {content}
+      </Box>
     </Box>
   );
 }
