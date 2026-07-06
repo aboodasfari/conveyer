@@ -185,14 +185,25 @@ pub async fn run_worktree_recreate(
             // we still get here the conflict is real — don't force it.
             let msg = e.to_string();
             let lower = msg.to_ascii_lowercase();
-            if lower.contains("is already checked out")
-                || lower.contains("already used by worktree")
-            {
-                Err(AppError::Config(format!(
-                    "Can't recreate: the branch is already checked out in another worktree. \
-                     Close that worktree (or remove it with `git worktree remove`) and try again. \
-                     Details: {msg}"
-                )))
+            let is_conflict = lower.contains("is already checked out")
+                || lower.contains("already used by worktree");
+            if is_conflict {
+                // Try to pull just the conflicting path out of git's stderr
+                // ("… at '<path>'") so the UI can show a one-liner instead
+                // of the whole "Preparing worktree (checking out …) fatal:"
+                // wall of text.
+                let other = msg
+                    .rfind(" at '")
+                    .and_then(|i| {
+                        let rest = &msg[i + 5..];
+                        rest.find('\'').map(|j| rest[..j].to_string())
+                    })
+                    .filter(|s| !s.is_empty());
+                let short = match other {
+                    Some(p) => format!("Already checked out at {p}."),
+                    None => "Already checked out in another worktree.".into(),
+                };
+                Err(AppError::Config(short))
             } else {
                 Err(e)
             }
