@@ -299,7 +299,7 @@ export function DiffViewer({ phaseId, phaseStatus }: { phaseId: string; phaseSta
           <ActionMenu.Button leadingVisual={GitCommitIcon} size="small" disabled={noCommits}>
             {commitLabel}
           </ActionMenu.Button>
-          <ActionMenu.Overlay width="xlarge">
+          <ActionMenu.Overlay width="xlarge" maxHeight="large" overflow="auto">
             <ActionList selectionVariant="single">
               <ActionList.Item selected={selectedCommit === null} onSelect={() => setSelectedCommit(null)}>
                 Overall
