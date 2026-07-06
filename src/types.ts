@@ -185,6 +185,8 @@ export interface DiffSummary {
   head_sha: string;
   worktree_path: string;
   commits: CommitInfo[];
+  /** True when the recorded worktree_path no longer exists on disk. */
+  worktree_missing: boolean;
 }
 
 export interface Workspace {

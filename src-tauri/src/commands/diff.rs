@@ -24,11 +24,20 @@ pub struct DiffSummary {
     pub head_sha: String,
     pub worktree_path: String,
     pub commits: Vec<CommitInfo>,
+    /// True when a `worktree_path` was recorded for this run but the
+    /// directory no longer exists on disk (typically because the user
+    /// removed it externally). The frontend renders a stable placeholder
+    /// for this state instead of a hard error so the Diff tab doesn't
+    /// flicker on the background poll.
+    pub worktree_missing: bool,
 }
 
-async fn worktree_for_phase(state: &AppState, phase_id: &str) -> AppResult<Option<(String, String)>> {
-    let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT r.worktree_path, r.base_sha
+async fn worktree_for_phase(
+    state: &AppState,
+    phase_id: &str,
+) -> AppResult<Option<(String, String, Option<String>)>> {
+    let row: Option<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT r.worktree_path, r.base_sha, r.branch_name
          FROM phases p JOIN runs r ON r.id = p.run_id
          WHERE p.id = ?",
     )
@@ -36,7 +45,7 @@ async fn worktree_for_phase(state: &AppState, phase_id: &str) -> AppResult<Optio
     .fetch_optional(&state.db)
     .await?;
     Ok(match row {
-        Some((Some(wt), Some(base))) => Some((wt, base)),
+        Some((Some(wt), Some(base), branch)) => Some((wt, base, branch)),
         _ => None,
     })
 }
@@ -46,10 +55,26 @@ pub async fn phase_diff_summary(
     state: State<'_, AppState>,
     phase_id: String,
 ) -> AppResult<Option<DiffSummary>> {
-    let Some((worktree, base_sha)) = worktree_for_phase(&state, &phase_id).await? else {
+    let Some((worktree, base_sha, branch_db)) = worktree_for_phase(&state, &phase_id).await? else {
         return Ok(None);
     };
     let wt = std::path::Path::new(&worktree);
+
+    // Worktree recorded but gone from disk (user deleted it externally,
+    // pruned it, moved the repo, etc.). Treat as an expected state and
+    // return a stable "empty" summary flagged as missing — no git calls,
+    // no error propagation, no flicker on the background poll.
+    if !wt.exists() {
+        return Ok(Some(DiffSummary {
+            branch: branch_db.unwrap_or_default(),
+            base_sha,
+            head_sha: String::new(),
+            worktree_path: worktree,
+            commits: Vec::new(),
+            worktree_missing: true,
+        }));
+    }
+
     let head_sha = git_capture(wt, &["rev-parse", "HEAD"])?;
     let branch = git_capture(wt, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
 
@@ -85,6 +110,7 @@ pub async fn phase_diff_summary(
         head_sha,
         worktree_path: worktree,
         commits,
+        worktree_missing: false,
     }))
 }
 
@@ -97,10 +123,14 @@ pub async fn phase_diff_text(
     phase_id: String,
     commit: Option<String>,
 ) -> AppResult<String> {
-    let Some((worktree, base_sha)) = worktree_for_phase(&state, &phase_id).await? else {
+    let Some((worktree, base_sha, _branch)) = worktree_for_phase(&state, &phase_id).await? else {
         return Ok(String::new());
     };
     let wt = std::path::Path::new(&worktree);
+    // Same "missing" short-circuit as the summary: no error, empty diff.
+    if !wt.exists() {
+        return Ok(String::new());
+    }
 
     let out = match commit.as_deref() {
         Some(sha) => git_capture(wt, &["show", "--no-color", "-U99999", "--patch-with-stat", sha])?,

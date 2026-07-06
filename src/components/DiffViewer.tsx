@@ -122,18 +122,25 @@ export function DiffViewer({ phaseId, phaseStatus }: { phaseId: string; phaseSta
   }, [phaseId, loadComments]);
 
   // Light poll so newly-made commits appear without waiting for the next
-  // phase transition. Silent: doesn't flash the loading spinner.
+  // phase transition. Silent: doesn't flash the loading spinner. Skip the
+  // poll entirely when the worktree was removed externally — nothing will
+  // change until the user restarts the phase (which fires `run_updated`
+  // anyway), so polling would just cause flicker.
+  const worktreeMissing = summary?.worktree_missing ?? false;
   useEffect(() => {
+    if (worktreeMissing) return;
     const id = window.setInterval(() => {
       void loadSummary({ silent: true });
       void loadDiff(selectedCommit, { silent: true });
     }, 3000);
     return () => window.clearInterval(id);
-  }, [loadSummary, loadDiff, selectedCommit]);
+  }, [loadSummary, loadDiff, selectedCommit, worktreeMissing]);
 
   // Re-fetch when anything about this run changes (worktree created,
   // agent committed, phase advanced) so the Diff tab stays live without
   // a manual refresh. Also silent — the visible content barely shifts.
+  // We keep this listener wired up even when the worktree is missing so
+  // the tab recovers if the worktree is recreated (e.g. phase restart).
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
     let cancelled = false;
@@ -209,6 +216,14 @@ export function DiffViewer({ phaseId, phaseStatus }: { phaseId: string; phaseSta
     return (
       <TabPlaceholder
         title="Code diffs will show up here once the implementation phase starts."
+      />
+    );
+  }
+  if (summary.worktree_missing) {
+    return (
+      <TabPlaceholder
+        title="This run's worktree is no longer on disk."
+        subtitle={summary.worktree_path ? `Expected at ${summary.worktree_path}.` : undefined}
       />
     );
   }
