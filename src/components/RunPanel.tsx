@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Box, Button, Flash, IconButton, Spinner, Text } from "@primer/react";
 import {
   CheckIcon,
@@ -130,6 +130,13 @@ export function RunPanel({ taskId }: { taskId: string }) {
   const [selectedPhaseId, setSelectedPhaseId] = useState<string | null>(null);
   const [contentTab, setContentTab] = useState<string>("context");
   const [fullscreen, setFullscreen] = useState(false);
+  // Dynamically size the panel to fill the viewport minus whatever
+  // chrome sits above it (nav, back button, badges, title, optional
+  // parent-link row, tab strip, gaps). Measuring the root's actual
+  // top offset makes this robust to every chrome variation instead of
+  // relying on a hard-coded chrome height.
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [computedHeight, setComputedHeight] = useState<number | null>(null);
 
   // Keyboard shortcuts: 'f' toggles fullscreen, Esc exits. Skip when a
   // text input is focused, or when an open Primer overlay is going to
@@ -252,6 +259,49 @@ export function RunPanel({ taskId }: { taskId: string }) {
     return detail.phases.find((p) => p.id === selectedPhaseId) ?? null;
   }, [detail, selectedPhaseId]);
 
+  // Measure the panel's actual top offset (accounting for whatever
+  // header/tab chrome sits above it) and size to `viewport - top -
+  // paddingBelow - cushion`. `paddingBelow` walks up the ancestor
+  // chain summing padding-bottom so we correctly reserve space for
+  // things like `<main>`'s `p: 4` bottom padding — otherwise the
+  // panel extends into that padding and the whole page scrolls by
+  // exactly that overflow.
+  //
+  // Re-measures on window resize and whenever anything in the document
+  // changes size (parent link loading, title wrapping, badge row
+  // wrapping, etc.). Uses `useLayoutEffect` so the measured height is
+  // applied before paint — no visible flash from the initial fallback.
+  useLayoutEffect(() => {
+    if (fullscreen) {
+      setComputedHeight(null);
+      return;
+    }
+    const el = rootRef.current;
+    if (!el) return;
+    const VISUAL_CUSHION = 12;
+    const MIN_HEIGHT = 440;
+    const measure = () => {
+      const top = el.getBoundingClientRect().top;
+      let paddingBelow = 0;
+      let node: HTMLElement | null = el.parentElement;
+      while (node && node !== document.body) {
+        const cs = window.getComputedStyle(node);
+        paddingBelow += parseFloat(cs.paddingBottom) || 0;
+        node = node.parentElement;
+      }
+      const avail = window.innerHeight - top - paddingBelow - VISUAL_CUSHION;
+      setComputedHeight(Math.max(MIN_HEIGHT, Math.floor(avail)));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(document.body);
+    window.addEventListener("resize", measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [fullscreen, detail]);
+
   if (loading) return <Spinner size="small" />;
 
   if (!detail) {
@@ -259,14 +309,13 @@ export function RunPanel({ taskId }: { taskId: string }) {
   }
 
   return (
-    // Use `height` so the panel is exactly the viewport minus the chrome
-    // above/below it. Chrome measurements (non-fullscreen):
-    //   48 sticky top nav + 32 main padding-top + 12 back button (mt: -2)
-    //   + 24 gap + 40 title + 24 gap + 40 tabs + 24 gap = ~244 above.
-    //   32 main padding-bottom below = 276 total chrome.
-    //   +20 cushion so the panel doesn't sit flush on the bottom edge:
-    //   276 + 20 = 296.
+    // Non-fullscreen height is measured dynamically (see useLayoutEffect
+    // above): the root's actual top offset + a small bottom cushion.
+    // This is robust to variable chrome above (parent link, wrapping
+    // title, wrapping badge row) which the previous hard-coded
+    // `calc(100vh - 296px)` couldn't handle.
     <Box
+      ref={rootRef}
       sx={fullscreen ? {
         position: "fixed",
         top: 48,                // leave the app's top nav visible
@@ -281,7 +330,10 @@ export function RunPanel({ taskId }: { taskId: string }) {
         display: "flex",
         flexDirection: "column",
         gap: 2,
-        height: "calc(100vh - 296px)",
+        // Fallback used only on the very first render before the
+        // useLayoutEffect measurement lands. Roughly matches the old
+        // hard-coded value so the initial paint isn't wildly wrong.
+        height: computedHeight != null ? computedHeight : "calc(100vh - 296px)",
         minHeight: 440,
       }}
     >
