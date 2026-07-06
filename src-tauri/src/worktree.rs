@@ -168,10 +168,30 @@ pub async fn ensure_for_run(
         // existing branch (or no worktree at all), so any commits already on
         // that branch are not part of *this* run — only commits added during
         // the run should show up in the Diff tab.
-        let diff_base_sha = git_capture(codebase_path, &["rev-parse", "HEAD"])
-            .unwrap_or_else(|_| base_sha.clone());
+        //
+        // Preserve the recorded base if this run already has one — the
+        // "pre-work" HEAD is an immutable anchor once set.
+        let existing_ns: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT base_sha, branch_name FROM runs WHERE id = ?",
+        )
+        .bind(run_id)
+        .fetch_optional(&state.db)
+        .await?;
+        let preserved = match &existing_ns {
+            Some((Some(sha), Some(br))) if br == &branch_name => Some(sha.clone()),
+            _ => None,
+        };
+        let diff_base_sha = preserved.unwrap_or_else(|| {
+            git_capture(codebase_path, &["rev-parse", "HEAD"])
+                .unwrap_or_else(|_| base_sha.clone())
+        });
         sqlx::query(
-            "UPDATE runs SET worktree_path = ?, branch_name = ?, base_sha = ?, base_branch = ? WHERE id = ?",
+            "UPDATE runs
+                SET worktree_path = ?,
+                    branch_name   = ?,
+                    base_sha      = ?,
+                    base_branch   = COALESCE(base_branch, ?)
+              WHERE id = ?",
         )
         .bind(codebase_path.to_string_lossy().to_string())
         .bind(&branch_name)
@@ -200,11 +220,24 @@ pub async fn ensure_for_run(
     .bind(run_id)
     .fetch_optional(&state.db)
     .await?;
-    if let Some((Some(wt), Some(br), Some(sha))) = existing {
-        if Path::new(&wt).exists() && PathBuf::from(&wt) == expected_worktree && br == branch {
-            return Ok((PathBuf::from(wt), br, sha));
+    if let Some((Some(wt), Some(br), Some(sha))) = &existing {
+        if Path::new(wt).exists() && PathBuf::from(wt) == expected_worktree && br == &branch {
+            return Ok((PathBuf::from(wt), br.clone(), sha.clone()));
         }
     }
+    // The run's diff base (`runs.base_sha`) is the "pre-work" commit — the
+    // anchor for `git diff base..HEAD`. Set once on first creation, then
+    // treated as immutable. If we're recreating a worktree for a run that
+    // already has a base recorded (external `rm -rf` → recreate button)
+    // we keep the original so the diff still shows exactly the commits
+    // added during this run, even if the remote default branch has moved
+    // on since.
+    let preserved_base_sha: Option<String> = match &existing {
+        Some((_, Some(existing_branch), Some(existing_sha))) if existing_branch == &branch => {
+            Some(existing_sha.clone())
+        }
+        _ => None,
+    };
 
     let worktree = expected_worktree;
     if !worktree.exists() {
@@ -269,14 +302,26 @@ pub async fn ensure_for_run(
     // for an existing branch is its current HEAD (which is also the
     // worktree's HEAD right after `git worktree add <existing>`), so the
     // Diff tab only shows commits made during this run.
-    let diff_base_sha = if branch_override.is_some() {
-        git_capture(&worktree, &["rev-parse", "HEAD"]).unwrap_or_else(|_| base_sha.clone())
-    } else {
-        base_sha.clone()
-    };
+    //
+    // If the run already had a base_sha recorded (recreate path), that
+    // wins — see `preserved_base_sha` above for why.
+    let diff_base_sha = preserved_base_sha.unwrap_or_else(|| {
+        if branch_override.is_some() {
+            git_capture(&worktree, &["rev-parse", "HEAD"]).unwrap_or_else(|_| base_sha.clone())
+        } else {
+            base_sha.clone()
+        }
+    });
 
+    // base_branch is likewise the run's original PR target; keep whatever
+    // was recorded on first creation.
     sqlx::query(
-        "UPDATE runs SET worktree_path = ?, branch_name = ?, base_sha = ?, base_branch = ? WHERE id = ?",
+        "UPDATE runs
+            SET worktree_path = ?,
+                branch_name   = ?,
+                base_sha      = ?,
+                base_branch   = COALESCE(base_branch, ?)
+          WHERE id = ?",
     )
     .bind(worktree.to_string_lossy().to_string())
     .bind(&branch)
