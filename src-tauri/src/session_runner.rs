@@ -179,6 +179,12 @@ impl RunnerRegistry {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum SidecarEvent {
     Message { role: String, content: String },
+    /// Incremental chunk of an in-flight assistant message. The sidecar
+    /// emits one per SDK delta (~1 per token); the frontend coalesces
+    /// them to requestAnimationFrame. Forwarded to the UI as an
+    /// ephemeral event only — the authoritative row is written by the
+    /// following `Message` event when the SDK fires `assistant.message`.
+    MessageDelta { role: String, delta: String },
     ToolCall {
         phase: String,
         #[serde(default)]
@@ -1968,6 +1974,16 @@ async fn handle_line(
                 "session_id": session_id,
                 "role": role,
                 "content": content,
+            }));
+        }
+        SidecarEvent::MessageDelta { role, delta } => {
+            // Ephemeral streaming chunk — do NOT persist. The final
+            // `Message` for this same turn (fired by the sidecar on
+            // `assistant.message`) is the authoritative row.
+            let _ = app.emit("message_delta", serde_json::json!({
+                "session_id": session_id,
+                "role": role,
+                "delta": delta,
             }));
         }
         SidecarEvent::ToolCall { phase, tool_call_id, tool, arguments, success, result, error } => {

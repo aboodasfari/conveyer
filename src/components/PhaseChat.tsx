@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Button, Spinner, Text, Textarea } from "@primer/react";
 import {
   CheckCircleIcon,
@@ -17,6 +17,12 @@ interface MessageAppended {
   session_id: string;
   role: string;
   content: string;
+}
+
+interface MessageDelta {
+  session_id: string;
+  role: string;
+  delta: string;
 }
 
 interface ToolCallPayload {
@@ -172,6 +178,39 @@ export function PhaseChat({
   const [initialLoading, setInitialLoading] = useState(true);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const nextLocalId = useRef(-1);
+  // In-flight assistant message being streamed for a session. Rendered
+  // as an ephemeral bubble at the end of the transcript; cleared when
+  // the full authoritative `message_appended` (role=assistant) arrives
+  // on that session, at which point the persisted row takes over.
+  const [streamingTail, setStreamingTail] = useState<{
+    sessionId: string;
+    content: string;
+  } | null>(null);
+  // Deltas arrive per-token (~50-100 Hz). We accumulate them in a ref
+  // and flush into `streamingTail` state on each animation frame, so
+  // React never renders more often than the display paints and no
+  // repaint work is wasted between frames.
+  const pendingDeltaRef = useRef<{ sessionId: string; text: string } | null>(null);
+  const deltaRafRef = useRef<number | null>(null);
+  const flushPendingDelta = useCallback(() => {
+    deltaRafRef.current = null;
+    const pending = pendingDeltaRef.current;
+    if (!pending) return;
+    pendingDeltaRef.current = null;
+    setStreamingTail((cur) => {
+      if (cur && cur.sessionId === pending.sessionId) {
+        return { sessionId: cur.sessionId, content: cur.content + pending.text };
+      }
+      return { sessionId: pending.sessionId, content: pending.text };
+    });
+  }, []);
+  const cancelPendingDelta = useCallback(() => {
+    if (deltaRafRef.current !== null) {
+      cancelAnimationFrame(deltaRafRef.current);
+      deltaRafRef.current = null;
+    }
+    pendingDeltaRef.current = null;
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -219,6 +258,13 @@ export function PhaseChat({
     void (async () => {
       unlisten = await listen<MessageAppended>("message_appended", (e) => {
         const p = e.payload;
+        // The authoritative assistant row now exists in the transcript;
+        // drop any streaming tail we were rendering for the same session
+        // (and any pending rAF-batched delta that would overwrite it).
+        if (p.role === "assistant") {
+          cancelPendingDelta();
+          setStreamingTail((cur) => (cur && cur.sessionId === p.session_id ? null : cur));
+        }
         setRuns((prev) => {
           if (prev.length === 0) {
             void load();
@@ -256,7 +302,53 @@ export function PhaseChat({
       cancelled = true;
       if (unlisten) unlisten();
     };
-  }, [load]);
+  }, [load, cancelPendingDelta]);
+
+  // Ephemeral streaming updates. Deltas are NOT persisted server-side;
+  // they only exist as long as the tail bubble is on screen. When the
+  // sidecar finishes the message it emits a normal `message_appended`
+  // (handled above) that clears the tail and replaces it with the
+  // persisted assistant row.
+  //
+  // Deltas arrive at ~50-100 Hz (one per SDK token). We accumulate
+  // them in a ref and schedule a single React setState via
+  // requestAnimationFrame, so the UI updates once per paint at most.
+  // Backgrounded windows have rAF suspended; deltas accumulate and
+  // flush when the tab is visible again, or get discarded outright
+  // when the authoritative `message_appended` arrives first.
+  useEffect(() => {
+    let unlisten: UnlistenFn | null = null;
+    let cancelled = false;
+    void (async () => {
+      unlisten = await listen<MessageDelta>("message_delta", (e) => {
+        const p = e.payload;
+        if (p.role !== "assistant") return;
+        const cur = pendingDeltaRef.current;
+        if (cur && cur.sessionId === p.session_id) {
+          cur.text += p.delta;
+        } else {
+          pendingDeltaRef.current = { sessionId: p.session_id, text: p.delta };
+        }
+        if (deltaRafRef.current === null) {
+          deltaRafRef.current = requestAnimationFrame(flushPendingDelta);
+        }
+      });
+      if (cancelled) unlisten();
+    })();
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, [flushPendingDelta]);
+
+  // Drop a stale tail (and any pending delta) when the phase changes
+  // or the component unmounts — the sessions we listened on no longer
+  // belong to this view.
+  useEffect(() => {
+    setStreamingTail(null);
+    cancelPendingDelta();
+  }, [phaseId, cancelPendingDelta]);
+  useEffect(() => cancelPendingDelta, [cancelPendingDelta]);
 
   const bubbles = useMemo(() => buildBubbles(runs), [runs]);
 
@@ -461,24 +553,37 @@ export function PhaseChat({
             No session yet. The Chat tab will stream the agent's thinking once
             this phase is running.
           </Text>
-        ) : bubbles.length === 0 ? (
+        ) : bubbles.length === 0 && !streamingTail ? (
           <Text sx={{ color: "fg.muted" }}>Session started; awaiting output.</Text>
         ) : (
-          bubbles.map((b, i) => {
-            const isLast = i === bubbles.length - 1;
-            const pulse = isLast && (
-              latestSession.role === "chat"
-                ? chatTurnBusy
-                : latestSession.status === "running"
-            );
-            return (
-              <BubbleView
-                key={b.id}
-                bubble={b}
-                streaming={pulse}
+          <>
+            {bubbles.map((b, i) => {
+              const isLast = i === bubbles.length - 1;
+              // If we're rendering a streaming tail below, it owns the pulse;
+              // the last real bubble shouldn't also pulse.
+              const tailBelow =
+                !!streamingTail && streamingTail.sessionId === latestSession.id;
+              const pulse = isLast && !tailBelow && (
+                latestSession.role === "chat"
+                  ? chatTurnBusy
+                  : latestSession.status === "running"
+              );
+              return (
+                <MemoBubbleView
+                  key={b.id}
+                  bubble={b}
+                  streaming={pulse}
+                />
+              );
+            })}
+            {streamingTail && streamingTail.sessionId === latestSession.id && (
+              <AssistantBubble
+                key="__streaming_tail__"
+                content={streamingTail.content}
+                streaming={true}
               />
-            );
-          })
+            )}
+          </>
         )}
         {/* The needs-input form lives at the end of the scroll content
             so the user can scroll up through the conversation above it. */}
@@ -760,6 +865,10 @@ function BubbleView({ bubble, streaming }: { bubble: Bubble; streaming: boolean 
   if (bubble.kind === "assistant") return <AssistantBubble content={bubble.content} streaming={streaming} />;
   return <SystemBubble content={bubble.content} />;
 }
+// Memoize so that streaming-tail updates (which don't touch `runs`, and
+// therefore leave the memoized `bubbles` array reference stable) don't
+// re-render every prior bubble in the transcript on each delta.
+const MemoBubbleView = memo(BubbleView);
 
 function SeparatorBubbleView({ label }: { label: string }) {
   return (

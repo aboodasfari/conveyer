@@ -170,6 +170,29 @@ function msg(role, content) {
   emit({ type: "message", role, content });
 }
 
+/**
+ * Streaming buffer for assistant message deltas. Emits each delta
+ * immediately as a `message_delta` event so the UI can render at its
+ * own paint cadence (the frontend coalesces to requestAnimationFrame).
+ * The buffered content is only used to produce the final authoritative
+ * `message` event on `flush()` — that's the row Rust persists.
+ */
+function makeStreamingBuffer(role = "assistant") {
+  let buffer = "";
+  return {
+    append(text) {
+      if (!text) return;
+      buffer += text;
+      emit({ type: "message_delta", role, delta: text });
+    },
+    flush() {
+      if (buffer.length === 0) return;
+      msg(role, buffer);
+      buffer = "";
+    },
+  };
+}
+
 /* -------------------------------------------------------------------------- */
 /*                          Shared stdin dispatcher                            */
 /* -------------------------------------------------------------------------- */
@@ -654,16 +677,12 @@ async function runCopilotChatRepl(sessionId, idleMs) {
 
   // Shared streaming buffer + event subscription, identical to the
   // one-shot path; we just don't tear it down between turns.
-  let buffer = "";
-  const flush = () => {
-    if (buffer.length === 0) return;
-    msg("assistant", buffer);
-    buffer = "";
-  };
+  const stream = makeStreamingBuffer("assistant");
+  const flush = () => stream.flush();
   const unsubscribe = session.on((event) => {
     switch (event.type) {
       case "assistant.message_delta":
-        if (event.data?.deltaContent) buffer += event.data.deltaContent;
+        if (event.data?.deltaContent) stream.append(event.data.deltaContent);
         break;
       case "assistant.message":
         flush();
@@ -848,18 +867,16 @@ async function runCopilotSession({ phase, prompt, resume }) {
   }
 
   // Buffer streaming deltas; flush as a single "assistant" message on each
-  // assistant.message (so we don't spam the UI with thousands of tiny rows).
-  let buffer = "";
-  const flush = () => {
-    if (buffer.length === 0) return;
-    msg("assistant", buffer);
-    buffer = "";
-  };
+  // assistant.message (so we don't spam the transcript with thousands of tiny rows).
+  // The buffer also emits per-token `message_delta` events; the frontend
+  // coalesces them to requestAnimationFrame so no work is wasted between paints.
+  const stream = makeStreamingBuffer("assistant");
+  const flush = () => stream.flush();
 
   const unsubscribe = session.on((event) => {
     switch (event.type) {
       case "assistant.message_delta":
-        if (event.data?.deltaContent) buffer += event.data.deltaContent;
+        if (event.data?.deltaContent) stream.append(event.data.deltaContent);
         break;
       case "assistant.message":
         flush();
