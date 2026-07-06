@@ -621,7 +621,7 @@ fn emit_run_updated(app: &AppHandle, task_id: &str, run_id: &str) {
     );
 }
 
-async fn emit_run_updated_for_run(app: &AppHandle, state: &AppState, run_id: &str) {
+pub(crate) async fn emit_run_updated_for_run(app: &AppHandle, state: &AppState, run_id: &str) {
     let row: Option<(String,)> =
         sqlx::query_as("SELECT task_id FROM runs WHERE id = ?")
             .bind(run_id)

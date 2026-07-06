@@ -2,9 +2,9 @@
 //! the per-run worktree captured at implementation-phase start.
 
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, State};
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::worktree::git_capture;
 
@@ -147,4 +147,55 @@ pub async fn phase_diff_text(
         return Ok(truncated);
     }
     Ok(out)
+}
+
+/// Recreate the on-disk worktree for the run this phase belongs to. Called
+/// from the Diff tab's "worktree missing" placeholder. Reuses the same
+/// `worktree::ensure_for_run` path that phase-start uses, so branch
+/// resolution, base-sha lookup, and DB updates all match. Translates the
+/// "branch is checked out at another live worktree" case into a friendly
+/// error the UI can surface without a stack-trace.
+#[tauri::command]
+pub async fn run_worktree_recreate(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    phase_id: String,
+) -> AppResult<()> {
+    let (ctx, run_id, _phase_kind) =
+        crate::session_runner::load_phase_context(&state, &phase_id).await?;
+    let codebase = std::path::Path::new(&ctx.codebase_path);
+
+    match crate::worktree::ensure_for_run(
+        &state,
+        &run_id,
+        &ctx.task_id,
+        &ctx.task_title,
+        codebase,
+    )
+    .await
+    {
+        Ok(_) => {
+            crate::commands::runs::emit_run_updated_for_run(&app, &state, &run_id).await;
+            Ok(())
+        }
+        Err(e) => {
+            // `git worktree add` uses these phrases when the target branch
+            // is checked out somewhere we don't own (a live linked worktree
+            // in this repo). Prune already ran inside ensure_for_run, so if
+            // we still get here the conflict is real — don't force it.
+            let msg = e.to_string();
+            let lower = msg.to_ascii_lowercase();
+            if lower.contains("is already checked out")
+                || lower.contains("already used by worktree")
+            {
+                Err(AppError::Config(format!(
+                    "Can't recreate: the branch is already checked out in another worktree. \
+                     Close that worktree (or remove it with `git worktree remove`) and try again. \
+                     Details: {msg}"
+                )))
+            } else {
+                Err(e)
+            }
+        }
+    }
 }

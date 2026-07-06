@@ -41,6 +41,9 @@ export function DiffViewer({ phaseId, phaseStatus }: { phaseId: string; phaseSta
   const [loadingDiff, setLoadingDiff] = useState(false);
   const [leftWidth, setLeftWidth] = useState<number>(LEFT_PANE_DEFAULT);
   const [viewMode, setViewMode] = useState<"inline" | "split">("inline");
+  // Recreate-worktree UX state (shown when summary.worktree_missing).
+  const [recreating, setRecreating] = useState(false);
+  const [recreateError, setRecreateError] = useState<string | null>(null);
 
   // Review comments. Only usable while the phase is gated (waiting).
   const canComment = phaseStatus === "waiting";
@@ -98,6 +101,21 @@ export function DiffViewer({ phaseId, phaseStatus }: { phaseId: string; phaseSta
       if (!opts?.silent) setLoadingDiff(false);
     }
   }, [phaseId]);
+
+  const handleRecreateWorktree = useCallback(async () => {
+    setRecreating(true);
+    setRecreateError(null);
+    try {
+      await api.runWorktreeRecreate(phaseId);
+      // Refresh both summary + diff so the placeholder disappears and the
+      // (typically empty) diff shows for the freshly recreated branch.
+      await Promise.all([loadSummary({ silent: true }), loadDiff(selectedCommit, { silent: true })]);
+    } catch (e) {
+      setRecreateError(formatError(e));
+    } finally {
+      setRecreating(false);
+    }
+  }, [phaseId, loadSummary, loadDiff, selectedCommit]);
 
   useEffect(() => { void loadSummary(); }, [loadSummary]);
   useEffect(() => { void loadDiff(selectedCommit); }, [selectedCommit, loadDiff]);
@@ -221,10 +239,40 @@ export function DiffViewer({ phaseId, phaseStatus }: { phaseId: string; phaseSta
   }
   if (summary.worktree_missing) {
     return (
-      <TabPlaceholder
-        title="This run's worktree is no longer on disk."
-        subtitle={summary.worktree_path ? `Expected at ${summary.worktree_path}.` : undefined}
-      />
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 2,
+          py: 6,
+          flex: 1,
+          minHeight: 0,
+          color: "fg.muted",
+          textAlign: "center",
+          px: 3,
+        }}
+      >
+        <Text sx={{ fontSize: 1 }}>This run's worktree is no longer on disk.</Text>
+        {summary.worktree_path && (
+          <Text sx={{ fontSize: 0, wordBreak: "break-all" }}>
+            Expected at {summary.worktree_path}.
+          </Text>
+        )}
+        <Button
+          onClick={handleRecreateWorktree}
+          disabled={recreating}
+          sx={{ mt: 1 }}
+        >
+          {recreating ? "Recreating…" : "Recreate worktree"}
+        </Button>
+        {recreateError && (
+          <Box sx={{ maxWidth: 520, width: "100%", mt: 1 }}>
+            <Flash variant="danger">{recreateError}</Flash>
+          </Box>
+        )}
+      </Box>
     );
   }
 

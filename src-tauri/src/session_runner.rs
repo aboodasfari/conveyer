@@ -439,9 +439,9 @@ pub fn artifact_path_for(task_id: &str, run_number: u32, phase: &str) -> AppResu
     Ok(dir.join(format!("{phase}.md")))
 }
 
-struct PhaseContext {
-    task_id: String,
-    task_title: String,
+pub(crate) struct PhaseContext {
+    pub(crate) task_id: String,
+    pub(crate) task_title: String,
     task_state: String,
     task_description: String,
     /// Source kind: 'ado', 'github', or 'local'.
@@ -459,7 +459,7 @@ struct PhaseContext {
     branch_override: Option<String>,
     parent_title: Option<String>,
     parent_description: Option<String>,
-    codebase_path: String,
+    pub(crate) codebase_path: String,
     /// All configured workspaces (name, path), in display order.
     workspaces: Vec<(String, String)>,
     /// True if the task has an explicit workspace pinned. False means the
@@ -469,7 +469,7 @@ struct PhaseContext {
     reasoning: Option<String>,
 }
 
-async fn load_phase_context(state: &AppState, phase_id: &str) -> AppResult<(PhaseContext, String, String)> {
+pub(crate) async fn load_phase_context(state: &AppState, phase_id: &str) -> AppResult<(PhaseContext, String, String)> {
     // Returns (ctx, run_id, phase_kind).
     let row: (String, String, String, String, String, Option<String>, String, Option<String>, String, String, String, Option<String>, Option<String>) = sqlx::query_as(
         "SELECT t.id, t.title, t.state, COALESCE(t.description,''), t.source_id,

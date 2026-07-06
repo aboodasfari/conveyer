@@ -127,6 +127,7 @@ pub fn run() {
             commands::sessions::models_list,
             commands::diff::phase_diff_summary,
             commands::diff::phase_diff_text,
+            commands::diff::run_worktree_recreate,
             commands::workspaces::workspaces_list,
             commands::workspaces::workspace_upsert,
             commands::workspaces::workspace_delete,

@@ -127,6 +127,8 @@ export const api = {
     invoke<import("./types").DiffSummary | null>("phase_diff_summary", { phaseId }),
   phaseDiffText: (phaseId: string, commit?: string | null) =>
     invoke<string>("phase_diff_text", { phaseId, commit: commit ?? null }),
+  runWorktreeRecreate: (phaseId: string) =>
+    invoke<void>("run_worktree_recreate", { phaseId }),
 
   // pull requests (submit phase)
   pullRequestForPhase: (phaseId: string) =>

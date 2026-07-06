@@ -208,6 +208,15 @@ pub async fn ensure_for_run(
 
     let worktree = expected_worktree;
     if !worktree.exists() {
+        // Ghost-registration guard: if the folder was removed externally
+        // (e.g. `rm -rf`) without `git worktree prune`, git still thinks
+        // the branch is checked out at the old path and refuses the add.
+        // Pruning is idempotent and safe — it only clears registrations
+        // whose folders are already gone.
+        let _ = Command::new("git")
+            .arg("-C").arg(codebase_path)
+            .args(["worktree", "prune"])
+            .output();
         // For a new branch (no override): create it on the resolved base SHA.
         // For an existing branch override: just attach a worktree to it.
         let result = if branch_override.is_some() {
